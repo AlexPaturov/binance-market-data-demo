@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-BinanceDataCollector.Worker-e1a4dfa0-9271-477a-9fef-2196cb547f2d</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BinanceDataCollector.Application\BinanceDataCollector.Application.csproj" />
+    <ProjectReference Include="..\BinanceDataCollector.Infrastructure\BinanceDataCollector.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>
