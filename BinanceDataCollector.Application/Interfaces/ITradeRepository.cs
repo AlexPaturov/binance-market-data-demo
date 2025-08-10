@@ -9,4 +9,12 @@ public interface ITradeRepository
     Task<IEnumerable<Trade>> GetLatestTradesAsync(string symbol, int count);
 
     // Самый важный метод для быстрой вставки множества записей
-    Task BulkInsertAsync(IEnumerable<Trade> trades);}
+    Task BulkInsertAsync(IEnumerable<Trade> trades);
+
+    /// <summary>
+    /// Находит Unix-время (ms) последней сохраненной сделки для указанного символа.
+    /// Для заполнения "дыр".
+    /// </summary>
+    /// <returns>Время последней сделки или null, если данных нет.</returns>
+    Task<long?> GetLastTradeTimeAsync(string symbol); 
+}

@@ -88,4 +88,10 @@ public class TradeRepository : ITradeRepository
         );
     }
 
+    public async Task<long?> GetLastTradeTimeAsync(string symbol)
+    {
+        using var db = Connection;
+        const string sql = "SELECT MAX(TradeTime) FROM dbo.Trades WHERE Symbol = @Symbol";
+        return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol });
+    }
 }
