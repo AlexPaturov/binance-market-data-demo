@@ -4,7 +4,6 @@ using Dapper;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using System.Data;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 
@@ -41,18 +40,6 @@ public class TradeRepository : ITradeRepository
         return await db.QueryAsync<Trade>(sql, new { Symbol = symbol, Count = count });
     }
 
-    // РЕАЛИЗАЦИЯ МАССОВОЙ ВСТАВКИ (КЛЮЧЕВОЙ МОМЕНТ)
-    // Этот метод неэффективен для тысяч записей, см. следующий раздел для правильной реализации
-    //public async Task BulkInsertAsync(IEnumerable<Trade> trades)
-    //{
-    //    using var db = Connection;
-    //    const string sql = @"
-    //        INSERT INTO Trades (TradeId, Symbol, Price, Quantity, QuoteQuantity, TradeTime, IsBuyerMaker, IsBestMatch, OrderId, Commission, CommissionAsset, IsMyTrade)
-    //        VALUES (@TradeId, @Symbol, @Price, @Quantity, @QuoteQuantity, @TradeTime, @IsBuyerMaker, @IsBestMatch, @OrderId, @Commission, @CommissionAsset, @IsMyTrade);";
-
-    //    await db.ExecuteAsync(sql, trades); // Dapper сам пройдется по коллекции
-    //}
-
     // ПРАВИЛЬНАЯ РЕАЛИЗАЦИЯ BULK INSERT через TVP (Table-Valued Parameter)
     public async Task BulkInsertAsync(IEnumerable<Trade> trades)
     {
@@ -77,7 +64,6 @@ public class TradeRepository : ITradeRepository
 
         foreach (var trade in trades)
         {
-            // Используем DBNull.Value для nullable-типов
             tradesDataTable.Rows.Add(
                 trade.TradeId,
                 trade.Symbol,

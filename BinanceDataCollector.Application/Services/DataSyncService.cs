@@ -5,15 +5,15 @@ using Microsoft.Extensions.Logging;
 namespace BinanceDataCollector.Application.Services;
 
 // Этот сервис использует интерфейсы для выполнения своей задачи
-public class DataSyncService
+public class DataSyncService : IDataSyncService
 {
     private readonly ILogger<DataSyncService> _logger;
     private readonly ITradeRepository _tradeRepository;
     private readonly IBinanceService _binanceService;
     private readonly object _bufferLock = new object(); // 1. Создаем объект-заглушку для блокировки. Он должен быть приватным.
 
-    public DataSyncService(ILogger<DataSyncService> logger, 
-        ITradeRepository tradeRepository, 
+    public DataSyncService(ILogger<DataSyncService> logger,
+        ITradeRepository tradeRepository,
         IBinanceService binanceService)
     {
         _logger = logger;
@@ -22,50 +22,80 @@ public class DataSyncService
     }
 
 
-    public async Task StartTradeCollectionAsync(string symbol)
+    public async Task StartTradeCollectionAsync(string symbol, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Запускаем сбор данных по сделкам для {Symbol}", symbol);
 
         var tradesBuffer = new List<Trade>();
         var lastFlushTime = DateTime.UtcNow;
 
-        await _binanceService.SubscribeToTradesAsync(symbol, async (trade) => {
-            List<Trade>? tradesToInsert = null;
+        try
+        {
+            // Эта TaskCompletionSource позволит нам контролировать завершение задачи
+            // и дождаться отписки от WebSocket.
+            var tcs = new TaskCompletionSource();
 
-            // 2. Начинаем блокировку. Только один поток может войти сюда одновременно.
-            lock (_bufferLock)
-            {
-                tradesBuffer.Add(trade);
-                _logger.LogTrace("Получена сделка {Id}, размер буфера: {Count}", trade.TradeId, tradesBuffer.Count);
+            // Регистрируем колбэк на отмену, который завершит нашу задачу
+            cancellationToken.Register(() => tcs.TrySetCanceled());
 
-                if (tradesBuffer.Count >= 1000 || DateTime.UtcNow - lastFlushTime > TimeSpan.FromSeconds(5))
+            // Подписываемся на поток сделок
+            await _binanceService.SubscribeToTradesAsync(symbol,
+                async (trade) => // Обработчик каждой новой сделки
                 {
-                    if (tradesBuffer.Count > 0)
+                    List<Trade>? tradesToInsert = null;
+
+                    // Блокируем буфер для потокобезопасного доступа
+                    lock (_bufferLock)
                     {
-                        // Мы внутри блокировки, поэтому эти три операции атомарны
-                        tradesToInsert = tradesBuffer.ToList(); // Копируем
-                        tradesBuffer.Clear();                   // Очищаем
-                        lastFlushTime = DateTime.UtcNow;        // Сбрасываем таймер
-                    }
-                }
-            } // 3. Блокировка здесь снимается. Другие потоки могут добавлять сделки в буфер.
+                        tradesBuffer.Add(trade);
 
-            // 4. Если мы создали копию для вставки, выполняем саму вставку.
-            //    Это происходит ВНЕ блокировки, что критически важно для производительности.
-            if (tradesToInsert != null)
-            {
-                _logger.LogInformation("Сохраняем {Count} сделок в базу данных...", tradesToInsert.Count);
-                try
-                {
-                    await _tradeRepository.BulkInsertAsync(tradesToInsert);
-                }
-                catch (Exception ex)
-                {
-                    // Логируем ошибку, но не останавливаем весь процесс.
-                    _logger.LogError(ex, "Ошибка при выполнении BulkInsertAsync.");
-                }
-            }
-        });
+                        // Проверяем, пора ли сбрасывать данные в базу
+                        if (tradesBuffer.Count >= 1000 || DateTime.UtcNow - lastFlushTime > TimeSpan.FromSeconds(5))
+                        {
+                            if (tradesBuffer.Any())
+                            {
+                                tradesToInsert = tradesBuffer.ToList();
+                                tradesBuffer.Clear();
+                                lastFlushTime = DateTime.UtcNow;
+                            }
+                        }
+                    }
+
+                    // Если мы подготовили пачку данных, сохраняем ее.
+                    // Важно делать это ВНЕ блокировки 'lock'.
+                    if (tradesToInsert != null)
+                    {
+                        _logger.LogInformation("[{Symbol}] Сохраняем {Count} сделок...", symbol, tradesToInsert.Count);
+                        try
+                        {
+                            await _tradeRepository.BulkInsertAsync(tradesToInsert);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "[{Symbol}] Ошибка при сохранении пачки сделок.", symbol);
+                        }
+                    }
+                },
+                cancellationToken);
+
+            _logger.LogInformation("[{Symbol}] Успешно подписан на поток WebSocket.", symbol);
+
+            // Ожидаем, пока не придет сигнал отмены
+            await tcs.Task;
+        }
+        catch (OperationCanceledException)
+        {
+            // Это ожидаемое завершение работы. Просто логируем и выходим.
+            _logger.LogWarning("[{Symbol}] Получен сигнал отмены. Модуль сбора данных останавливается.", symbol);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[{Symbol}] Критическая ошибка в модуле сбора данных.", symbol);
+        }
+        finally
+        {
+            _logger.LogInformation("[{Symbol}] Модуль сбора данных полностью остановлен.", symbol);
+        }
     }
 
     // Обработчик полученных сделок

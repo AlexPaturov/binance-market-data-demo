@@ -1,28 +1,49 @@
 ﻿using BinanceDataCollector.Domain.Entities;
+using Binance.Net.Enums;
+using Binance.Net.Interfaces;
+using Binance.Net.Objects.Models.Spot;
 
 namespace BinanceDataCollector.Application.Interfaces;
 
-// Интерфейс для получения данных с биржи
+/// <summary>
+/// Абстракция для взаимодействия с API Binance.
+/// Скрывает детали реализации библиотеки Binance.Net.
+/// </summary>
 public interface IBinanceService
 {
-
-    // Подписка на поток сделок в реальном времени
-    Task SubscribeToTradesAsync(string symbol, Func<Trade, Task> onTradeReceived);
-
-
-    // автонагенерировано
     /// <summary>
-    /// Получает последние сделки по указанной торговой паре.
+    /// Подписывается на поток сделок в реальном времени для одного символа.
     /// </summary>
-    /// <param name="symbol">Торговая пара (например, "BTCUSDT").</param>
-    /// <param name="limit">Максимальное количество сделок для получения.</param>
-    /// <returns>Список последних сделок.</returns>
-   // Task<IEnumerable<Trade>> GetLatestTradesAsync(string symbol, int limit = 100);
+    /// <param name="symbol">Символ для отслеживания.</param>
+    /// <param name="onTradeReceived">Действие, которое будет выполняться при получении каждой новой сделки.</param>
+    /// <param name="cancellationToken">Токен для отмены подписки.</param>
+    Task SubscribeToTradesAsync(string symbol, Func<Trade, Task> onTradeReceived, CancellationToken cancellationToken);
+
     /// <summary>
-    /// Получает информацию о конкретной сделке по идентификатору.
+    /// Получает информацию о всех символах, торгуемых на бирже.
     /// </summary>
-    /// <param name="tradeId">Идентификатор сделки.</param>
-    /// <param name="symbol">Торговая пара.</param>
-    /// <returns>Информация о сделке или null, если сделка не найдена.</returns>
-  //  Task<Trade?> GetTradeByIdAsync(long tradeId, string symbol);
+    /// <returns>Коллекция символов.</returns>
+    Task<IEnumerable<BinanceSymbol>> GetExchangeSymbolsAsync();
+
+    /// <summary>
+    /// Получает 24-часовую статистику (тикеры) для всех символов.
+    /// </summary>
+    /// <returns>Коллекция тикеров со статистикой.</returns>
+    Task<IEnumerable<Binance24HPrice>> Get24hTickerStatisticsAsync();
+
+    /// <summary>
+    /// Загружает исторические свечи (Klines) за указанный период.
+    /// </summary>
+    /// <param name="symbol">Символ.</param>
+    /// <param name="interval">Интервал свечи.</param>
+    /// <param name="startTime">Начало периода.</param>
+    /// <param name="endTime">Конец периода.</param>
+    /// <param name="cancellationToken">Токен для отмены.</param>
+    /// <returns>Коллекция исторических свечей.</returns>
+    Task<IEnumerable<BinanceSpotKline>> GetHistoricalKlinesAsync(
+        string symbol,
+        KlineInterval interval,
+        DateTime startTime,
+        DateTime endTime,
+        CancellationToken cancellationToken);
 }

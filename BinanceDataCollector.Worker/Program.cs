@@ -2,6 +2,7 @@ using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Application.Services;
 using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
+using BinanceDataCollector.MarketScreenService;
 using BinanceDataCollector.Worker.Workers;
 
 namespace BinanceDataCollector.Worker
@@ -13,12 +14,14 @@ namespace BinanceDataCollector.Worker
             var host = Host.CreateDefaultBuilder(args).ConfigureServices((hostContext, services) => 
             {
                 IConfiguration configuration = hostContext.Configuration; // Получаем конфигурацию (appsettings.json)
-                services.AddScoped<DataSyncService>();                      // 1. Регистрация сервисов приложения
-                services.AddScoped<IOrderRepository, OrderRepository>();    // 2. Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
+                services.AddScoped<IDataSyncService, DataSyncService>();   // 1. Регистрация сервисов приложения
+                services.AddScoped<IBinanceService, BinanceService>();      // 4. Регистрация внешних сервисов
+                services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();    // 2. Регистрация репозитория для сбора топ-Х пар по которым необходимо собирать статистику
+                services.AddTransient<MarketScreener>(); // Сканер можно делать Transient
+                services.AddScoped<IOrderRepository, OrderRepository>();    // 3. Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
                 services.AddScoped<ITradeRepository, TradeRepository>();
-                services.AddScoped<IBinanceService, BinanceService>();      // 3. Регистрация внешних сервисов
-                services.AddScoped<IBinanceService, BinanceService>();  // 4. Добавление HttpClient для BinanceService (если он нужен)
                 services.AddHostedService<BinanceTradesWorker>();           // 5. Регистрация самого фонового воркера
+                services.AddHostedService<SymbolUpdateWorker>(); //  Запускаем наш новый сервис обновления списка пар
             })
             .Build();
 
