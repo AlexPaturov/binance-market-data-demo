@@ -8,6 +8,7 @@ using CryptoExchange.Net.Objects;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace BinanceDataCollector.Infrastructure.BinanceClient;
 
@@ -161,7 +162,7 @@ public class BinanceService : IBinanceService
                 break;
             }
 
-            allTrades.AddRange((IEnumerable<IBinanceRecentTrade>)result.Data);
+            allTrades.AddRange(result.Data.Cast<IBinanceRecentTrade>());
             currentStartTime = result.Data.Last().TradeTime.AddMilliseconds(1); // Сдвигаем начальную точку для следующего запроса
             await Task.Delay(250, cancellationToken); // Вежливая пауза в 250 мс, чтобы не превысить лимиты API
         }
