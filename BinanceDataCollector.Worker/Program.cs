@@ -23,6 +23,7 @@ namespace BinanceDataCollector.Worker
                 services.AddHostedService<BinanceTradesWorker>();           // 5. –егистраци€ самого фонового воркера
                 services.AddHostedService<SymbolUpdateWorker>(); //  «апускаем наш новый сервис обновлени€ списка пар
                 services.AddHostedService<DataAuditorWorker>(); // ¬осстанавливаем дыры за 24 часа максимум
+                services.AddHostedService<OhlcvAggregatorWorker>(); // јгрегаци€ тиковых данных в свечи
             })
             .Build();
 

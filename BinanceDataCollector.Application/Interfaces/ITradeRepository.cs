@@ -16,5 +16,11 @@ public interface ITradeRepository
     /// Для заполнения "дыр".
     /// </summary>
     /// <returns>Время последней сделки или null, если данных нет.</returns>
-    Task<long?> GetLastTradeTimeAsync(string symbol); 
+    Task<long?> GetLastTradeTimeAsync(string symbol);
+
+    /// <summary>
+    /// Агрегирует тиковые данные в свечи
+    /// </summary>
+    /// <returns></returns>
+    Task ExecuteAggregationAsync();
 }

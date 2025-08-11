@@ -94,4 +94,11 @@ public class TradeRepository : ITradeRepository
         const string sql = "SELECT MAX(TradeTime) FROM dbo.Trades WHERE Symbol = @Symbol";
         return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol });
     }
+
+    public async Task ExecuteAggregationAsync()
+    {
+        using var db = Connection;
+        // Увеличиваем таймаут, так как агрегация может быть долгой
+        await db.ExecuteAsync("dbo.sp_AggregateTradesToOhlcv", commandType: CommandType.StoredProcedure, commandTimeout: 120);
+    }
 }
