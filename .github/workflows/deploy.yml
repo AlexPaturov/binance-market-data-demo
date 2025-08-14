@@ -2,7 +2,7 @@ name: Deploy Binance Collector
 
 on:
   push:
-    branches: [ "main" ] # Запускать при пуше в ветку main
+    branches: [ "mster" ] # Запускать при пуше в ветку main
 
 jobs:
   build-and-push:
