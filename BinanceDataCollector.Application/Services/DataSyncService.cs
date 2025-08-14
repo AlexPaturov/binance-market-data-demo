@@ -10,7 +10,7 @@ public class DataSyncService : IDataSyncService
     private readonly ILogger<DataSyncService> _logger;
     private readonly ITradeRepository _tradeRepository;
     private readonly IBinanceService _binanceService;
-    private readonly object _bufferLock = new object();  // 1. Создаем объект-заглушку для блокировки. Он должен быть приватным.
+    private readonly object _bufferLock = new object();  // 1. Создаем объект-заглушку для блокировки.  Он должен быть приватным.
 
     public DataSyncService(ILogger<DataSyncService> logger,
         ITradeRepository tradeRepository,
