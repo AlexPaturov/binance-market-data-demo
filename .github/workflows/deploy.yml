@@ -2,30 +2,29 @@ name: Deploy Binance Collector
 
 on:
   push:
-    branches: [ "master" ] # Запускать при пуше в ветку main
+    branches: [ "master" ]
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest # Пайплайн будет работать на виртуальной машине с Ubuntu
+    runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # TODO: Раскомментируйте, когда у вас появятся тесты
-    # - name: Setup .NET
-    #   uses: actions/setup-dotnet@v4
-    #   with:
-    #     dotnet-version: '8.0.x'
-    # - name: Run tests
-    #   run: dotnet test --verbosity normal
-
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        username: ${{ github.actor }} # Используем github.actor - это всегда работает
+        password: ${{ secrets.DOCKОКER_PASSWORD }}
+
+    - name: Extract metadata (tags, labels) for Docker
+      id: meta # Даем этому шагу ID, чтобы ссылаться на его результат
+      uses: docker/metadata-action@v5
+      with:
+        # Собираем имя образа. Оно автоматически будет приведено к нижнему регистру.
+        images: ghcr.io/${{ github.repository }}/binance-collector
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
@@ -33,10 +32,12 @@ jobs:
         context: .
         file: ./Dockerfile
         push: true
-        tags: ghcr.io/${{ github.repository.lowercase }}/binance-collector:latest
+        # Используем теги, сгенерированные на шаге 'meta'
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
 
   deploy:
-    needs: build-and-push # Запускать только после успешной сборки
+    needs: build-and-push
     runs-on: ubuntu-latest
 
     steps:
@@ -46,9 +47,11 @@ jobs:
         host: ${{ secrets.SSH_HOST }}
         username: ${{ secrets.SSH_USERNAME }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: 2237 # Укажите ваш нестандартный порт SSH
+        port: 2237
         script: |
-          cd /opt/BinanceCollector # Переходим в папку с docker-compose.yml на сервере
-          docker login ghcr.io -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
-          docker pull ghcr.io/${{ github.repository.lowercase }}/binance-collector:latest
+          cd /opt/BinanceCollector
+          docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.DOCKER_PASSWORD }}
+          # Собираем имя образа здесь вручную, приводя к нижнему регистру
+          IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}/binance-collector" | tr '[:upper:]' '[:lower:]')
+          docker pull $IMAGE_NAME:latest
           docker-compose up -d
