@@ -85,7 +85,7 @@ public class DataSyncService : IDataSyncService
         }
         catch (OperationCanceledException)
         {
-            // Это ожидаемое завершение работы. Просто логируем и выходим.
+            // Это ожидаемое завершение работы. Просто логируем и  выходим.
             _logger.LogWarning("[{Symbol}] Получен сигнал отмены. Модуль сбора данных останавливается.", symbol);
         }
         catch (Exception ex)
