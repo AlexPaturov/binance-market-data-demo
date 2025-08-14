@@ -2,25 +2,14 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Копируем .sln и все .csproj файлы. Пути исправлены - убираем "src/".
-COPY ["BinanceDataCollector.sln", "./"]
-COPY ["BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj", "BinanceDataCollector.Domain/"]
-COPY ["BinanceDataCollector.Application/BinanceDataCollector.Application.csproj", "BinanceDataCollector.Application/"]
-COPY ["BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj", "BinanceDataCollector.Infrastructure/"]
-COPY ["BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj", "BinanceDataCollector.Worker/"]
-# Копируем .csproj тестовых проектов
-COPY ["BinanceDataCollector.Application.Tests/BinanceDataCollector.Application.Tests.csproj", "BinanceDataCollector.Application.Tests/"]
-COPY ["BinanceDataCollector.Domain.Tests/BinanceDataCollector.Domain.Tests.csproj", "BinanceDataCollector.Domain.Tests/"]
-COPY ["BinanceDataCollector.Infrastructure.Tests/BinanceDataCollector.Infrastructure.Tests.csproj", "BinanceDataCollector.Infrastructure.Tests/"]
-
-
-# Восстанавливаем NuGet-пакеты
-RUN dotnet restore "BinanceDataCollector.sln"
-
-# Копируем весь остальной исходный код
+# --- УПРОЩЕННЫЙ ПОДХОД ---
+# Шаг 1: Копируем АБСОЛЮТНО ВСЕ файлы проекта в контейнер
 COPY . .
 
-# Публикуем приложение. Путь к проекту исправлен.
+# Шаг 2: Восстанавливаем зависимости для всего решения
+RUN dotnet restore "BinanceDataCollector.sln"
+
+# Шаг 3: Публикуем наше рабочее приложение
 RUN dotnet publish "BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj" -c Release -o /app/publish --no-restore
 
 
