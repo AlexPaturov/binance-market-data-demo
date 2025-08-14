@@ -33,7 +33,7 @@ jobs:
         context: .
         file: ./Dockerfile
         push: true
-        tags: ghcr.io/${{ github.repository.toLowerCase() }}/binance-collector:latest
+        tags: ghcr.io/${{ toLower(github.repository) }}/binance-collector:latest
 
   deploy:
     needs: build-and-push # Запускать только после успешной сборки
@@ -50,5 +50,5 @@ jobs:
         script: |
           cd /opt/BinanceCollector # Переходим в папку с docker-compose.yml на сервере
           docker login ghcr.io -u ${{ secrets.DOCKER_USERNAME }} -p ${{ secrets.DOCKER_PASSWORD }}
-          docker pull ghcr.io/${{ github.repository }}/binance-collector:latest
+          docker pull ghcr.io/${{ toLower(github.repository) }}/binance-collector:latest
           docker-compose up -d
