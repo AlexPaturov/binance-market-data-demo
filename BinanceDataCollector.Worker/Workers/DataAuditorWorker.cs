@@ -13,7 +13,8 @@ public class DataAuditorWorker : BackgroundService
     private readonly IServiceProvider _serviceProvider;
 
     // Конфигурация аудитора
-    private readonly TimeSpan _auditInterval = TimeSpan.FromHours(2);
+    //private readonly TimeSpan _auditInterval = TimeSpan.FromHours(2);
+    private readonly TimeSpan _auditInterval = TimeSpan.FromMinutes(30);
     private readonly TimeSpan _maxGapToAutoFill = TimeSpan.FromHours(24);
     private readonly TimeSpan _minGapToTriggerFill = TimeSpan.FromMinutes(5);
 
