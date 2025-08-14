@@ -73,6 +73,7 @@ public class DataSyncService : IDataSyncService
                         catch (Exception ex)
                         {
                             _logger.LogError(ex, "[{Symbol}] Ошибка при сохранении пачки сделок.", symbol);
+                            _logger.LogError(ex, "[{Symbol}] Ошибка при сохранении пачки сделок.", symbol);
                         }
                     }
                 },
