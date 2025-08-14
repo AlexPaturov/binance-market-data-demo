@@ -17,7 +17,7 @@ jobs:
       with:
         registry: ghcr.io
         username: ${{ github.actor }} # Используем github.actor - это всегда работает
-        password: ${{ secrets.DOCKОКER_PASSWORD }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
 
     - name: Extract metadata (tags, labels) for Docker
       id: meta # Даем этому шагу ID, чтобы ссылаться на его результат
