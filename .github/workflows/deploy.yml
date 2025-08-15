@@ -5,8 +5,8 @@ on:
     branches: [ "master" ]
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  build-and-deploy:
+    runs-on: self-hosted # Запускаем эту задачу на наших собственных раннерах
     
     steps:
     - name: Checkout code
