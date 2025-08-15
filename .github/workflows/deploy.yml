@@ -1,57 +1,49 @@
-name: Deploy Binance Collector
+name: Deploy Binance Collector (Self-hosted)
 
 on:
   push:
     branches: [ "master" ]
 
 jobs:
+  # Мы определяем только одно задание, которое делает всё
   build-and-deploy:
-    runs-on: self-hosted # Запускаем эту задачу на наших собственных раннерах
-    
+    # Запускаем эту задачу на наших собственных раннерах
+    runs-on: self-hosted
+
     steps:
     - name: Checkout code
+      # Этот action скачивает ваш исходный код в рабочую папку раннера
       uses: actions/checkout@v4
 
     - name: Log in to GitHub Container Registry
+      # Логинимся в хранилище образов, чтобы потом запушить туда наш образ
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
-        username: ${{ github.actor }} # Используем github.actor - это всегда работает
+        username: ${{ github.actor }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
     - name: Extract metadata (tags, labels) for Docker
-      id: meta # Даем этому шагу ID, чтобы ссылаться на его результат
+      # Этот action автоматически генерирует правильные теги для образа
+      id: meta
       uses: docker/metadata-action@v5
       with:
-        # Собираем имя образа. Оно автоматически будет приведено к нижнему регистру.
         images: ghcr.io/${{ github.repository }}/binance-collector
 
     - name: Build and push Docker image
+      # Собираем и пушим образ в GitHub Container Registry
       uses: docker/build-push-action@v5
       with:
         context: .
         file: ./Dockerfile
         push: true
-        # Используем теги, сгенерированные на шаге 'meta'
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
 
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Deploy to server
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.SSH_HOST }}
-        username: ${{ secrets.SSH_USERNAME }}
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: 2237
-        script: |
-          cd /opt/BinanceCollector
-          docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.DOCKER_PASSWORD }}
-          # Собираем имя образа здесь вручную, приводя к нижнему регистру
-          IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}/binance-collector" | tr '[:upper:]' '[:lower:]')
-          docker pull $IMAGE_NAME:latest
-          docker-compose up -d
+    - name: Deploy with Docker Compose
+      # Выполняем команды на сервере для развертывания
+      run: |
+        # Переходим в папку, где лежит наш docker-compose.yml
+        cd /opt/BinanceCollector
+        # Docker Compose сам скачает свежую версию образа и перезапустит контейнер
+        docker-compose up -d --remove-orphans
