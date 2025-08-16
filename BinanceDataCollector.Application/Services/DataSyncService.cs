@@ -61,7 +61,7 @@ public class DataSyncService : IDataSyncService
                         }
                     }
 
-                    // Если мы подготовили пачку данных, сохраняем ее.
+                    // Если мы подготовили пачку данных,сохраняем ее.
                     // Важно делать это ВНЕ блокировки 'lock'.
                     if (tradesToInsert != null)
                     {
