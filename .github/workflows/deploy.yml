@@ -19,22 +19,20 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: Extract metadata (tags, labels) for Docker
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ghcr.io/${{ github.repository }}/binance-collector
-
     - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+      run: |
+        # Собираем имя образа вручную, приводя к нижнему регистру
+        IMAGE_TAG=$(echo "ghcr.io/${{ github.repository }}/binance-collector" | tr '[:upper:]' '[:lower:]')
+        
+        # Собираем и пушим образ с этим тегом
+        docker build -t $IMAGE_TAG:latest .
+        docker push $IMAGE_TAG:latest
 
     - name: Deploy with Docker Compose
       run: |
         cd /opt/BinanceCollector
-        docker compose up -d --remove-orphans
+        # Используем тот же метод для получения имени образа
+        IMAGE_TAG=$(echo "ghcr.io/${{ github.repository }}/binance-collector" | tr '[:upper:]' '[:lower:]')
+        
+        docker pull $IMAGE_TAG:latest
+        docker compose up -d
