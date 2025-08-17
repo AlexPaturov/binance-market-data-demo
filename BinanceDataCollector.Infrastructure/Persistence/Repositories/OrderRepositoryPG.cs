@@ -2,7 +2,6 @@
 
 namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 
-public class OrderRepository : IOrderRepository
+public class OrderRepositoryPG : IOrderRepository
 {
-    // Implementation of IOrderRepository methods and properties
 }

@@ -7,14 +7,13 @@ using System.Data;
 
 namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 
-public class TradeRepository : ITradeRepository
+public class TradeRepositoryMSSQL : ITradeRepository
 {
     private readonly string _connectionString;
 
-    // Инжектируем IConfiguration, чтобы получить строку подключения
-    public TradeRepository(IConfiguration configuration)
+    public TradeRepositoryMSSQL(IConfiguration configuration)
     {
-        _connectionString = configuration.GetConnectionString("DefaultConnection")
+        _connectionString = configuration.GetConnectionString("ConnStrMSSQL")
                             ?? throw new InvalidOperationException("Connection string not found.");
     }
 
@@ -40,7 +39,6 @@ public class TradeRepository : ITradeRepository
         return await db.QueryAsync<Trade>(sql, new { Symbol = symbol, Count = count });
     }
 
-    // ПРАВИЛЬНАЯ РЕАЛИЗАЦИЯ BULK INSERT через TVP (Table-Valued Parameter)
     public async Task BulkInsertAsync(IEnumerable<Trade> trades)
     {
         var tradesDataTable = new DataTable();

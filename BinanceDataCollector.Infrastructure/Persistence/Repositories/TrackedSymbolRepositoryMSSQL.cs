@@ -9,13 +9,13 @@ namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 /// <summary>
 /// Для отслеживания активности топ-X пар
 /// </summary>
-public class TrackedSymbolRepository : ITrackedSymbolRepository
+public class TrackedSymbolRepositoryMSSQL : ITrackedSymbolRepository
 {
     private readonly string _connectionString;
 
-    public TrackedSymbolRepository(IConfiguration configureOptions)
+    public TrackedSymbolRepositoryMSSQL(IConfiguration configureOptions)
     {
-        _connectionString = configureOptions.GetConnectionString("DefaultConnection")
+        _connectionString = configureOptions.GetConnectionString("ConnStrMSSQL")
                             ?? throw new InvalidOperationException("Connection string not found.");
     }
 

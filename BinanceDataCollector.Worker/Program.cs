@@ -16,10 +16,16 @@ namespace BinanceDataCollector.Worker
                 IConfiguration configuration = hostContext.Configuration; // Получаем конфигурацию (appsettings.json)
                 services.AddScoped<IDataSyncService, DataSyncService>();   // 1. Регистрация сервисов приложения
                 services.AddScoped<IBinanceService, BinanceService>();      // 4. Регистрация внешних сервисов
-                services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();    // 2. Регистрация репозитория для сбора топ-Х пар по которым необходимо собирать статистику
                 services.AddTransient<MarketScreener>(); // Сканер можно делать Transient
-                services.AddScoped<IOrderRepository, OrderRepository>();    // 3. Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
-                services.AddScoped<ITradeRepository, TradeRepository>();
+
+                //services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepositoryMSSQL>();    // 2. Регистрация репозитория для сбора топ-Х пар по которым необходимо собирать статистику
+                //services.AddScoped<IOrderRepository, OrderRepositoryMSSQL>();    // 3. Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
+                //services.AddScoped<ITradeRepository, TradeRepositoryMSSQL>();
+
+                services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepositoryPG>();    // 2. Регистрация репозитория для сбора топ-Х пар по которым необходимо собирать статистику
+                services.AddScoped<IOrderRepository, OrderRepositoryPG>();    // 3. Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
+                services.AddScoped<ITradeRepository, TradeRepositoryPG>();
+
                 services.AddHostedService<BinanceTradesWorker>();           // 5. Регистрация самого фонового воркера
                 services.AddHostedService<SymbolUpdateWorker>(); //  Запускаем наш новый сервис обновления списка пар
                 services.AddHostedService<DataAuditorWorker>(); // Восстанавливаем дыры за 24 часа максимум
