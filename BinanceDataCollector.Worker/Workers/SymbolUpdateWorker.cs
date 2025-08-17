@@ -23,7 +23,7 @@ public class SymbolUpdateWorker : BackgroundService
         _logger.LogInformation("Воркер обновления списка символов запущен.");
 
         // Ждем 1 минуту перед первым запуском, чтобы дать основному сервису стартовать
-        await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+        //await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
