@@ -9,14 +9,17 @@ public class BinanceTradesWorker : BackgroundService
     private readonly ILogger<BinanceTradesWorker> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly IConfiguration _configuration;
+    private readonly IHostApplicationLifetime _appLifetime;
 
     public BinanceTradesWorker(ILogger<BinanceTradesWorker> logger, 
         IServiceProvider serviceProvider, 
-        IConfiguration configuration)
+        IConfiguration configuration, 
+        IHostApplicationLifetime appLifetime)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
         _configuration = configuration;
+        _appLifetime = appLifetime;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -34,6 +37,8 @@ public class BinanceTradesWorker : BackgroundService
             {
                 cts.Cancel();
             }
+
+            _appLifetime.StopApplication();  // Инициируем остановку приложения
         });
 
         // Главный цикл работы воркера. Будет повторяться, пока сервис не будет остановлен.
