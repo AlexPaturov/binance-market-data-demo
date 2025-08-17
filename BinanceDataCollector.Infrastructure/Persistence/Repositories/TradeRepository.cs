@@ -7,13 +7,13 @@ using System.Data;
 
 namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 
-public class TradeRepositoryPG : ITradeRepository
+public class TradeRepository : ITradeRepository
 {
     private readonly string _connectionString;
 
-    public TradeRepositoryPG(IConfiguration configuration)
+    public TradeRepository(IConfiguration configuration)
     {
-        _connectionString = configuration.GetConnectionString("ConnStrPGSQL")
+        _connectionString = configuration.GetConnectionString("DefaultConnection")
                         ?? throw new InvalidOperationException("Connection string not found.");
     }
 

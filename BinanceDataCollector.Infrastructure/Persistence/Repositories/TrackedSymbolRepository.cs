@@ -6,13 +6,13 @@ using System.Data;
 
 namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 
-public class TrackedSymbolRepositoryPG : ITrackedSymbolRepository
+public class TrackedSymbolRepository : ITrackedSymbolRepository
 {
     private readonly string _connectionString;
 
-    public TrackedSymbolRepositoryPG(IConfiguration configureOptions)
+    public TrackedSymbolRepository(IConfiguration configureOptions)
     {
-        _connectionString = configureOptions.GetConnectionString("ConnStrPGSQL")
+        _connectionString = configureOptions.GetConnectionString("DefaultConnection")
                         ?? throw new InvalidOperationException("Connection string not found.");
     }
 
