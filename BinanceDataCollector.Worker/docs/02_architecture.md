@@ -46,7 +46,17 @@
   - Этот метод, в свою очередь, запускает на сервере базы данных функцию `sp_aggregate_trades_to_ohlcv`. Вся "тяжелая" работа по агрегации происходит на стороне СУБД.
 - **Поведение при сбое:** При ошибке SQL логирует ее и пропускает текущий цикл, не "роняя" приложение. Блокировка (`SemaphoreSlim`) предотвращает конфликты при "зависших" или долгих запусках.
 
-### 2.4. `DataAuditorWorker` (Ревизор)
+
+### 2.4. `FeatureCalculatorWorker` (Калькулятор признаков)
+- **Задача:** Рассчитывать технические индикаторы и обогащать данные для анализа.
+- **Триггер:** Запускается по расписанию (каждые 5-15 минут).
+- **Взаимодействие:**
+  - Получает новые свечи из `IOhlcvRepository`.
+  - Использует `IndicatorService` (с библиотекой `Skender.Stock.Indicators`) для расчета индикаторов на основе свечей.
+  - Использует `IAnalysisRepository` для расчета индикаторов на основе тиков (например, CVD).
+  - Сохраняет рассчитанные признаки в таблицу `"Ohlcv_Features"` через `IFeatureRepository`.
+
+### 2.5. `DataAuditorWorker` (Ревизор)
 
 - **Задача:** Гарантировать историческую полноту данных.
 - **Триггер:** Запускается по расписанию (например, раз в 2 часа).
@@ -78,12 +88,18 @@ graph TD
         H[BinanceTradesWorker]
         I[DataAuditorWorker]
         J[OhlcvAggregatorWorker]
+        FC[FeatureCalculatorWorker]
         
         K[MarketScreener]
         L[DataSyncService]
         M[IBinanceService]
+        IndicatorSvc[IndicatorService]
+
         N[ITradeRepository]
         O[ITrackedSymbolRepository]
+        P[IOhlcvRepository] 
+        Q[IFeatureRepository]
+        R[IAnalysisRepository]
         
         G -- вызывает --> K;
         K -- вызывает --> M;
@@ -100,6 +116,11 @@ graph TD
         
         L -- вызывает --> M;
         L -- вызывает --> N;
+
+        FC -- вызывает --> P;
+        FC -- вызывает --> R;
+        FC -- вызывает --> IndicatorSvc;
+        FC -- вызывает --> Q;
     end
     
     M -- HTTP --> Binance_API[Binance REST API];
