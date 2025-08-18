@@ -141,10 +141,10 @@ public class BinanceService : IBinanceService
         CancellationToken cancellationToken
     )
     {
-        var allTrades = new List<IBinanceRecentTrade>();
+        // Теперь мы возвращаем список наших доменных моделей
+        var allTrades = new List<Trade>();
         var currentStartTime = startTime;
 
-        // Цикл для постраничной загрузки данных, чтобы обойти лимит в 1000 записей
         while (currentStartTime < endTime)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -152,7 +152,6 @@ public class BinanceService : IBinanceService
             var result = await _restClient.SpotApi.ExchangeData.GetAggregatedTradeHistoryAsync(
                 symbol, startTime: currentStartTime, endTime: endTime, limit: 1000);
 
-            // Если Binance вернул ошибку или пустой массив, выходим из цикла
             if (!result.Success || !result.Data.Any())
             {
                 if (!result.Success)
@@ -162,11 +161,28 @@ public class BinanceService : IBinanceService
                 break;
             }
 
-            allTrades.AddRange(result.Data.Cast<IBinanceRecentTrade>());
-            currentStartTime = result.Data.Last().TradeTime.AddMilliseconds(1); // Сдвигаем начальную точку для следующего запроса
-            await Task.Delay(250, cancellationToken); // Вежливая пауза в 250 мс, чтобы не превысить лимиты API
+            // --- НАДЕЖНОЕ ИСПРАВЛЕНИЕ: РУЧНОЙ МАППИНГ ---
+            // Мы перебираем полученные данные и создаем из них наши собственные объекты Trade.
+            var tradesToAdd = result.Data.Select(t => new Trade
+            {
+                TradeId = t.Id,
+                Symbol = symbol, // В ответе GetAggregatedTradeHistoryAsync нет символа, берем из параметра
+                Price = t.Price,
+                Quantity = t.Quantity,
+                QuoteQuantity = t.Price * t.Quantity,
+                TradeTime = new DateTimeOffset(t.TradeTime).ToUnixTimeMilliseconds(),
+                IsBuyerMaker = t.BuyerIsMaker,
+                IsBestMatch = t.WasBestPriceMatch,
+                // Остальные поля (OrderId и т.д.) будут null или default, так как их нет в этом ответе API
+            });
+
+            allTrades.AddRange(tradesToAdd);
+
+            currentStartTime = result.Data.Last().TradeTime.AddMilliseconds(1);
+
+            await Task.Delay(250, cancellationToken);
         }
-        return allTrades;
+        return (IEnumerable<IBinanceRecentTrade>)allTrades;
     }
 
 }

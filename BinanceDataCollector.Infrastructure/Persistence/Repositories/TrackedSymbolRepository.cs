@@ -16,7 +16,6 @@ public class TrackedSymbolRepository : ITrackedSymbolRepository
                         ?? throw new InvalidOperationException("Connection string not found.");
     }
 
-    // Создаем новое подключение для каждого вызова
     private IDbConnection Connection => new NpgsqlConnection(_connectionString);
 
     public async Task<IEnumerable<string>> GetActiveSymbolsAsync()

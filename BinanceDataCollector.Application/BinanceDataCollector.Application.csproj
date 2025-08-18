@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Binance.Net" Version="11.4.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
+    <PackageReference Include="Skender.Stock.Indicators" Version="2.6.1" />
   </ItemGroup>
 
   <ItemGroup>

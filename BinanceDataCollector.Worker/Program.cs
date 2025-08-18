@@ -1,3 +1,4 @@
+using BinanceDataCollector.Application.Analytics;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Application.Services;
 using BinanceDataCollector.Infrastructure.BinanceClient;
@@ -24,6 +25,13 @@ public class Program
             services.AddHostedService<SymbolUpdateWorker>(); //  Запускаем наш новый сервис обновления списка пар
             services.AddHostedService<DataAuditorWorker>(); // Восстанавливаем дыры за 24 часа максимум
             services.AddHostedService<OhlcvAggregatorWorker>(); // Агрегация тиковых данных в свечи
+
+            // расчёт аналитики
+            services.AddScoped<IOhlcvRepository, OhlcvRepository>();
+            services.AddScoped<IFeatureRepository, FeatureRepository>();
+            services.AddScoped<IAnalysisRepository, AnalysisRepository>();
+            services.AddTransient<IndicatorService>(); // Transient, т.к. он stateless 
+            services.AddHostedService<FeatureCalculatorWorker>();
         })
         .Build();
 

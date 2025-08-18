@@ -7,10 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Persistence\Scripts\" />
-  </ItemGroup>
-
-  <ItemGroup>
     <PackageReference Include="Binance.Net" Version="11.4.0" />
     <PackageReference Include="Dapper" Version="2.1.66" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.0" />
