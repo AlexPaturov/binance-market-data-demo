@@ -1,5 +1,4 @@
-﻿
-using BinanceDataCollector.Application.Interfaces;
+﻿using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Application.Services;
 
 namespace BinanceDataCollector.Worker.Workers;
