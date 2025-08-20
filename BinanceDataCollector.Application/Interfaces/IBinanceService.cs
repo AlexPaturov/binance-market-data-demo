@@ -51,5 +51,5 @@ public interface IBinanceService
     /// Загружает историю агрегированных сделок за указанный период.
     /// </summary>
     /// <returns>Коллекция исторических сделок.</returns>
-    Task<IEnumerable<IBinanceRecentTrade>> GetHistoricalAggTradesAsync(string symbol, DateTime startTime, DateTime endTime, CancellationToken cancellationToken);
+    Task<IEnumerable<Trade>> GetHistoricalAggTradesAsync(string symbol, DateTime startTime, DateTime endTime, CancellationToken cancellationToken);
 }

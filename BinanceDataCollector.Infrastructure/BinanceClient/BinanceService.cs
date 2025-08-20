@@ -134,7 +134,7 @@ public class BinanceService : IBinanceService
         return (IEnumerable<BinanceSpotKline>)allKlines;
     }
 
-    public async Task<IEnumerable<IBinanceRecentTrade>> GetHistoricalAggTradesAsync(
+    public async Task<IEnumerable<Trade>> GetHistoricalAggTradesAsync(
         string symbol, 
         DateTime startTime, 
         DateTime endTime, 
@@ -182,7 +182,7 @@ public class BinanceService : IBinanceService
 
             await Task.Delay(250, cancellationToken);
         }
-        return (IEnumerable<IBinanceRecentTrade>)allTrades;
+        return allTrades;
     }
 
 }

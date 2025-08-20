@@ -91,21 +91,22 @@ public class DataAuditorWorker : BackgroundService
             _logger.LogWarning("[{Symbol}] Обнаружена дыра в данных размером {GapHours:F1} часов. Начинаем заполнение диапазона: {StartTime} - {EndTime}.",
                 symbol, timeGap.TotalHours, startTime.ToString("yyyy-MM-dd HH:mm"), endTime.ToString("yyyy-MM-dd HH:mm"));
 
-            var historicalTrades = await binanceService.GetHistoricalAggTradesAsync(symbol, startTime, endTime, stoppingToken);
+            IEnumerable<Trade> historicalTrades = await binanceService.GetHistoricalAggTradesAsync(symbol, startTime, endTime, stoppingToken);
 
-            var tradesToSave = historicalTrades.Select(t => new Trade
-            {
-                TradeId = t.OrderId,
-                Symbol = symbol,
-                Price = t.Price,
-                Quantity = t.BaseQuantity,
-                QuoteQuantity = t.Price * t.BaseQuantity,
-                TradeTime = new DateTimeOffset(t.TradeTime).ToUnixTimeMilliseconds(),
-                IsBuyerMaker = t.BuyerIsMaker,
-                IsBestMatch = t.IsBestMatch,
-            }).ToList();
+            var tradesToSave = historicalTrades.ToList();
+            //var tradesToSave = historicalTrades.Select(t => new Trade
+            //{
+            //    TradeId = t.OrderId,
+            //    Symbol = symbol,
+            //    Price = t.Price,
+            //    Quantity = t.BaseQuantity,
+            //    QuoteQuantity = t.Price * t.BaseQuantity,
+            //    TradeTime = new DateTimeOffset(t.TradeTime).ToUnixTimeMilliseconds(),
+            //    IsBuyerMaker = t.BuyerIsMaker,
+            //    IsBestMatch = t.IsBestMatch,
+            //}).ToList();
 
-            if (tradesToSave.Any())
+            if (historicalTrades.Any())
             {
                 await tradeRepo.BulkInsertAsync(tradesToSave);
 
