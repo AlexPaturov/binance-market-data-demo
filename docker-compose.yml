@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:14-alpine
+    container_name: binance_postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=bindatacoll
+      - POSTGRES_PASSWORD=dt_hfgd_yyyd
+      - POSTGRES_DB=market_analytics
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-config/custom.conf:/etc/postgresql/postgresql.conf # <-- конфигурация параметров работы postgresql
+  seq:
+    image: datalust/seq:latest # Официальный образ Seq
+    container_name: binance_seq
+    restart: always
+    environment:
+      - ACCEPT_EULA=Y # Обязательно для принятия лицензионного соглашения
+    ports:
+      - "5341:80"     # Веб-интерфейс будет доступен на порту 5341
+      - "5342:5341"   # Порт для приема логов (опционально, если нужно снаружи)
+    volumes:
+      - seq_data:/data # Сохраняем данные и настройки Seq
+  app:
+    image: ghcr.io/alexpaturov/binancedatacollector/binance-collector:latest
+    container_name: binance_collector_app
+    restart: always
+    depends_on:
+      - db
+      - seq # <-- Добавляем зависимость от Seq
+    environment:
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=bindatacoll;Password=dt_hfgd_yyyd
+      - SEQ_URL=http://seq:80 # Приложение будет "видеть" Seq по имени сервиса
+volumes:
+  postgres_data:
+  seq_data: # <-- Определяем том для данных Seq  
