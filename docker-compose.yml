@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:14-alpine
+    image: postgres:16-alpine
     container_name: binance_postgres
     restart: always
     environment:
@@ -11,28 +11,28 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres-config/custom.conf:/etc/postgresql/postgresql.conf # <-- êîíôèãóðàöèÿ ïàðàìåòðîâ ðàáîòû postgresql
+      - ./postgres-config/custom.conf:/etc/postgresql/postgresql.conf # <-- ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ñ Ð¿Ð°Ñ€Ð°Ð¼ÐµÑ‚Ñ€Ð¾Ð² Ñ€Ð°Ð±Ð¾Ñ‚Ñ‹ postgresql
   seq:
-    image: datalust/seq:latest # Îôèöèàëüíûé îáðàç Seq
+    image: datalust/seq:latest # ÐžÑ„Ð¸Ñ†Ð¸Ð°Ð»ÑŒÐ½Ñ‹Ð¹ Ð¾Ð±Ñ€Ð°Ð· Seq
     container_name: binance_seq
     restart: always
     environment:
-      - ACCEPT_EULA=Y # Îáÿçàòåëüíî äëÿ ïðèíÿòèÿ ëèöåíçèîííîãî ñîãëàøåíèÿ
+      - ACCEPT_EULA=Y # ÐžÐ±ÑÐ·Ð°Ñ‚ÐµÐ»ÑŒÐ½Ð¾ Ð´Ð»Ñ Ð¿Ñ€Ð¸Ð½ÑÑ‚Ð¸Ñ Ð»Ð¸Ñ†ÐµÐ½Ð·Ð¸Ð¾Ð½Ð½Ð¾Ð³Ð¾ ÑÐ¾Ð³Ð»Ð°ÑˆÐµÐ½Ð¸Ñ
     ports:
-      - "5341:80"     # Âåá-èíòåðôåéñ áóäåò äîñòóïåí íà ïîðòó 5341
-      - "5342:5341"   # Ïîðò äëÿ ïðèåìà ëîãîâ (îïöèîíàëüíî, åñëè íóæíî ñíàðóæè)
+      - "5341:80"     # Ð’ÐµÐ±-Ð¸Ð½Ñ‚ÐµÑ€Ñ„ÐµÐ¹Ñ Ð±ÑƒÐ´ÐµÑ‚ Ð´Ð¾ÑÑ‚ÑƒÐ¿ÐµÐ½ Ð½Ð° Ð¿Ð¾Ñ€Ñ‚Ñƒ 5341
+      - "5342:5341"   # ÐŸÐ¾Ñ€Ñ‚ Ð´Ð»Ñ Ð¿Ñ€Ð¸ÐµÐ¼Ð° Ð»Ð¾Ð³Ð¾Ð² (Ð¾Ð¿Ñ†Ð¸Ð¾Ð½Ð°Ð»ÑŒÐ½Ð¾, ÐµÑÐ»Ð¸ Ð½ÑƒÐ¶Ð½Ð¾ ÑÐ½Ð°Ñ€ÑƒÐ¶Ð¸)
     volumes:
-      - seq_data:/data # Ñîõðàíÿåì äàííûå è íàñòðîéêè Seq
+      - seq_data:/data # Ð¡Ð¾Ñ…Ñ€Ð°Ð½ÑÐµÐ¼ Ð´Ð°Ð½Ð½Ñ‹Ðµ Ð¸ Ð½Ð°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸ Seq
   app:
     image: ghcr.io/alexpaturov/binancedatacollector/binance-collector:latest
     container_name: binance_collector_app
     restart: always
     depends_on:
       - db
-      - seq # <-- Äîáàâëÿåì çàâèñèìîñòü îò Seq
+      - seq # <-- Ð”Ð¾Ð±Ð°Ð²Ð»ÑÐµÐ¼ Ð·Ð°Ð²Ð¸ÑÐ¸Ð¼Ð¾ÑÑ‚ÑŒ Ð¾Ñ‚ Seq
     environment:
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=bindatacoll;Password=dt_hfgd_yyyd
-      - SEQ_URL=http://seq:80 # Ïðèëîæåíèå áóäåò "âèäåòü" Seq ïî èìåíè ñåðâèñà
+      - SEQ_URL=http://seq:80 # ÐŸÑ€Ð¸Ð»Ð¾Ð¶ÐµÐ½Ð¸Ðµ Ð±ÑƒÐ´ÐµÑ‚ "Ð²Ð¸Ð´ÐµÑ‚ÑŒ" Seq Ð¿Ð¾ Ð¸Ð¼ÐµÐ½Ð¸ ÑÐµÑ€Ð²Ð¸ÑÐ°
 volumes:
   postgres_data:
-  seq_data: # <-- Îïðåäåëÿåì òîì äëÿ äàííûõ Seq  
+  seq_data: # <-- ÐžÐ¿Ñ€ÐµÐ´ÐµÐ»ÑÐµÐ¼ Ñ‚Ð¾Ð¼ Ð´Ð»Ñ Ð´Ð°Ð½Ð½Ñ‹Ñ… Seq  
