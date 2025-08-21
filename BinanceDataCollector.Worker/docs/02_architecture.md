@@ -12,6 +12,7 @@
 - **Масштабируемость:** В будущем любой из воркеров может быть вынесен в отдельный микросервис, если его нагрузка возрастет.
 
 Вся система, включая базу данных, упакована в **Docker-контейнеры** и управляется через `docker-compose`, что гарантирует идентичность окружения при разработке и на "боевом" сервере.
+Логирование осуществляется с помощью **Serilog** и централизованно собирается в **Seq** для удобного мониторинга и анализа.
 
 ## 2. Описание узлов (воркеров)
 
@@ -73,60 +74,52 @@
 
 ```mermaid
 graph TD
-    subgraph "CI/CD Pipeline (GitHub Actions)"
-        A[git push] --> B{Build & Push Docker Image};
+    subgraph "CI/CD Pipeline"
+        A[git push] --> B{Build & Push Image};
         B --> C{Deploy to Server};
     end
 
-    subgraph "Server (Ubuntu + Docker)"
-        D[docker-compose up] --> E[Container: app];
-        D --> F[Container: db (PostgreSQL)];
+    subgraph "Server Environment"
+        C --> D[docker-compose up];
+        D ==> App_Container[Container: app];
+        D ==> DB_Container[Container: db (PostgreSQL)];
+        D ==> Seq_Container[Container: seq (Logs)];
+    end
+
+    subgraph "External Services"
+        Binance_API["Binance API (REST & WS)"]
+    end
+
+    subgraph "Application Logic (inside 'app' container)"
+        direction LR
+        
+        subgraph "1. Workers (Entry Points)"
+            W1[SymbolUpdateWorker]
+            W2[BinanceTradesWorker]
+            W3[OhlcvAggregatorWorker]
+            W4[FeatureCalculatorWorker]
+            W5[DataAuditorWorker]
+        end
+
+        subgraph "2. Services (Business Logic)"
+            S1[IBinanceService]
+            S2[DataSyncService]
+            S3[IndicatorService]
+            S4[MarketScreener]
+        end
+        
+        subgraph "3. Repositories (Data Access)"
+            R[All Repositories<br>ITradeRepository<br>IOhlcvRepository<br>IAnalysisRepository<br>etc.]
+        end
     end
     
-    subgraph "Container: app (BinanceDataCollector.Worker)"
-        G[SymbolUpdateWorker]
-        H[BinanceTradesWorker]
-        I[DataAuditorWorker]
-        J[OhlcvAggregatorWorker]
-        FC[FeatureCalculatorWorker]
-        
-        K[MarketScreener]
-        L[DataSyncService]
-        M[IBinanceService]
-        IndicatorSvc[IndicatorService]
-
-        N[ITradeRepository]
-        O[ITrackedSymbolRepository]
-        P[IOhlcvRepository] 
-        Q[IFeatureRepository]
-        R[IAnalysisRepository]
-        
-        G -- вызывает --> K;
-        K -- вызывает --> M;
-        G -- вызывает --> O;
-        
-        H -- вызывает --> O;
-        H -- создает и запускает --> L;
-        
-        I -- вызывает --> O;
-        I -- вызывает --> N;
-        I -- вызывает --> M;
-        
-        J -- вызывает --> N;
-        
-        L -- вызывает --> M;
-        L -- вызывает --> N;
-
-        FC -- вызывает --> P;
-        FC -- вызывает --> R;
-        FC -- вызывает --> IndicatorSvc;
-        FC -- вызывает --> Q;
-    end
+    %% --- Data and Logic Flows ---
+    W1 & W2 & W3 & W4 & W5 -- use --> S1 & S2 & S3 & S4;
+    S1 & S2 & S3 & S4 -- use --> R;
     
-    M -- HTTP --> Binance_API[Binance REST API];
-    M -- WebSocket --> Binance_WS[Binance WebSocket];
-    N -- SQL --> F;
-    O -- SQL --> F;
+    S1 -- connects to --> Binance_API;
+    R -- SQL queries to --> DB_Container;
+    App_Container -- sends logs to --> Seq_Container;
 ```
 
 ---

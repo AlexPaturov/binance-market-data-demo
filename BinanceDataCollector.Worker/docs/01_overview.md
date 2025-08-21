@@ -35,6 +35,7 @@
 - **язык программировани€:** C#
 - **ѕлатформа:** .NET 8
 - **Ѕаза данных:** PostgreSQL 16
+- **Ћогирование:** Serilog + Seq
 - **—реда выполнени€:** Docker / Docker Compose
 - **CI/CD:** GitHub Actions (Self-hosted Runner)
 - **ќперационна€ система сервера:** Ubuntu Server 22.04 LTS

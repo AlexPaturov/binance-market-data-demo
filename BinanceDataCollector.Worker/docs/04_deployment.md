@@ -36,6 +36,20 @@
 # Выполняется в PowerShell на Windows
 scp -P 2237 .\docker-compose.yml ваш_логин@ip_сервера:/opt/BinanceCollector/docker-compose.yml
 ```
+1.  **Создать рабочую директорию:**
+    ```bash
+    sudo mkdir -p /opt/BinanceCollector
+    sudo chown $USER:$USER /opt/BinanceCollector
+    ```
+2.  **Создать файл с секретами (`.env`):**
+    - В папке `/opt/BinanceCollector/` создайте файл `.env`.
+    - Добавьте в него переменные с паролями для PostgreSQL и Seq:
+      ```env
+      POSTGRES_PASSWORD=your_strong_postgres_password
+      SEQ_FIRSTRUN_ADMINPASSWORD=your_strong_seq_admin_password
+      ```
+3.  **Скопировать `docker-compose.yml` на сервер:**
+    - Убедитесь, что `docker-compose.yml` на сервере соответствует финальной версии из репозитория.
 
 ## 4. Процесс развертывания
 
@@ -54,10 +68,11 @@ scp -P 2237 .\docker-compose.yml ваш_логин@ip_сервера:/opt/BinanceCollector/dock
   ```bash
   docker ps
   ```
-- **Смотреть логи приложения в реальном времени:**
-  ```bash
-  cd /opt/BinanceCollector
-  docker compose logs -f app
-  ```
+  *(Должны работать 3 контейнера: `app`, `db`, `seq`)*
+
+- **Смотреть логи приложения в реальном времени через Seq:**
+  - Откройте в браузере: `http://<IP_адрес_сервера>:5341`.
+  - Войдите, используя логин `admin` и пароль, заданный в `SEQ_FIRSTRUN_ADMINPASSWORD`.
+
 - **Проверить состояние базы данных:** Подключиться через DBeaver и убедиться, что данные поступают.
 ---

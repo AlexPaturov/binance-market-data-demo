@@ -1,10 +1,10 @@
-# Документация: 05 - Настройка Сервера (Ubuntu Server 22.04 LTS)
+# Документация: 05 - Настройка Сервера (Ubuntu Server 24.04 LTS)
 
 Этот документ описывает полный пошаговый процесс настройки "чистого" сервера на базе Ubuntu Server 22.04 LTS для развертывания приложения `BinanceDataCollector`.
 
 ## 1. Установка ОС
 
-- **Образ:** Используется `Ubuntu Server 22.04 LTS`.
+- **Образ:** Используется `Ubuntu Server 24.04.x LTS`.
 - **Ключевой момент при установке:** На шаге "SSH Setup" необходимо обязательно поставить галочку **`[X] Install OpenSSH server`**.
 
 ## 2. Усиление безопасности (Security Hardening)
@@ -49,15 +49,42 @@
 1.  **Разрешить необходимые порты:**
     - `sudo ufw allow 2237/tcp` (для SSH)
     - `sudo ufw allow 5432/tcp` (для доступа к PostgreSQL из DBeaver)
+    - `sudo ufw allow 5341/tcp` (для доступа к веб-интерфейсу Seq)
 2.  **Включить фаервол:** `sudo ufw enable`
 
 ## 4. Установка и настройка Docker
 
-1.  **Установить Docker Engine и Docker Compose** по официальной инструкции.
-2.  **Добавить пользователя в группу `docker`:**
-    - `sudo usermod -aG docker ${USER}`
-    - **Важно:** После этого необходимо **выйти из SSH и зайти снова**.
-    - Проверить командой `docker ps`.
+### 4.1. Установка Docker Engine (для Ubuntu 24.04 "Noble")
+1. **Подготовка:**
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y ca-certificates curl
+   ```
+2. **Добавление GPG-ключа Docker:**
+   ```bash
+   sudo install -m 0755 -d /etc/apt/keyrings
+   sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+   sudo chmod a+r /etc/apt/keyrings/docker.asc
+   ```
+3. **Добавление репозитория:**
+   ```bash
+   echo \
+     "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+     $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+     sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+   ```
+4. **Установка:**
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+   ```
+### 4.2. Настройка прав пользователя
+1. **Добавить пользователя в группу `docker`:**
+   ```bash
+   sudo usermod -aG docker ${USER}
+   ```
+2. **Применить изменения:** **Выйти из SSH и зайти снова.**
+3. **Проверить:** `docker ps` (должно работать без `sudo`).
 
 ## 5. Настройка CI/CD (GitHub Actions Self-hosted Runner)
 
