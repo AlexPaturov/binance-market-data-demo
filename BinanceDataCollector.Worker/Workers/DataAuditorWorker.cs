@@ -13,8 +13,8 @@ public class DataAuditorWorker : BackgroundService
     private readonly IServiceProvider _serviceProvider;
 
     // Конфигурация аудитора
-    //private readonly TimeSpan _auditInterval = TimeSpan.FromHours(2);
-    private readonly TimeSpan _auditInterval = TimeSpan.FromMinutes(30);
+    private readonly TimeSpan _auditInterval = TimeSpan.FromHours(2);
+   // private readonly TimeSpan _auditInterval = TimeSpan.FromMinutes(30);
     private readonly TimeSpan _maxGapToAutoFill = TimeSpan.FromHours(24);
     private readonly TimeSpan _minGapToTriggerFill = TimeSpan.FromMinutes(5);
 
@@ -94,17 +94,6 @@ public class DataAuditorWorker : BackgroundService
             IEnumerable<Trade> historicalTrades = await binanceService.GetHistoricalAggTradesAsync(symbol, startTime, endTime, stoppingToken);
 
             var tradesToSave = historicalTrades.ToList();
-            //var tradesToSave = historicalTrades.Select(t => new Trade
-            //{
-            //    TradeId = t.OrderId,
-            //    Symbol = symbol,
-            //    Price = t.Price,
-            //    Quantity = t.BaseQuantity,
-            //    QuoteQuantity = t.Price * t.BaseQuantity,
-            //    TradeTime = new DateTimeOffset(t.TradeTime).ToUnixTimeMilliseconds(),
-            //    IsBuyerMaker = t.BuyerIsMaker,
-            //    IsBestMatch = t.IsBestMatch,
-            //}).ToList();
 
             if (historicalTrades.Any())
             {

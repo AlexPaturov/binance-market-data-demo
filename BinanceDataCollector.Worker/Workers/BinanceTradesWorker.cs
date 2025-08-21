@@ -24,28 +24,14 @@ public class BinanceTradesWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Диспетчер сбора данных запущен.");
+        var runningTasks = new Dictionary<string, CancellationTokenSource>();
 
-        // Словарь для хранения запущенных задач и их токенов отмены
-        var runningTasks = new Dictionary<string, (Task, CancellationTokenSource)>();
-
-        // Регистрируем колбэк на глобальную остановку, чтобы корректно все завершить
-        stoppingToken.Register(() =>
+        try
         {
-            _logger.LogWarning("Получен глобальный сигнал остановки. Завершаем все задачи...");
-            foreach (var (_, cts) in runningTasks.Values)
+            // Главный цикл, который никогда не завершается сам по себе
+            while (!stoppingToken.IsCancellationRequested)
             {
-                cts.Cancel();
-            }
-
-            _appLifetime.StopApplication();  // Инициируем остановку приложения
-        });
-
-        // Главный цикл работы воркера. Будет повторяться, пока сервис не будет остановлен.
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                _logger.LogInformation("Проверяем список отслеживаемых символов из базы данных...");
+                _logger.LogInformation("Проверяем список отслеживаемых символов...");
 
                 List<string> activeSymbolsFromDb;
                 using (var scope = _serviceProvider.CreateScope())
@@ -54,57 +40,64 @@ public class BinanceTradesWorker : BackgroundService
                     activeSymbolsFromDb = (await symbolRepo.GetActiveSymbolsAsync()).ToList();
                 }
 
-                if (!activeSymbolsFromDb.Any())
-                {
-                    _logger.LogWarning("В базе данных нет активных символов. Повторная проверка через 5 минут.");
-                }
-                else
-                {
-                    _logger.LogInformation("Требуется отслеживать {Count} активных пар.", activeSymbolsFromDb.Count);
-                }
-
-                // --- Останавливаем ненужные задачи ---
+                // --- Останавливаем ненужные ---
                 var symbolsToStop = runningTasks.Keys.Except(activeSymbolsFromDb).ToList();
                 foreach (var symbol in symbolsToStop)
                 {
-                    _logger.LogWarning("Символ {Symbol} больше не активен. Останавливаем сбор данных...", symbol);
-                    if (runningTasks.TryGetValue(symbol, out var value))
+                    if (runningTasks.TryGetValue(symbol, out var cts))
                     {
-                        value.Item2.Cancel(); // Посылаем сигнал отмены
+                        _logger.LogWarning("[{Symbol}] Символ больше не активен. Останавливаем сбор.", symbol);
+                        cts.Cancel();
                         runningTasks.Remove(symbol);
                     }
                 }
 
-                // --- Запускаем новые задачи ---
+                // --- Запускаем новые ---
                 var symbolsToStart = activeSymbolsFromDb.Except(runningTasks.Keys).ToList();
                 foreach (var symbol in symbolsToStart)
                 {
-                    _logger.LogInformation("Найден новый активный символ: {Symbol}. Запускаем сбор данных...", symbol);
-
+                    _logger.LogInformation("[{Symbol}] Запускаем сбор для нового/возобновленного символа.", symbol);
                     var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                    var taskScope = _serviceProvider.CreateScope();
-                    var dataSyncService = taskScope.ServiceProvider.GetRequiredService<IDataSyncService>();
 
-                    var newTask = dataSyncService.StartTradeCollectionAsync(symbol, cts.Token);
-                    runningTasks.Add(symbol, (newTask, cts));
+                    // Мы не храним Task, а просто запускаем его в фоне.
+                    // cts - это наш "пульт управления" для этой задачи.
+                    _ = Task.Run(async () =>
+                    {
+                        while (!cts.IsCancellationRequested)
+                        {
+                            try
+                            {
+                                using var scope = _serviceProvider.CreateScope();
+                                var dataSyncService = scope.ServiceProvider.GetRequiredService<IDataSyncService>();
+                                await dataSyncService.StartTradeCollectionAsync(symbol, cts.Token);
+                            }
+                            catch (OperationCanceledException) { /* Ожидаемое завершение */ }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "[{Symbol}] Задача сбора данных упала. Перезапуск через 30 секунд.", symbol);
+                                await Task.Delay(TimeSpan.FromSeconds(30), cts.Token);
+                            }
+                        }
+                    }, cts.Token);
+
+                    runningTasks.Add(symbol, cts);
                 }
 
-                // --- Ожидаем перед следующей проверкой ---
                 _logger.LogInformation("Проверка завершена. Активно отслеживается {Count} пар. Следующая проверка через 1 час.", runningTasks.Count);
                 await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
             }
-            catch (OperationCanceledException)
-            {
-                // Это ожидаемое исключение при остановке сервиса. Просто выходим из цикла.
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogCritical(ex, "Произошла критическая ошибка в главном цикле диспетчера. Повторная попытка через 1 минуту.");
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-            }
         }
-
-        _logger.LogInformation("Диспетчер сбора данных полностью остановлен.");
+        catch (OperationCanceledException ex)
+        {
+            _logger.LogCritical(ex, "Штатное завершение работы при остановке всего сервиса.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogCritical(ex, "Критическая ошибка в главном цикле диспетчера.");
+        }
+        finally
+        {
+            _logger.LogInformation("Диспетчер сбора данных полностью остановлен.");
+        }
     }
 }
