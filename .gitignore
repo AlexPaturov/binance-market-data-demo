@@ -364,3 +364,5 @@ MigrationBackup/
 FodyWeavers.xsd
 /Documentation/.~lock.WorkFlow.docx#
 /docker-compose.yml
+/Documentation/migrationVariablesEnviroment.png
+/Documentation/VizualizationETLcontainer.png

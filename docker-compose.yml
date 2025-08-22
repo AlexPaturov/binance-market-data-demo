@@ -32,7 +32,7 @@ services:
       - seq # <-- Добавляем зависимость от Seq
     environment:
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=bindatacoll;Password=dt_hfgd_yyyd
-      - SEQ_URL=http://seq:80 # Приложение будет "видеть" Seq по имени сервиса
+      - SEQ_URL=http://seq
 volumes:
   postgres_data:
   seq_data: # <-- Определяем том для данных Seq  
