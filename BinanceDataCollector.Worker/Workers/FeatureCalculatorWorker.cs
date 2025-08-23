@@ -60,7 +60,7 @@ public class FeatureCalculatorWorker : BackgroundService
 
     private async Task ProcessSymbolFeaturesAsync(IServiceScope scope, string symbol, CancellationToken stoppingToken)
     {
-        var ohlcvRepo = scope.ServiceProvider.GetRequiredService<IOhlcvRepository>();
+        var ohlcvRepo = scope.ServiceProvider.GetRequiredService<IOhlcvRepository>(); 
         var featureRepo = scope.ServiceProvider.GetRequiredService<IFeatureRepository>();
         var analysisRepo = scope.ServiceProvider.GetRequiredService<IAnalysisRepository>();
         var indicatorService = scope.ServiceProvider.GetRequiredService<IndicatorService>();

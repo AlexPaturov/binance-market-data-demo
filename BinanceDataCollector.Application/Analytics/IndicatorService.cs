@@ -9,6 +9,14 @@ namespace BinanceDataCollector.Application.Analytics;
 /// </summary>
 public class IndicatorService
 {
+    // --- Константы для периодов индикаторов ---
+    private const int RsiPeriods = 14;
+    private const int MacdFastPeriods = 12;
+    private const int MacdSlowPeriods = 26;
+    private const int MacdSignalPeriods = 9;
+    private const int Ma2yPeriods = 1051200;  // 2-year Moving Average (в минутных свечах)
+    private const int Ma200wPeriods = 2016000; // 200-week Moving Average (в минутных свечах)
+
     /// <summary>
     /// Главный метод, который принимает историю свечей и рассчитывает все необходимые индикаторы.
     /// </summary>
@@ -17,40 +25,69 @@ public class IndicatorService
     /// <returns>Коллекция объектов FeatureData с рассчитанными значениями.</returns>
     public IEnumerable<FeatureData> CalculateAll(string symbol, IEnumerable<Ohlcv> klines)
     {
-        // 1. Конвертируем наши доменные модели Ohlcv в формат Quote, понятный библиотеке.
-        var quotes = ConvertToQuotes(klines);
+        // 1. Конвертируем наши свечи в формат Quote
+        var quotes = ConvertToQuotes(klines).ToList(); // Материализуем, чтобы не перечислять много раз
+        if (!quotes.Any())
+        {
+            return Enumerable.Empty<FeatureData>();
+        }
 
-        // 2. Рассчитываем все индикаторы.
-        // Skender.Stock.Indicators очень оптимизирована и делает это эффективно.
-        var rsi = quotes.GetRsi(14);
-        var macd = quotes.GetMacd(12, 26, 9);
-        var ma2y = quotes.GetSma(1051200); // 2-year Moving Average (минутные свечи)
-        var ma200w = quotes.GetSma(2016000); // 200-week Moving Average (минутные свечи)
+        // 2. Создаем "карту" результатов, где ключ - это дата свечи
+        var featureMap = quotes.ToDictionary(
+            quote => quote.Date,
+            quote => new FeatureData
+            {
+                Symbol = symbol,
+                OpenTime = ((DateTimeOffset)quote.Date).ToUnixTimeMilliseconds()
+            });
 
-        // 3. Собираем все результаты в единую структуру.
-        // Мы используем LINQ Join для объединения результатов по дате.
-        var features = from quote in quotes
-                       join rsiPoint in rsi on quote.Date equals rsiPoint.Date into rsiGroup
-                       from rsiVal in rsiGroup.DefaultIfEmpty()
-                       join macdPoint in macd on quote.Date equals macdPoint.Date into macdGroup
-                       from macdVal in macdGroup.DefaultIfEmpty()
-                       join ma2yPoint in ma2y on quote.Date equals ma2yPoint.Date into ma2yGroup
-                       from ma2yVal in ma2yGroup.DefaultIfEmpty()
-                       join ma200wPoint in ma200w on quote.Date equals ma200wPoint.Date into ma200wGroup
-                       from ma200wVal in ma200wGroup.DefaultIfEmpty()
-                       select new FeatureData
-                       {
-                           Symbol = symbol,
-                           OpenTime = ((DateTimeOffset)quote.Date).ToUnixTimeMilliseconds(),
-                           Rsi14 = (decimal?)rsiVal?.Rsi,
-                           MacdSignal = (decimal?)macdVal?.Signal,
-                           MacdHist = (decimal?)macdVal?.Histogram,
-                           Ma1051200 = (decimal?)ma2yVal?.Sma,
-                           Ma201600 = (decimal?)ma200wVal?.Sma
-                           // CVD будет добавлен позже из другого источника
-                       };
+        // 3. Рассчитываем каждый индикатор и добавляем его в нашу "карту"
 
-        return features;
+        // 1. RSI (Relative Strength Index)
+        var rsiResult = quotes.GetRsi(14);
+        foreach (var rsi in rsiResult.Where(r => r.Rsi.HasValue))
+        {
+            if (featureMap.TryGetValue(rsi.Date, out var feature))
+            {
+                feature.Rsi14 = (decimal?)rsi.Rsi;
+            }
+        }
+
+        // 2. MACD (Moving Average Convergence Divergence)
+        var macdResult = quotes.GetMacd(12, 26, 9);
+        foreach (var macd in macdResult.Where(m => m.Signal.HasValue))
+        {
+            if (featureMap.TryGetValue(macd.Date, out var feature))
+            {
+                feature.MacdSignal = (decimal?)macd.Signal;
+                feature.MacdHist = (decimal?)macd.Histogram;
+            }
+        }
+
+        // 3. 2-Year Moving Average (SMA)
+        var ma2yResult = quotes.GetSma(Ma2yPeriods);
+        foreach (var ma in ma2yResult.Where(m => m.Sma.HasValue))
+        {
+            if (featureMap.TryGetValue(ma.Date, out var feature))
+            {
+                feature.Ma1051200 = (decimal?)ma.Sma;
+            }
+        }
+
+        // 4. 200-Week Moving Average (SMA)
+        var ma200wResult = quotes.GetSma(Ma200wPeriods);
+        foreach (var ma in ma200wResult.Where(m => m.Sma.HasValue))
+        {
+            if (featureMap.TryGetValue(ma.Date, out var feature))
+            {
+                feature.Ma201600 = (decimal?)ma.Sma;
+            }
+        }
+
+        // (Здесь в будущем можно добавить расчеты других индикаторов по тому же принципу)
+
+        // 4. Возвращаем значения из нашей "карты", отсортированные по времени
+        return featureMap.Values.OrderBy(f => f.OpenTime);
     }
 
     /// <summary>
