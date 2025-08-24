@@ -5,6 +5,7 @@ using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.MarketScreenService;
 using BinanceDataCollector.Worker.Workers;
+using Microsoft.Extensions.DependencyInjection;
 using Serilog; // <-- 1. Добавляем using
 
 namespace BinanceDataCollector.Worker;
@@ -42,8 +43,9 @@ public class Program
                     services.AddScoped<ITradeRepository, TradeRepository>();
                     services.AddHostedService<BinanceTradesWorker>();           // 5. Регистрация самого фонового воркера
                     services.AddHostedService<SymbolUpdateWorker>(); //  Запускаем наш новый сервис обновления списка пар
-                    services.AddHostedService<DataAuditorWorker>(); // Восстанавливаем дыры за 24 часа максимум
+                    services.AddHostedService<QuickDataAuditorWorker>(); // Восстанавливаем дыры за 24 часа максимум
                     services.AddHostedService<OhlcvAggregatorWorker>(); // Агрегация тиковых данных в свечи
+                    services.AddHostedService<DeepDataAuditorWorker>(); // Агрегация тиковых данных в свечи
 
                     // расчёт аналитики
                     services.AddScoped<IOhlcvRepository, OhlcvRepository>();

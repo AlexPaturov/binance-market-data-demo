@@ -1,5 +1,6 @@
 ﻿using BinanceDataCollector.Application.Analytics.Models;
 using BinanceDataCollector.Application.Interfaces;
+using BinanceDataCollector.Domain.Entities;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
@@ -50,4 +51,19 @@ public  class AnalysisRepository : IAnalysisRepository
         using var db = Connection;
         return await db.QueryAsync<CvdResult>(sql, new { Symbol = symbol, StartTimeMs = startTimeMs, EndTimeMs = endTimeMs });
     }
+
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="symbol"></param>
+    /// <param name="minGapInSeconds"></param>
+    /// <returns></returns>
+    /// <exception cref="NotImplementedException"></exception>
+    public async Task<IEnumerable<DataGap>> FindTradeGapsAsync(string symbol, int minGapInSeconds)
+    {
+        using var db = Connection;
+        const string sql = "SELECT * FROM public.sp_find_trade_gaps(@Symbol, @MinGapInSeconds)";
+        return await db.QueryAsync<DataGap>(sql, new { Symbol = symbol, MinGapInSeconds = minGapInSeconds });
+    }
+
 }

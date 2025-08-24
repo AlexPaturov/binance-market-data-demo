@@ -86,7 +86,25 @@
 2. **Применить изменения:** **Выйти из SSH и зайти снова.**
 3. **Проверить:** `docker ps` (должно работать без `sudo`).
 
-## 5. Настройка CI/CD (GitHub Actions Self-hosted Runner)
+## 5. Установка утилит для аудита и мониторинга
+
+Эти инструменты помогают следить за безопасностью и состоянием сервера.
+
+1.  **`auditd` (Система аудита):**
+    ```bash
+    sudo apt install auditd
+    ```
+2.  **`Lynis` (Аудитор безопасности):**
+    ```bash
+    sudo apt install lynis
+    ```
+3.  **`Cockpit` (Веб-интерфейс для управления):**
+    ```bash
+    sudo apt install cockpit
+    # Не забудьте открыть порт в фаерволе:
+    sudo ufw allow 9090/tcp
+
+## 6. Настройка CI/CD (GitHub Actions Self-hosted Runner)
 
 1.  **Зарегистрировать Runner:**
     - В настройках репозитория GitHub (`Settings -> Actions -> Runners`) создать новый `self-hosted runner`.

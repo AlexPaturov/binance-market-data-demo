@@ -1,5 +1,6 @@
 ﻿using Binance.Net.Clients;
 using Binance.Net.Enums;
+
 using Binance.Net.Interfaces;
 using Binance.Net.Objects.Models.Spot;
 using BinanceDataCollector.Application.Interfaces;
@@ -7,11 +8,12 @@ using BinanceDataCollector.Domain.Entities;
 using CryptoExchange.Net.Objects;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using System.Collections.Generic;
-using System.Diagnostics;
 
 namespace BinanceDataCollector.Infrastructure.BinanceClient;
 
+/// <summary>
+/// 
+/// </summary>
 public class BinanceService : IBinanceService
 {
     private readonly ILogger<BinanceService> _logger;
@@ -134,55 +136,60 @@ public class BinanceService : IBinanceService
         return (IEnumerable<BinanceSpotKline>)allKlines;
     }
 
-    public async Task<IEnumerable<Trade>> GetHistoricalAggTradesAsync(
+    public async Task<FetchResult> GetHistoricalAggTradesAsync(
         string symbol, 
         DateTime startTime, 
-        DateTime endTime, 
         CancellationToken cancellationToken
     )
     {
-        // Теперь мы возвращаем список наших доменных моделей
-        var allTrades = new List<Trade>();
-        var currentStartTime = startTime;
-
-        while (currentStartTime < endTime)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
             var result = await _restClient.SpotApi.ExchangeData.GetAggregatedTradeHistoryAsync(
-                symbol, startTime: currentStartTime, endTime: endTime, limit: 1000);
+                symbol, startTime: startTime, limit: 1000, ct: cancellationToken);
 
-            if (!result.Success || !result.Data.Any())
+            if (!result.Success)
             {
-                if (!result.Success)
+                // --- ОБРАБОТКА ОШИБОК API ---
+                if (result.Error != null)
                 {
-                    _logger.LogError("[{Symbol}] Ошибка при загрузке исторических сделок: {Error}", symbol, result.Error?.Message);
+                    // Коды 429 (Too Many Requests) и 418 (IP Banned) - это ошибки лимитов
+                    if (result.Error.Code == 429 || result.Error.Code == 418)
+                    {
+                        _logger.LogWarning("[{Symbol}] Достигнут лимит API Binance. Код: {Code}", symbol, result.Error.Code);
+                        return FetchResult.ApiLimitResult();
+                    }
                 }
-                break;
+
+                _logger.LogError("[{Symbol}] Ошибка при загрузке исторических сделок: {Error}", symbol, result.Error?.Message);
+                return FetchResult.ErrorResult();
             }
 
-            // --- НАДЕЖНОЕ ИСПРАВЛЕНИЕ: РУЧНОЙ МАППИНГ ---
-            // Мы перебираем полученные данные и создаем из них наши собственные объекты Trade.
-            var tradesToAdd = result.Data.Select(t => new Trade
+            if (!result.Data.Any())
+            {
+                // Если данных нет, возвращаем успешный, но пустой результат
+                return FetchResult.SuccessResult(new List<Trade>());
+            }
+
+            // --- Маппинг в нашу доменную модель ---
+            var trades = result.Data.Select(t => new Trade
             {
                 TradeId = t.Id,
-                Symbol = symbol, // В ответе GetAggregatedTradeHistoryAsync нет символа, берем из параметра
+                Symbol = symbol,
                 Price = t.Price,
                 Quantity = t.Quantity,
                 QuoteQuantity = t.Price * t.Quantity,
                 TradeTime = new DateTimeOffset(t.TradeTime).ToUnixTimeMilliseconds(),
                 IsBuyerMaker = t.BuyerIsMaker,
                 IsBestMatch = t.WasBestPriceMatch,
-                // Остальные поля (OrderId и т.д.) будут null или default, так как их нет в этом ответе API
-            });
+            }).ToList();
 
-            allTrades.AddRange(tradesToAdd);
-
-            currentStartTime = result.Data.Last().TradeTime.AddMilliseconds(1);
-
-            await Task.Delay(250, cancellationToken);
+            return FetchResult.SuccessResult(trades);
         }
-        return allTrades;
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[{Symbol}] Непредвиденная ошибка при запросе к GetAggregatedTradeHistoryAsync.", symbol);
+            return FetchResult.ErrorResult();
+        }
     }
 
 }

@@ -1,7 +1,6 @@
-﻿using BinanceDataCollector.Domain.Entities;
-using Binance.Net.Enums;
-using Binance.Net.Interfaces;
+﻿using Binance.Net.Enums;
 using Binance.Net.Objects.Models.Spot;
+using BinanceDataCollector.Domain.Entities;
 
 namespace BinanceDataCollector.Application.Interfaces;
 
@@ -48,13 +47,12 @@ public interface IBinanceService
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Загружает историю агрегированных сделок за указанный период.
+    /// Загружает историю агрегированных сделок пачками по 1000
     /// </summary>
     /// <returns>Коллекция исторических сделок.</returns>
-    Task<IEnumerable<Trade>> GetHistoricalAggTradesAsync(
-        string symbol, 
-        DateTime startTime, 
-        DateTime endTime, 
+    Task<FetchResult> GetHistoricalAggTradesAsync(
+        string symbol,
+        DateTime startTime,
         CancellationToken cancellationToken);
 
 }
