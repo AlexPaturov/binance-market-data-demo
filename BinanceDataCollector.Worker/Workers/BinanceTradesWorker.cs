@@ -24,7 +24,7 @@ public class BinanceTradesWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Диспетчер сбора данных запущен.");
-        var runningTasks = new Dictionary<string, CancellationTokenSource>();
+        var runningTasks = new Dictionary<string, (Task Task, CancellationTokenSource Cts)>();
 
         try
         {
@@ -44,10 +44,10 @@ public class BinanceTradesWorker : BackgroundService
                 var symbolsToStop = runningTasks.Keys.Except(activeSymbolsFromDb).ToList();
                 foreach (var symbol in symbolsToStop)
                 {
-                    if (runningTasks.TryGetValue(symbol, out var cts))
+                    if (runningTasks.TryGetValue(symbol, out var taskInfo))
                     {
                         _logger.LogWarning("[{Symbol}] Символ больше не активен. Останавливаем сбор.", symbol);
-                        cts.Cancel();
+                        taskInfo.Cts.Cancel();
                         runningTasks.Remove(symbol);
                     }
                 }
@@ -61,7 +61,7 @@ public class BinanceTradesWorker : BackgroundService
 
                     // Мы не храним Task, а просто запускаем его в фоне.
                     // cts - это наш "пульт управления" для этой задачи.
-                    _ = Task.Run(async () =>
+                    var task = Task.Run(async () =>
                     {
                         while (!cts.IsCancellationRequested)
                         {
@@ -75,16 +75,34 @@ public class BinanceTradesWorker : BackgroundService
                             catch (Exception ex)
                             {
                                 _logger.LogError(ex, "[{Symbol}] Задача сбора данных упала. Перезапуск через 30 секунд.", symbol);
-                                await Task.Delay(TimeSpan.FromSeconds(30), cts.Token);
+                                try 
+                                {
+                                    await Task.Delay(TimeSpan.FromSeconds(30), cts.Token);
+                                }
+                                catch (OperationCanceledException operationCanceledException) 
+                                {
+                                    /* Отмена во время задержки */
+                                    _logger.LogError(operationCanceledException, "[{Symbol}] Задача сбора данных упала. Отмена во время задержки .", symbol);
+                                    break; 
+                                }
                             }
                         }
                     }, cts.Token);
 
-                    runningTasks.Add(symbol, cts);
+                    runningTasks.Add(symbol,(task, cts));
                 }
 
                 _logger.LogInformation("Проверка завершена. Активно отслеживается {Count} пар. Следующая проверка через 1 час.", runningTasks.Count);
-                await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogInformation("Получен сигнал остановки во время ожидания следующей проверки.");
+                    break;
+                }
             }
         }
         catch (OperationCanceledException ex)
@@ -97,6 +115,55 @@ public class BinanceTradesWorker : BackgroundService
         }
         finally
         {
+            // --- ФИНАЛЬНЫЙ БЛОК ЗАВЕРШЕНИЯ ---
+            if (runningTasks.Any())
+            {
+                _logger.LogWarning("Останавливаем {Count} активных задач сбора данных...", runningTasks.Count);
+
+                try
+                {
+                    // 1. Асинхронно посылаем сигнал отмены всем дочерним задачам
+                    var cancelTasks = runningTasks.Values.Select(taskInfo => taskInfo.Cts.CancelAsync());
+                    await Task.WhenAll(cancelTasks);
+
+                    _logger.LogDebug("Сигналы отмены отправлены всем задачам");
+
+                    // 2. Собираем все задачи в один список
+                    var allTasks = runningTasks.Values.Select(v => v.Task).ToList();
+
+                    // 3. Асинхронно ждем, пока ВСЕ задачи не завершатся (с таймаутом)
+                    using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    await Task.WhenAll(allTasks).WaitAsync(timeoutCts.Token);
+
+                    _logger.LogInformation("Все задачи сбора данных успешно остановлены.");
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning("Таймаут при ожидании завершения задач (30 секунд). Принудительное завершение.");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Ошибка при завершении задач сбора данных.");
+                }
+                finally
+                {
+                    // 4. Освобождаем ресурсы CancellationTokenSource
+                    foreach (var (_, cts) in runningTasks.Values)
+                    {
+                        try
+                        {
+                            cts.Dispose();
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Ошибка при освобождении CancellationTokenSource");
+                        }
+                    }
+
+                    runningTasks.Clear();
+                }
+            }
+
             _logger.LogInformation("Диспетчер сбора данных полностью остановлен.");
         }
     }
