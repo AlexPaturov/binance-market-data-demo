@@ -63,22 +63,30 @@ public class FeatureCalculatorWorker : BackgroundService
         var ohlcvRepo = scope.ServiceProvider.GetRequiredService<IOhlcvRepository>(); 
         var featureRepo = scope.ServiceProvider.GetRequiredService<IFeatureRepository>();
         var analysisRepo = scope.ServiceProvider.GetRequiredService<IAnalysisRepository>();
-        var indicatorService = scope.ServiceProvider.GetRequiredService<IndicatorService>();
+        var indicatorService = scope.ServiceProvider.GetRequiredService<IIndicatorService>();
 
-        // 1. Находим время последней рассчитанной свечи, чтобы не делать лишнюю работу
-        var lastFeatureTime = await featureRepo.GetLastFeatureTimeAsync(symbol);
+        
+        _logger.LogDebug("[{Symbol}] Шаг 1: Получаем время последней рассчитанной свечи...", symbol);
+        var lastFeatureTime = await featureRepo.GetLastFeatureTimeAsync(symbol); // 1. Находим время последней рассчитанной свечи, чтобы не делать лишнюю работу
+        _logger.LogDebug("[{Symbol}] Последнее время: {Time}", symbol, lastFeatureTime);
         var startTime = lastFeatureTime ?? new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds();
 
-        // 2. Получаем свечи с "прогревом" (warmup)
-        var klines = (await ohlcvRepo.GetKlinesWithWarmupAsync(symbol, startTime, WarmupPeriod)).ToList();
+        
+        _logger.LogDebug("[{Symbol}] Шаг 2: Получаем свечи с warmup-периодом ({Warmup}) начиная с {StartTime}...", symbol, WarmupPeriod, startTime);
+        var klines = (await ohlcvRepo.GetKlinesWithWarmupAsync(symbol, startTime, WarmupPeriod)).ToList(); // 2. Получаем свечи с "прогревом" (warmup)
+        _logger.LogInformation("[{Symbol}] Получено {Count} свечей из базы.", symbol, klines.Count); // TODO -> LogDebug
+
         if (klines.Count <= WarmupPeriod)
         {
             _logger.LogInformation("[{Symbol}] Недостаточно новых свечей для расчета. Пропускаем.", symbol);
+            _logger.LogWarning("[{Symbol}] ПРОВЕРКА 1 НЕ ПРОЙДЕНА: Не найдено новых свечей. Выход.", symbol); // TODO -> LogDebug
             return;
         }
+        _logger.LogInformation("[{Symbol}] ПРОВЕРКА 1 ПРОЙДЕНА: Найдены новые свечи.", symbol); // TODO -> LogDebug
 
-        // 3. Рассчитываем все индикаторы, основанные на свечах (RSI, MACD, MA)
-        var features = indicatorService.CalculateAll(symbol, klines).ToList();
+        _logger.LogDebug("[{Symbol}] Шаг 3: Рассчитываем индикаторы на основе свечей...", symbol);
+        var features = indicatorService.CalculateAll(symbol, klines).ToList(); // 3. Рассчитываем все индикаторы, основанные на свечах (RSI, MACD, MA)
+        _logger.LogInformation("[{Symbol}] Рассчитано {Count} объектов FeatureData.", symbol, features.Count);  // TODO -> LogDebug
 
         // 4. Отдельно рассчитываем CVD по тиковым данным для нужного диапазона
         var firstNewKlineTime = features.FirstOrDefault(f => f.OpenTime >= startTime);
@@ -99,15 +107,19 @@ public class FeatureCalculatorWorker : BackgroundService
             }
         }
 
-        // 5. Отфильтровываем "прогревочный" период, чтобы не сохранять неполные данные
-        var finalFeaturesToSave = features.Where(f => f.OpenTime >= startTime).ToList();
+        _logger.LogDebug("[{Symbol}] Шаг 4: Фильтруем warmup-период...", symbol);
+        var finalFeaturesToSave = features.Where(f => f.OpenTime >= startTime).ToList(); // 5. Отфильтровываем "прогревочный" период, чтобы не сохранять неполные данные
+        _logger.LogInformation("[{Symbol}] Найдено {Count} финальных признаков для сохранения.", symbol, finalFeaturesToSave.Count); // TODO -> LogDebug
 
         if (finalFeaturesToSave.Any())
         {
-            // 6. Сохраняем рассчитанные признаки в базу данных
-            await featureRepo.UpsertFeaturesAsync(finalFeaturesToSave);
-            _logger.LogInformation("[{Symbol}] Успешно рассчитано и сохранено {Count} новых точек с признаками.",
-                symbol, finalFeaturesToSave.Count);
+            _logger.LogInformation("[{Symbol}] ПРОВЕРКА 2 ПРОЙДЕНА: Вызываем UpsertFeaturesAsync...", symbol); // TODO -> LogDebug
+            await featureRepo.UpsertFeaturesAsync(finalFeaturesToSave); // 6. Сохраняем рассчитанные признаки в базу данных
+            _logger.LogInformation("[{Symbol}] Успешно рассчитано и сохранено {Count} новых точек с признаками.",symbol, finalFeaturesToSave.Count); 
+        }
+        else
+        {
+            _logger.LogWarning("[{Symbol}] ПРОВЕРКА 2 НЕ ПРОЙДЕНА: Нет признаков для сохранения. Выход.", symbol);
         }
     }
 }

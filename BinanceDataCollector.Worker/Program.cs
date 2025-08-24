@@ -49,7 +49,7 @@ public class Program
                     services.AddScoped<IOhlcvRepository, OhlcvRepository>();
                     services.AddScoped<IFeatureRepository, FeatureRepository>();
                     services.AddScoped<IAnalysisRepository, AnalysisRepository>();
-                    services.AddTransient<IndicatorService>(); // Transient, т.к. он stateless 
+                    services.AddTransient<IIndicatorService, IndicatorService>();
                     services.AddHostedService<FeatureCalculatorWorker>();
                 })
             .Build();

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -11,7 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.8" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.8" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="Moq" Version="4.20.72" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="9.0.2" />
@@ -21,8 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\BinanceDataCollector.Application\BinanceDataCollector.Application.csproj" />
-    <ProjectReference Include="..\BinanceDataCollector.Domain\BinanceDataCollector.Domain.csproj" />
+    <ProjectReference Include="..\BinanceDataCollector.Worker\BinanceDataCollector.Worker.csproj" />
   </ItemGroup>
 
   <ItemGroup>
