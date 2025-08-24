@@ -366,3 +366,4 @@ FodyWeavers.xsd
 /docker-compose.yml
 /Documentation/migrationVariablesEnviroment.png
 /Documentation/VizualizationETLcontainer.png
+/sqlScripts/create/sp/sp_find_trade_gaps.sql
