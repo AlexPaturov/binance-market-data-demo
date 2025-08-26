@@ -85,6 +85,6 @@ public class TradeRepository : ITradeRepository
 
         // Увеличиваем таймаут, так как агрегация может быть долгой
         // 2. Выполняем как обычный ТЕКСТОВЫЙ запрос.
-        await db.ExecuteAsync(sql, commandTimeout: 120);
+        await db.ExecuteAsync(sql, commandTimeout: 600);
     }
 }

@@ -63,7 +63,11 @@ public  class AnalysisRepository : IAnalysisRepository
     {
         using var db = Connection;
         const string sql = "SELECT * FROM public.sp_find_trade_gaps(@Symbol, @MinGapInSeconds)";
-        return await db.QueryAsync<DataGap>(sql, new { Symbol = symbol, MinGapInSeconds = minGapInSeconds });
+        return await db.QueryAsync<DataGap>(
+            sql, 
+            new { Symbol = symbol, MinGapInSeconds = minGapInSeconds },
+            commandTimeout: 600
+            );
     }
 
 }
