@@ -1,9 +1,8 @@
 ﻿using BinanceDataCollector.Domain.Entities;
 
-namespace BinanceDataCollector.Application.Interfaces
+namespace BinanceDataCollector.Application.Interfaces;
+
+public interface IIndicatorService
 {
-    public interface IIndicatorService
-    {
-        IEnumerable<FeatureData> CalculateAll(string symbol, IEnumerable<Ohlcv> klines);
-    }
+    IEnumerable<FeatureData> CalculateAll(string symbol, IEnumerable<Ohlcv> klines);
 }

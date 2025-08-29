@@ -367,3 +367,5 @@ FodyWeavers.xsd
 /Documentation/migrationVariablesEnviroment.png
 /Documentation/VizualizationETLcontainer.png
 /sqlScripts/create/sp/sp_find_trade_gaps.sql
+/BinanceDataCollector.Worker/docs/miscelanious.md
+/Documentation
