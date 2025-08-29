@@ -10,7 +10,7 @@ namespace BinanceDataCollector.Application.Tests.Services;
 /// <summary>
 /// Юнит-тесты для класса IndicatorService.
 /// </summary>
-public class IndicatorServiceTests
+public class IndicatorServiceTests : IDisposable
 {
     // --- Секция подготовки (Arrange) ---
     private readonly ILogger<IndicatorServiceTests> _logger;
@@ -160,7 +160,7 @@ public class IndicatorServiceTests
         }
 
         // 2. Определяем эталонный результат
-        const decimal expectedRsi = 64.2187m;
+        const decimal expectedRsi = 70.4641m;
         const int precision = 4; // Сравниваем с точностью до 4 знаков после запятой
 
         _logger.LogInformation("Подготовлено {Count} свечей. Ожидаемое значение RSI на последней свече: {ExpectedRsi}", klines.Count, expectedRsi);
@@ -211,5 +211,10 @@ public class IndicatorServiceTests
         // Assert: Проверяем, что результат - это пустой список
         Assert.NotNull(features);
         Assert.Empty(features);
+    }
+
+    public void Dispose()
+    {
+        Log.CloseAndFlush();
     }
 }

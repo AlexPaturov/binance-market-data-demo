@@ -4,10 +4,10 @@
     "BinanceDataCollector.Worker": {
       "commandName": "Project",
       "dotnetRunMessages": true,
-      "environmentVariables": {
-      //   "DOTNET_ENVIRONMENT": "Development"
-      "DOTNET_ENVIRONMENT": "Production"
-      }
+        "environmentVariables": {
+           // "DOTNET_ENVIRONMENT": "Development"
+            "DOTNET_ENVIRONMENT": "Production"
+        }
     }
   }
 }

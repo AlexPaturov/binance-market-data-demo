@@ -15,4 +15,6 @@ public interface IOhlcvRepository
     /// <param name="warmupPeriod"></param>
     /// <returns></returns>
     Task<IEnumerable<Ohlcv>> GetKlinesWithWarmupAsync(string symbol, long startTime, int warmupPeriod); // на большом пероде 2-4 года будет миллионы записей в запросе -> оптимизация
+
+    Task<IEnumerable<Ohlcv>> GetAllBySymbolAsync(string symbol);
 }

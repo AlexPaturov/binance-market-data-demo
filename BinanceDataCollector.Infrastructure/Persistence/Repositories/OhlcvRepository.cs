@@ -30,4 +30,13 @@ public class OhlcvRepository : IOhlcvRepository
         using var db = Connection;
         return await db.QueryAsync<Ohlcv>(sql, new { Symbol = symbol, StartTime = startTime, WarmupPeriod = warmupPeriod });
     }
+
+    public async Task<IEnumerable<Ohlcv>> GetAllBySymbolAsync(string symbol)
+    {
+        const string sql = @"
+            SELECT * FROM public.""Ohlcv_1min"" WHERE ""Symbol"" = @Symbol ORDER BY ""OpenTime"";
+        ";
+        using var db = Connection;
+        return await db.QueryAsync<Ohlcv>(sql, new { Symbol = symbol });
+    }
 }
