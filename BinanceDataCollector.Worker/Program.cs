@@ -40,8 +40,8 @@ public class Program
                  services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();// 2. Регистрация репозитория для сбора топ-Х пар по которым необходимо собирать статистику
                  services.AddScoped<IOrderRepository, OrderRepository>();   // Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
                  services.AddScoped<ITradeRepository, TradeRepository>();
-                 services.AddHostedService<BinanceCollectorWorker>();          // Собираем данные от binance и сохраняем в базу
                  services.AddHostedService<SymbolUpdateWorker>();           // сервис обновления списка пар
+                 services.AddHostedService<BinanceCollectorWorker>();          // Собираем данные от binance и сохраняем в базу
                  //services.AddHostedService<QuickDataAuditorWorker>();       // Восстанавливаем дыры за 24 часа максимум
                  //services.AddHostedService<OhlcvAggregatorWorker>();        // Агрегация тиковых данных в свечи
                  //services.AddHostedService<DeepDataAuditorWorker>();        // Агрегация тиковых данных в свечи
