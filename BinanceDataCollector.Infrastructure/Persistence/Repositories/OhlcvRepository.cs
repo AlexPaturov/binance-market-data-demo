@@ -18,25 +18,36 @@ public class OhlcvRepository : IOhlcvRepository
     }
     private IDbConnection Connection => new NpgsqlConnection(_connectionString);
 
-
-    public async Task<IEnumerable<Ohlcv>> GetKlinesWithWarmupAsync(string symbol, long startTime, int warmupPeriod)
+    public async Task<IEnumerable<Ohlcv>> ClaimNewKlinesForProcessingAsync(int batchSize)
     {
-        const string sql = @"
-        (SELECT * FROM public.""Ohlcv_1min"" WHERE ""Symbol"" = @Symbol AND ""OpenTime"" < @StartTime ORDER BY ""OpenTime"" DESC LIMIT @WarmupPeriod)
-        UNION ALL
-        (SELECT * FROM public.""Ohlcv_1min"" WHERE ""Symbol"" = @Symbol AND ""OpenTime"" >= @StartTime)
-        ORDER BY ""OpenTime"" ASC;
-    ";
         using var db = Connection;
-        return await db.QueryAsync<Ohlcv>(sql, new { Symbol = symbol, StartTime = startTime, WarmupPeriod = warmupPeriod });
+        const string sql = "SELECT * FROM public.sp_claim_new_ohlcv_for_features(@BatchSize)";
+        return await db.QueryAsync<Ohlcv>(sql, new { BatchSize = batchSize });
     }
 
-    public async Task<IEnumerable<Ohlcv>> GetAllBySymbolAsync(string symbol)
+    public async Task MarkKlinesAsProcessedAsync(IEnumerable<long> openTimes)
     {
-        const string sql = @"
-            SELECT * FROM public.""Ohlcv_1min"" WHERE ""Symbol"" = @Symbol ORDER BY ""OpenTime"";
-        ";
         using var db = Connection;
-        return await db.QueryAsync<Ohlcv>(sql, new { Symbol = symbol });
+        const string sql = @"UPDATE public.""Ohlcv_1min"" SET ""ProcessingStatus"" = 'processed' 
+                         WHERE ""OpenTime"" = ANY(@OpenTimes)";
+        await db.ExecuteAsync(sql, new { OpenTimes = openTimes.ToList() });
     }
+
+    public async Task<IEnumerable<Ohlcv>> GetWarmupKlinesAsync(string symbol, long beforeTime, int limit)
+    {
+        using var db = Connection;
+
+        // Этот SQL-запрос выбирает 'limit' свечей для указанного символа,
+        // которые произошли до указанного времени, и сортирует их по убыванию,
+        // чтобы получить самые последние из "старых".
+        const string sql = @"
+        SELECT * 
+        FROM public.""Ohlcv_1min"" 
+        WHERE ""Symbol"" = @Symbol AND ""OpenTime"" < @BeforeTime 
+        ORDER BY ""OpenTime"" DESC 
+        LIMIT @Limit";
+
+        return await db.QueryAsync<Ohlcv>(sql, new { Symbol = symbol, BeforeTime = beforeTime, Limit = limit });
+    }
+
 }

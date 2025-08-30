@@ -10,4 +10,10 @@ public interface IFeatureRepository
     Task UpsertFeaturesAsync(IEnumerable<FeatureData> features);
 
     Task<long?> GetLastFeatureTimeAsync(string symbol);
+
+    /// <summary>
+    /// Вызывает новую процедуру для обновления статусов и вотермарки 
+    /// </summary>
+    /// <returns></returns>
+    Task MarkFeaturesAsProcessedAsync();
 }

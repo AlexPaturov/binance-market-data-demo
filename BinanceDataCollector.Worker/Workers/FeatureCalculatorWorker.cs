@@ -1,11 +1,11 @@
 ﻿using BinanceDataCollector.Application.Interfaces;
-using BinanceDataCollector.Application.Analytics;
 
 namespace BinanceDataCollector.Worker.Workers;
 
 /// <summary>
 /// Фоновый сервис, который отвечает за расчет всех технических индикаторов (признаков)
 /// и сохранение их в "витрину данных" Ohlcv_Features.
+/// Работает по инкрементальному принципу ("статусы + вотермарки").
 /// </summary>
 public class FeatureCalculatorWorker : BackgroundService
 {
@@ -13,8 +13,9 @@ public class FeatureCalculatorWorker : BackgroundService
     private readonly IServiceProvider _serviceProvider;
 
     // Конфигурация воркера
-    private readonly TimeSpan _calculationInterval = TimeSpan.FromMinutes(5);
-    private const int WarmupPeriod = 500; // Сколько свечей из прошлого нужно для "прогрева" индикаторов
+    private readonly TimeSpan _calculationInterval = TimeSpan.FromMinutes(1); // Проверяем часто, т.к. операция легкая
+    private const int BatchSize = 5000;      // Сколько свечей обрабатывать за один цикл
+    private const int WarmupPeriod = 2016000; // 200 недель - максимальный период для наших MA
 
     public FeatureCalculatorWorker(ILogger<FeatureCalculatorWorker> logger, IServiceProvider serviceProvider)
     {
@@ -24,140 +25,97 @@ public class FeatureCalculatorWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Воркер-калькулятор признаков (индикаторов) запущен.");
-        await Task.Delay(TimeSpan.FromMinutes(3), stoppingToken); // Первоначальная задержка
+        _logger.LogInformation("Воркер-калькулятор признаков запущен.");
+        await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken); // Первоначальная задержка
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await DoWorkAsync(stoppingToken); // Вызываем основную логику
+            try
+            {
+                await DoWorkAsync(stoppingToken);
+            }
+            catch (OperationCanceledException ex)
+            {
+                _logger.LogInformation("Штатное завершение");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Произошла непредвиденная ошибка в главном цикле FeatureCalculatorWorker.");
+            }
 
-            _logger.LogInformation("--- Расчет индикаторов завершен. Следующий запуск через {Interval}. ---", _calculationInterval);
             await Task.Delay(_calculationInterval, stoppingToken);
         }
     }
 
     public async Task DoWorkAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("--- Начинаем плановый расчет индикаторов ---");
-        using (var scope = _serviceProvider.CreateScope())
-        {
-            var symbolRepo = scope.ServiceProvider.GetRequiredService<ITrackedSymbolRepository>();
-            var activeSymbols = await symbolRepo.GetActiveSymbolsAsync();
+        _logger.LogInformation("--- Начинаем плановый расчет признаков ---");
+        using var scope = _serviceProvider.CreateScope();
 
-            _logger.LogInformation("Обнаружено {Count} активных символов для расчета.", activeSymbols.Count());
-
-            foreach (var symbol in activeSymbols)
-            {
-                if (stoppingToken.IsCancellationRequested) break;
-                try
-                {
-                    await ProcessSymbolFeaturesAsync(scope, symbol, stoppingToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "[{Symbol}] Непредвиденная ошибка при расчете признаков.", symbol);
-                }
-            }
-        }
-    }
-
-    //private async Task ProcessSymbolFeaturesAsync(IServiceScope scope, string symbol, CancellationToken stoppingToken)
-    //{
-    //    var ohlcvRepo = scope.ServiceProvider.GetRequiredService<IOhlcvRepository>();
-    //    var featureRepo = scope.ServiceProvider.GetRequiredService<IFeatureRepository>();
-    //    var analysisRepo = scope.ServiceProvider.GetRequiredService<IAnalysisRepository>();
-    //    var indicatorService = scope.ServiceProvider.GetRequiredService<IIndicatorService>();
-
-    //    _logger.LogDebug("[{Symbol}] Шаг 1: Получаем время последней рассчитанной свечи...", symbol);
-    //    var lastFeatureTime = await featureRepo.GetLastFeatureTimeAsync(symbol);
-
-    //    _logger.LogDebug("[{Symbol}] Последнее время: {Time}", symbol, lastFeatureTime);
-
-    //    var startTime = (lastFeatureTime.HasValue ? lastFeatureTime.Value : new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds());
-    //    _logger.LogDebug("[{Symbol}] Шаг 2: Получаем свечи с warmup-периодом ({Warmup}) начиная с {StartTime}...", symbol, WarmupPeriod, startTime);
-
-    //    var klines = (await ohlcvRepo.GetKlinesWithWarmupAsync(symbol, startTime, WarmupPeriod)).ToList();
-    //    _logger.LogDebug("[{Symbol}] Получено {Count} свечей из базы.", symbol, klines.Count);
-
-    //    // --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    //    // Ищем хотя бы одну свечу, время которой СТРОГО БОЛЬШЕ, чем время последнего расчета.
-    //    // Это более надежная проверка, чем простое сравнение количества.
-    //    if (!klines.Any(k => k.OpenTime > (lastFeatureTime ?? 0)))
-    //    {
-    //        _logger.LogInformation("[{Symbol}] Не найдено НОВЫХ свечей (OpenTime > {lastFeatureTime}) для расчета. Пропускаем.", symbol, lastFeatureTime);
-    //        return;
-    //    }
-    //    _logger.LogDebug("[{Symbol}] ПРОВЕРКА 1 ПРОЙДЕНА: Найдены новые свечи.", symbol);
-
-    //    _logger.LogDebug("[{Symbol}] Шаг 3: Рассчитываем индикаторы на основе свечей...", symbol);
-    //    var features = indicatorService.CalculateAll(symbol, klines).ToList();
-    //    _logger.LogDebug("[{Symbol}] Рассчитано {Count} объектов FeatureData.", symbol, features.Count);
-
-    //    // 4. Отдельно рассчитываем CVD по тиковым данным для нужного диапазона
-    //    var firstNewKline = klines.FirstOrDefault(f => f.OpenTime > (lastFeatureTime ?? 0));
-    //    if (firstNewKline != null)
-    //    {
-    //        var cvdStartTime = DateTimeOffset.FromUnixTimeMilliseconds(firstNewKline.OpenTime).DateTime;
-    //        var cvdEndTime = DateTime.UtcNow;
-    //        var cvdData = (await analysisRepo.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime)).ToList();
-
-    //        // "Обогащаем" наши данные значениями CVD
-    //        foreach (var feature in features)
-    //        {
-    //            var cvdPoint = cvdData.LastOrDefault(c => c.OpenTime == feature.OpenTime);
-    //            if (cvdPoint != null)
-    //            {
-    //                feature.Cvd = cvdPoint.Cvd;
-    //            }
-    //        }
-    //    }
-
-    //    _logger.LogDebug("[{Symbol}] Шаг 4: Фильтруем warmup-период...", symbol);
-    //    // Отбираем только те признаки, время которых СТРОГО БОЛЬШЕ, чем время последнего сохранения
-    //    var finalFeaturesToSave = features.Where(f => f.OpenTime > (lastFeatureTime ?? 0)).ToList();
-    //    _logger.LogDebug("[{Symbol}] Найдено {Count} финальных признаков для сохранения.", symbol, finalFeaturesToSave.Count);
-
-    //    if (finalFeaturesToSave.Any())
-    //    {
-    //        _logger.LogDebug("[{Symbol}] ПРОВЕРКА 2 ПРОЙДЕНА: Вызываем UpsertFeaturesAsync...", symbol);
-    //        await featureRepo.UpsertFeaturesAsync(finalFeaturesToSave);
-    //        _logger.LogInformation("[{Symbol}] Успешно рассчитано и сохранено {Count} новых точек с признаками.", symbol, finalFeaturesToSave.Count);
-    //    }
-    //    else
-    //    {
-    //        _logger.LogWarning("[{Symbol}] ПРОВЕРКА 2 НЕ ПРОЙДЕНА: После расчета и фильтрации не осталось новых признаков для сохранения.", symbol);
-    //    }
-    //}
-
-    private async Task ProcessSymbolFeaturesAsync(IServiceScope scope, string symbol, CancellationToken stoppingToken)
-    {
         var ohlcvRepo = scope.ServiceProvider.GetRequiredService<IOhlcvRepository>();
         var featureRepo = scope.ServiceProvider.GetRequiredService<IFeatureRepository>();
         var indicatorService = scope.ServiceProvider.GetRequiredService<IIndicatorService>();
         var analysisRepo = scope.ServiceProvider.GetRequiredService<IAnalysisRepository>();
 
-        _logger.LogDebug("[{Symbol}] Получаем ВСЕ свечи из базы...", symbol);
+        // 1. "Резервируем" и получаем новую порцию работы (свечи со статусом 'new')
+        var newKlinesToProcess = (await ohlcvRepo.ClaimNewKlinesForProcessingAsync(BatchSize)).ToList();
 
-        // --- ГЛАВНОЕ ИЗМЕНЕНИЕ ---
-        // Мы больше не пытаемся быть умными. Мы просто берем ВСЕ свечи.
-        // IOhlcvRepository должен иметь метод GetAllBySymbolAsync
-        var klines = (await ohlcvRepo.GetAllBySymbolAsync(symbol)).ToList();
-
-        if (!klines.Any())
+        if (!newKlinesToProcess.Any())
         {
-            _logger.LogInformation("[{Symbol}] Нет свечей для обработки.", symbol);
+            _logger.LogInformation("Нет новых свечей для расчета признаков. Цикл пропущен.");
             return;
         }
 
-        _logger.LogDebug("[{Symbol}] Получено {Count} свечей. Рассчитываем индикаторы...", symbol, klines.Count);
-        var features = indicatorService.CalculateAll(symbol, klines).ToList();
+        _logger.LogInformation("Получено {Count} новых свечей для обработки.", newKlinesToProcess.Count);
 
-        // ... (расчет и обогащение CVD, этот блок можно оставить) ...
+        var klinesBySymbol = newKlinesToProcess.GroupBy(k => k.Symbol);
 
-        if (features.Any())
+        foreach (var group in klinesBySymbol)
         {
-            _logger.LogInformation("[{Symbol}] Сохраняем {Count} записей с признаками.", symbol, features.Count);
-            await featureRepo.UpsertFeaturesAsync(features);
+            if (stoppingToken.IsCancellationRequested) break;
+
+            var symbol = group.Key;
+            var newKlinesForSymbol = group.ToList();
+
+            try
+            {
+                // 2. Подгружаем "хвост" истории для "прогрева" индикаторов
+                var firstNewTime = newKlinesForSymbol.Min(k => k.OpenTime);
+                var historyKlines = await ohlcvRepo.GetWarmupKlinesAsync(symbol, firstNewTime, WarmupPeriod);
+                var allKlines = historyKlines.Concat(newKlinesForSymbol).OrderBy(k => k.OpenTime);
+
+                // 3. Рассчитываем индикаторы на основе свечей
+                var features = indicatorService.CalculateAll(symbol, allKlines).ToList();
+
+                // 4. Обогащаем данные индикатором CVD, который считается по тикам
+                var cvdStartTime = DateTimeOffset.FromUnixTimeMilliseconds(firstNewTime).DateTime;
+                var cvdEndTime = DateTimeOffset.FromUnixTimeMilliseconds(newKlinesForSymbol.Max(k => k.OpenTime)).DateTime.AddMinutes(1);
+                var cvdData = (await analysisRepo.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime)).ToList();
+
+                foreach (var feature in features)
+                {
+                    var cvdPoint = cvdData.FirstOrDefault(c => c.OpenTime == feature.OpenTime);
+                    if (cvdPoint != null) feature.Cvd = cvdPoint.Cvd;
+                }
+
+                // 5. Сохраняем только НОВЫЕ признаки (отсекаем "прогрев")
+                var featuresToSave = features.Where(f => f.OpenTime >= firstNewTime).ToList();
+                if (featuresToSave.Any())
+                {
+                    await featureRepo.UpsertFeaturesAsync(featuresToSave);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[{Symbol}] Ошибка при расчете признаков для символа.", symbol);
+                // В этой архитектуре мы не откатываем статус, а просто пробуем снова в след. цикле
+            }
         }
+
+        // 6. Помечаем нашу порцию работы как полностью выполненную
+        var processedTimes = newKlinesToProcess.Select(k => k.OpenTime).Distinct();
+        await ohlcvRepo.MarkKlinesAsProcessedAsync(processedTimes);
+
+        _logger.LogInformation("Успешно обработано {Count} свечей.", newKlinesToProcess.Count);
     }
 }

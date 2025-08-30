@@ -8,13 +8,25 @@ namespace BinanceDataCollector.Application.Interfaces;
 public interface IOhlcvRepository
 {
     /// <summary>
-    /// Запрос данных для прогрева 
+    /// "Резервирует" и возвращает новую пачку свечей для обработки
     /// </summary>
-    /// <param name="symbol"></param>
-    /// <param name="startTime"></param>
-    /// <param name="warmupPeriod"></param>
+    /// <param name="batchSize"></param>
     /// <returns></returns>
-    Task<IEnumerable<Ohlcv>> GetKlinesWithWarmupAsync(string symbol, long startTime, int warmupPeriod); // на большом пероде 2-4 года будет миллионы записей в запросе -> оптимизация
+    Task<IEnumerable<Ohlcv>> ClaimNewKlinesForProcessingAsync(int batchSize);
 
-    Task<IEnumerable<Ohlcv>> GetAllBySymbolAsync(string symbol);
+    /// <summary>
+    /// Помечает свечи как полностью обработанные
+    /// </summary>
+    /// <param name="openTimes"></param>
+    /// <returns></returns>
+    Task MarkKlinesAsProcessedAsync(IEnumerable<long> openTimes);
+
+    /// <summary>
+    /// Получает "хвост" исторических данных (свечей), необходимых для "прогрева" индикаторов.
+    /// </summary>
+    /// <param name="symbol">Символ.</param>
+    /// <param name="beforeTime">Временная метка, ДО которой нужно выбрать данные.</param>
+    /// <param name="limit">Количество свечей для выборки.</param>
+    /// <returns>Коллекция исторических свечей.</returns>
+    Task<IEnumerable<Ohlcv>> GetWarmupKlinesAsync(string symbol, long beforeTime, int limit);
 }

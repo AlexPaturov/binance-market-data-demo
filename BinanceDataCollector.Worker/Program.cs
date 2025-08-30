@@ -1,12 +1,13 @@
 using BinanceDataCollector.Application.Analytics;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Application.Services;
+using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.MarketScreenService;
 using BinanceDataCollector.Worker.Workers;
-using Microsoft.Extensions.DependencyInjection;
-using Serilog; // <-- 1. Добавляем using
+using Serilog;
+using System.Threading.Channels;
 
 namespace BinanceDataCollector.Worker;
 
@@ -25,7 +26,7 @@ public class Program
         {
 
             var host = Host.CreateDefaultBuilder(args)
-        // --- 3. Подключаем Serilog к системе логирования .NET ---
+            // --- 3. Подключаем Serilog к системе логирования .NET ---
             .UseSerilog((context, services, configuration) => configuration
                 .ReadFrom.Configuration(context.Configuration) // Читаем настройки из appsettings.json
                 .ReadFrom.Services(services)
@@ -34,26 +35,28 @@ public class Program
                 // --- 4. Настраиваем отправку в Seq ---
                 .WriteTo.Seq(serverUrl: context.Configuration["Seq:ServerUrl"])) // Берем URL из конфига
              .ConfigureServices((hostContext, services) => {
-                    IConfiguration configuration = hostContext.Configuration; // Получаем конфигурацию (appsettings.json)
-                    services.AddScoped<IDataSyncService, DataSyncService>();   // 1. Регистрация сервисов приложения
-                    services.AddScoped<IBinanceService, BinanceService>();      // 4. Регистрация внешних сервисов
-                    services.AddTransient<MarketScreener>(); // Сканер можно делать Transient
-                    services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();    // 2. Регистрация репозитория для сбора топ-Х пар по которым необходимо собирать статистику
-                    services.AddScoped<IOrderRepository, OrderRepository>();    // 3. Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
-                    services.AddScoped<ITradeRepository, TradeRepository>();
-                    services.AddHostedService<BinanceTradesWorker>();           // 5. Регистрация самого фонового воркера
-                    services.AddHostedService<SymbolUpdateWorker>(); //  Запускаем наш новый сервис обновления списка пар
-                    services.AddHostedService<QuickDataAuditorWorker>(); // Восстанавливаем дыры за 24 часа максимум
-                    services.AddHostedService<OhlcvAggregatorWorker>(); // Агрегация тиковых данных в свечи
-                    services.AddHostedService<DeepDataAuditorWorker>(); // Агрегация тиковых данных в свечи
+                 IConfiguration configuration = hostContext.Configuration;               // Получаем конфигурацию (appsettings.json)
+                 services.AddSingleton(Channel.CreateUnbounded<Trade>());                   // Центральная очередь записи в базу
+                 services.AddScoped<IDataSyncService, DataSyncService>();                   // 1. Регистрация сервисов приложения
+                 services.AddScoped<IBinanceService, BinanceService>();                  // 4. Регистрация внешних сервисов
+                 services.AddTransient<MarketScreener>();                                // Сканер можно делать Transient
+                 services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();// 2. Регистрация репозитория для сбора топ-Х пар по которым необходимо собирать статистику
+                 services.AddScoped<IOrderRepository, OrderRepository>();   // Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
+                 services.AddScoped<ITradeRepository, TradeRepository>();
+                 services.AddHostedService<DatabaseWriterWorker>();         // запись в базу данных
+                 services.AddHostedService<BinanceTradesWorker>();          // Регистрация самого фонового воркера
+                 services.AddHostedService<SymbolUpdateWorker>();           // Запускаем наш новый сервис обновления списка пар
+                 services.AddHostedService<QuickDataAuditorWorker>();       // Восстанавливаем дыры за 24 часа максимум
+                 //services.AddHostedService<OhlcvAggregatorWorker>();        // Агрегация тиковых данных в свечи
+                 //services.AddHostedService<DeepDataAuditorWorker>();        // Агрегация тиковых данных в свечи
+                 //services.AddHostedService<FeatureCalculatorWorker>();
 
-                    // расчёт аналитики
-                    services.AddScoped<IOhlcvRepository, OhlcvRepository>();
-                    services.AddScoped<IFeatureRepository, FeatureRepository>();
-                    services.AddScoped<IAnalysisRepository, AnalysisRepository>();
-                    services.AddTransient<IIndicatorService, IndicatorService>();
-                    services.AddHostedService<FeatureCalculatorWorker>();
-                })
+                 // расчёт аналитики
+                 services.AddScoped<IOhlcvRepository, OhlcvRepository>();
+                 services.AddScoped<IFeatureRepository, FeatureRepository>();
+                 services.AddScoped<IAnalysisRepository, AnalysisRepository>();
+                 services.AddTransient<IIndicatorService, IndicatorService>();
+             })
             .Build();
 
             Log.Information("Запуск хоста...");
