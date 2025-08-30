@@ -42,7 +42,7 @@ public class Program
                  services.AddScoped<ITradeRepository, TradeRepository>();
                  services.AddHostedService<SymbolUpdateWorker>();           // сервис обновлени€ списка пар
                  services.AddHostedService<BinanceCollectorWorker>();          // —обираем данные от binance и сохран€ем в базу
-                 //services.AddHostedService<QuickDataAuditorWorker>();       // ¬осстанавливаем дыры за 24 часа максимум
+                 services.AddHostedService<QuickDataAuditorWorker>();       // ¬осстанавливаем дыры за 24 часа максимум
                  //services.AddHostedService<OhlcvAggregatorWorker>();        // јгрегаци€ тиковых данных в свечи
                  //services.AddHostedService<DeepDataAuditorWorker>();        // јгрегаци€ тиковых данных в свечи
                  //services.AddHostedService<FeatureCalculatorWorker>();
