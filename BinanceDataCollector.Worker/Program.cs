@@ -35,15 +35,13 @@ public class Program
                 .WriteTo.Seq(serverUrl: context.Configuration["Seq:ServerUrl"])) // Берем URL из конфига
              .ConfigureServices((hostContext, services) => {
                  IConfiguration configuration = hostContext.Configuration;               // Получаем конфигурацию (appsettings.json)
-                 services.AddSingleton(Channel.CreateUnbounded<Trade>());                   // Центральная очередь записи в базу
                  services.AddScoped<IBinanceService, BinanceService>();                  // 4. Регистрация внешних сервисов
                  services.AddTransient<MarketScreener>();                                // Сканер можно делать Transient
                  services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();// 2. Регистрация репозитория для сбора топ-Х пар по которым необходимо собирать статистику
                  services.AddScoped<IOrderRepository, OrderRepository>();   // Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
                  services.AddScoped<ITradeRepository, TradeRepository>();
-                  //services.AddHostedService<DatabaseWriterWorker>();         // запись в базу данных
-                 services.AddHostedService<BinanceCollectorWorker>();          // 
-                 //services.AddHostedService<SymbolUpdateWorker>();           // Запускаем наш новый сервис обновления списка пар
+                 services.AddHostedService<BinanceCollectorWorker>();          // Собираем данные от binance и сохраняем в базу
+                 services.AddHostedService<SymbolUpdateWorker>();           // сервис обновления списка пар
                  //services.AddHostedService<QuickDataAuditorWorker>();       // Восстанавливаем дыры за 24 часа максимум
                  //services.AddHostedService<OhlcvAggregatorWorker>();        // Агрегация тиковых данных в свечи
                  //services.AddHostedService<DeepDataAuditorWorker>();        // Агрегация тиковых данных в свечи
