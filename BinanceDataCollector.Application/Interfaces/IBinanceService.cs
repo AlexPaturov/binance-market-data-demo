@@ -11,12 +11,12 @@ namespace BinanceDataCollector.Application.Interfaces;
 public interface IBinanceService
 {
     /// <summary>
-    /// Подписывается на поток сделок в реальном времени для одного символа.
+    /// Принимает список символов и Action<Trade> Подписывается на поток сделок в реальном времени для всех.
     /// </summary>
-    /// <param name="symbol">Символ для отслеживания.</param>
+    /// <param name="symbols">Символ для отслеживания.</param>
     /// <param name="onTradeReceived">Действие, которое будет выполняться при получении каждой новой сделки.</param>
     /// <param name="cancellationToken">Токен для отмены подписки.</param>
-    Task SubscribeToTradesAsync(string symbol, Func<Trade, Task> onTradeReceived, CancellationToken cancellationToken);
+    Task SubscribeToMultipleTradesAsync(IEnumerable<string> symbols, Action<Trade> onTradeReceived, CancellationToken cancellationToken);
 
     /// <summary>
     /// Получает информацию о всех символах, торгуемых на бирже.

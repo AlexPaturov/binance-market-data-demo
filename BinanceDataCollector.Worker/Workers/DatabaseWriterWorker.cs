@@ -30,34 +30,85 @@ public class DatabaseWriterWorker : BackgroundService
     {
         _logger.LogInformation("Воркер записи в базу данных запущен.");
         var buffer = new List<Trade>();
-        var timer = new PeriodicTimer(TimeSpan.FromSeconds(2)); // Таймер на 2 секунды
+        // Максимальный размер пачки для записи
+        const int batchSize = 10000;
+        // Максимальное время ожидания перед принудительной записью
+        var flushTimeout = TimeSpan.FromSeconds(2);
 
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        while (!stoppingToken.IsCancellationRequested)
         {
-            // Вычитываем все, что есть в очереди на данный момент
-            while (_tradeQueueReader.TryRead(out var trade))
+            try
             {
-                buffer.Add(trade);
-            }
+                // 1. Асинхронно ждем ПЕРВОГО элемента в очереди
+                var firstTrade = await _tradeQueueReader.ReadAsync(stoppingToken);
+                buffer.Add(firstTrade);
 
-            if (buffer.Count > 0)
-            {
+                // 2. Быстро собираем "хвост" - все, что УЖЕ есть в очереди,
+                // но не больше, чем наш размер пачки.
+                while (buffer.Count < batchSize && _tradeQueueReader.TryRead(out var nextTrade))
+                {
+                    buffer.Add(nextTrade);
+                }
+
+                // 3. Если мы собрали полную пачку, сразу ее сохраняем.
+                if (buffer.Count >= batchSize)
+                {
+                    await SaveBufferAsync(buffer, stoppingToken);
+                    continue; // Начинаем новый цикл немедленно
+                }
+
+                // 4. Если пачка неполная, ждем еще немного, вдруг что-то придет.
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                timeoutCts.CancelAfter(flushTimeout);
                 try
                 {
-                    using var scope = _serviceProvider.CreateScope();
-                    var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
+                    // Ждем, пока не придет ЕЩЕ ОДИН элемент или не сработает таймаут
+                    await _tradeQueueReader.WaitToReadAsync(timeoutCts.Token);
 
-                    _logger.LogInformation("Сохраняем {Count} сделок в базу данных...", buffer.Count);
-                    await tradeRepo.BulkInsertAsync(buffer);
-                    buffer.Clear();
+                    // Если дождались, добираем остатки
+                    while (buffer.Count < batchSize && _tradeQueueReader.TryRead(out var finalTrade))
+                    {
+                        buffer.Add(finalTrade);
+                    }
                 }
-                catch (Exception ex)
+                catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
                 {
-                    _logger.LogError(ex, "Ошибка при сохранении пачки сделок. {Count} сделок могут быть утеряны.", buffer.Count);
-                    // В реальной системе здесь нужна логика сохранения "битой" пачки в файл
-                    buffer.Clear(); // Очищаем буфер, чтобы не пытаться записать те же данные снова
+                    // Это не ошибка, это сработал наш таймаут. Просто идем сохранять то, что есть.
                 }
+
+                // 5. Сохраняем все, что накопилось.
+                await SaveBufferAsync(buffer, stoppingToken);
             }
+            catch (OperationCanceledException)
+            {
+                break; // Штатный выход
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Критическая ошибка в DatabaseWriterWorker.");
+                await Task.Delay(5000, stoppingToken); // Пауза в случае серьезного сбоя
+            }
+        }
+    }
+
+    private async Task SaveBufferAsync(List<Trade> buffer, CancellationToken stoppingToken)
+    {
+        if (!buffer.Any()) return;
+
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
+            _logger.LogInformation("Сохраняем {Count} сделок в базу данных...", buffer.Count);
+            await tradeRepo.BulkInsertAsync(buffer);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Ошибка при сохранении пачки из {Count} сделок.", buffer.Count);
+        }
+        finally
+        {
+            buffer.Clear();
         }
     }
 }
