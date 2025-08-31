@@ -8,6 +8,7 @@ public class HistoricalAuditorWorker : BackgroundService
     private readonly ILogger<HistoricalAuditorWorker> _logger;
     private readonly IServiceProvider _serviceProvider;
 
+    //private readonly TimeSpan _auditInterval = TimeSpan.FromHours(12);
     private readonly TimeSpan _auditInterval = TimeSpan.FromHours(1);
     private readonly TimeSpan _failedBlockRetryInterval = TimeSpan.FromDays(1);
     private const int MaxRetries = 10;
