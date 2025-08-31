@@ -20,6 +20,13 @@ public  class AnalysisRepository : IAnalysisRepository
 
     private IDbConnection Connection => new NpgsqlConnection(_connectionString);
 
+    /// <summary>
+    /// МЕТОД ДЛЯ РАСЧЕТА CVD
+    /// </summary>
+    /// <param name="symbol"></param>
+    /// <param name="startTime"></param>
+    /// <param name="endTime"></param>
+    /// <returns></returns>
     public async Task<IEnumerable<CvdResult>> GetCvdForOhlcvAsync(string symbol, DateTime startTime, DateTime endTime)
     {
         var startTimeMs = new DateTimeOffset(startTime.ToUniversalTime()).ToUnixTimeMilliseconds();
@@ -70,4 +77,50 @@ public  class AnalysisRepository : IAnalysisRepository
             );
     }
 
+    /// <summary>
+    ///  Получает статистику по качеству данных (статусам блоков аудита)
+    ///  для указанного символа и временного диапазона.
+    /// </summary>
+    /// <param name="symbol"></param>
+    /// <param name="startDate"></param>
+    /// <param name="endDate"></param>
+    /// <returns></returns>
+    /// <exception cref="NotImplementedException"></exception>
+    public async Task<IEnumerable<DataQualityStat>> GetDataQualityStatsAsync(string symbol, DateOnly startDate, DateOnly endDate)
+    {
+        using var db = Connection;
+        const string sql = "SELECT * FROM public.sp_get_data_quality_stats(@Symbol, @StartDate, @EndDate)";
+
+        var parameters = new
+        {
+            Symbol = symbol,
+            StartDate = startDate.ToDateTime(TimeOnly.MinValue), // Преобразуем DateOnly в DateTime для Dapper/Npgsql
+            EndDate = endDate.ToDateTime(TimeOnly.MinValue)
+        };
+
+        return await db.QueryAsync<DataQualityStat>(sql, parameters);
+    }
+
+    /// <summary>
+    /// МЕТОД ДЛЯ ПОИСКА ДЫР В ОКНЕ
+    /// </summary>
+    /// <param name="symbol"></param>
+    /// <param name="startTime"></param>
+    /// <param name="endTime"></param>
+    /// <returns></returns>
+    public async Task<IEnumerable<DataGap>> FindGapsInWindowAsync(string symbol, DateTime startTime, DateTime endTime)
+    {
+        using var db = Connection;
+        const string sql = "SELECT * FROM public.sp_find_gaps_in_window(@Symbol, @StartTimeMs, @EndTimeMs, @MinGapSeconds)";
+
+        var parameters = new
+        {
+            Symbol = symbol,
+            StartTimeMs = new DateTimeOffset(startTime).ToUnixTimeMilliseconds(),
+            EndTimeMs = new DateTimeOffset(endTime).ToUnixTimeMilliseconds(),
+            MinGapSeconds = 300 // Минимальный разрыв в 5 минут, чтобы считать дырой
+        };
+
+        return await db.QueryAsync<DataGap>(sql, parameters, commandTimeout: 600);
+    }
 }

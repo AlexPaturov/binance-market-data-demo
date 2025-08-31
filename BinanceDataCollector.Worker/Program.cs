@@ -6,6 +6,8 @@ using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.MarketScreenService;
 using BinanceDataCollector.Worker.Workers;
 using Serilog;
+using Serilog.Enrichers;
+using Serilog.Enrichers.WithCaller;
 using System.Threading.Channels;
 
 namespace BinanceDataCollector.Worker;
@@ -16,36 +18,43 @@ public class Program
     {
         // --- 2. Настраиваем "загрузочный" логгер Serilog ---
         // Это позволит логировать ошибки, которые происходят ДО создания хоста
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("appsettings.json")
+            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json", optional: true)
+            .Build();
+
         Log.Logger = new LoggerConfiguration()
+            .ReadFrom.Configuration(configuration) // Читаем ВСЕ настройки из appsettings
             .Enrich.FromLogContext()
-            .WriteTo.Console()
-            .CreateBootstrapLogger();
+            .Enrich.WithProcessId()
+            .Enrich.WithThreadId()
+            .Enrich.WithCaller()
+            .CreateLogger();
+
+        //Log.Logger = new LoggerConfiguration()
+        //    .Enrich.FromLogContext()
+        //    .WriteTo.Console()
+        //    .CreateBootstrapLogger();
 
         try
         {
-
+            Log.Information("Запускаем приложение...");
             var host = Host.CreateDefaultBuilder(args)
-            // --- 3. Подключаем Serilog к системе логирования .NET ---
-            .UseSerilog((context, services, configuration) => configuration
-                .ReadFrom.Configuration(context.Configuration) // Читаем настройки из appsettings.json
-                .ReadFrom.Services(services)
-                .Enrich.FromLogContext()
-                .WriteTo.Console()
-                // --- 4. Настраиваем отправку в Seq ---
-                .WriteTo.Seq(serverUrl: context.Configuration["Seq:ServerUrl"])) // Берем URL из конфига
              .ConfigureServices((hostContext, services) => {
-                 IConfiguration configuration = hostContext.Configuration;               // Получаем конфигурацию (appsettings.json)
-                 services.AddScoped<IBinanceService, BinanceService>();                  // 4. Регистрация внешних сервисов
-                 services.AddTransient<MarketScreener>();                                // Сканер можно делать Transient
+                 IConfiguration configuration = hostContext.Configuration;              // Получаем конфигурацию (appsettings.json)
+                 services.AddScoped<IBinanceService, BinanceService>();                 // 4. Регистрация внешних сервисов
+                 services.AddTransient<MarketScreener>();                               // Сканер можно делать Transient
                  services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();// 2. Регистрация репозитория для сбора топ-Х пар по которым необходимо собирать статистику
                  services.AddScoped<IOrderRepository, OrderRepository>();   // Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
                  services.AddScoped<ITradeRepository, TradeRepository>();
-                 services.AddHostedService<SymbolUpdateWorker>();           // сервис обновления списка пар
-                 services.AddHostedService<BinanceCollectorWorker>();          // Собираем данные от binance и сохраняем в базу
-                 services.AddHostedService<QuickDataAuditorWorker>();       // Восстанавливаем дыры за 24 часа максимум
-                 //services.AddHostedService<OhlcvAggregatorWorker>();        // Агрегация тиковых данных в свечи
-                 //services.AddHostedService<DeepDataAuditorWorker>();        // Агрегация тиковых данных в свечи
-                 //services.AddHostedService<FeatureCalculatorWorker>();
+                 services.AddScoped<IAuditRepository, AuditRepository>();
+                 services.AddHostedService<SymbolUpdateWorker>();               // сервис обновления списка пар
+                 services.AddHostedService<BinanceCollectorWorker>();           // Собираем данные от binance и сохраняем в базу
+                 services.AddHostedService<QuickDataAuditorWorker>();           // Восстанавливаем дыры за 24 часа максимум
+                 services.AddHostedService<OhlcvAggregatorWorker>();            // Агрегация тиковых данных в свечи
+                 services.AddHostedService<HistoricalAuditorWorker>();          // Агрегация тиковых данных в свечи
+                 services.AddHostedService<FeatureCalculatorWorker>();
 
                  // расчёт аналитики
                  services.AddScoped<IOhlcvRepository, OhlcvRepository>();
@@ -53,6 +62,7 @@ public class Program
                  services.AddScoped<IAnalysisRepository, AnalysisRepository>();
                  services.AddTransient<IIndicatorService, IndicatorService>();
              })
+            .UseSerilog()
             .Build();
 
             Log.Information("Запуск хоста...");
@@ -64,7 +74,6 @@ public class Program
         }
         finally
         {
-            // 6. Гарантируем, что все логи будут отправлены перед закрытием
             Log.CloseAndFlush();
         }
     }
