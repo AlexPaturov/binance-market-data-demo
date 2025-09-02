@@ -52,9 +52,9 @@ public class Program
                  services.AddHostedService<SymbolUpdateWorker>();               // сервис обновления списка пар
                  services.AddHostedService<BinanceCollectorWorker>();           // Собираем данные от binance и сохраняем в базу
                  services.AddHostedService<QuickDataAuditorWorker>();           // Восстанавливаем дыры за 24 часа максимум
-                 services.AddHostedService<OhlcvAggregatorWorker>();            // Агрегация тиковых данных в свечи
                  services.AddHostedService<HistoricalAuditorWorker>();          // Агрегация тиковых данных в свечи
-                 services.AddHostedService<FeatureCalculatorWorker>();
+                 services.AddHostedService<OhlcvAggregatorWorker>();            // Агрегация тиковых данных в свечи
+                 //services.AddHostedService<FeatureCalculatorWorker>();
 
                  // расчёт аналитики
                  services.AddScoped<IOhlcvRepository, OhlcvRepository>();

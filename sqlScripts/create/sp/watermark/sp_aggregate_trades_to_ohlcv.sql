@@ -1,50 +1,55 @@
 CREATE OR REPLACE FUNCTION public.sp_aggregate_trades_to_ohlcv()
 RETURNS VOID AS $$
 DECLARE
-    -- Переменные для хранения "окна" обработки
     start_timestamp BIGINT;
     end_timestamp BIGINT;
-    last_processed_trade_time BIGINT;
+    interval BIGINT := 60000;
 BEGIN
-    -- 1. Получаем "вотермарку" - нашу точку старта
+    -- 1. Получаем "вотермарку"
     SELECT "LastProcessedTimestamp" INTO start_timestamp
     FROM public."Processing_Watermarks"
     WHERE "ProcessName" = 'OhlcvAggregator';
 
-    -- 2. Находим время последней доступной сделки, чтобы определить конец "окна"
+    -- 2. Находим конец "окна"
     SELECT MAX("TradeTime") INTO end_timestamp
     FROM public."Trades"
     WHERE "ProcessingStatus" = 'new' AND "TradeTime" >= start_timestamp;
 
-    -- Если новых сделок нет, просто выходим
-    IF end_timestamp IS NULL THEN
-        RETURN;
-    END IF;
+    IF end_timestamp IS NULL THEN RETURN; END IF;
 
-    -- 3. Агрегируем только "новые" тики в найденном "окне"
-    CREATE TEMP TABLE NewCandles ON COMMIT DROP AS
+    -- 3. Агрегируем данные, используя оконные функции для исключения дубликатов
     WITH RelevantTrades AS (
         SELECT * FROM public."Trades"
         WHERE "ProcessingStatus" = 'new'
           AND "TradeTime" >= start_timestamp
           AND "TradeTime" <= end_timestamp
     ),
-    Aggregates AS (
-        SELECT "Symbol", ("TradeTime" / 60000) * 60000 AS "OpenTime", MIN("Price") AS "LowPrice", MAX("Price") AS "HighPrice",
-               SUM("Quantity") AS "Volume", MIN("TradeId") AS "FirstTradeId", MAX("TradeId") AS "LastTradeId"
-        FROM RelevantTrades GROUP BY 1, 2
+    CandleData AS (
+        SELECT
+            "Symbol",
+            ("TradeTime" / interval) * interval AS "OpenTime",
+            first_value("Price") OVER (PARTITION BY "Symbol", ("TradeTime" / interval) ORDER BY "TradeTime" ASC, "TradeId" ASC) AS "OpenPrice",
+            last_value("Price") OVER (PARTITION BY "Symbol", ("TradeTime" / interval) ORDER BY "TradeTime" ASC, "TradeId" ASC ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS "ClosePrice",
+            "Price",
+            "Quantity"
+        FROM RelevantTrades
+    ),
+    FinalCandles AS (
+        -- Теперь группируем, чтобы получить ОДНУ строку на свечу
+        SELECT
+            "Symbol",
+            "OpenTime",
+            MIN("OpenPrice") AS "OpenPrice",
+            MAX("Price") AS "HighPrice",
+            MIN("Price") AS "LowPrice",
+            MIN("ClosePrice") AS "ClosePrice",
+            SUM("Quantity") AS "Volume"
+        FROM CandleData
+        GROUP BY "Symbol", "OpenTime"
     )
-    SELECT agg."Symbol", agg."OpenTime", f."Price" AS "OpenPrice", agg."HighPrice", agg."LowPrice", l."Price" AS "ClosePrice", agg."Volume"
-    FROM Aggregates agg
-    JOIN public."Trades" f ON agg."FirstTradeId" = f."TradeId"
-    JOIN public."Trades" l ON agg."LastTradeId" = l."TradeId";
-
-    -- Если ничего не сагрегировалось, выходим
-    IF NOT FOUND THEN RETURN; END IF;
-
-    -- 4. Вставляем/обновляем свечи в основной таблице
+    -- 4. Вставляем/обновляем свечи
     INSERT INTO public."Ohlcv_1min" ("Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume")
-    SELECT "Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume" FROM NewCandles
+    SELECT "Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume" FROM FinalCandles
     ON CONFLICT ("Symbol", "OpenTime") DO UPDATE
     SET "HighPrice" = GREATEST(public."Ohlcv_1min"."HighPrice", EXCLUDED."HighPrice"),
         "LowPrice" = LEAST(public."Ohlcv_1min"."LowPrice", EXCLUDED."LowPrice"),
@@ -58,12 +63,9 @@ BEGIN
       AND "TradeTime" >= start_timestamp
       AND "TradeTime" <= end_timestamp;
 
-    -- 6. Сдвигаем "вотермарку" вперед
+    -- 6. Сдвигаем "вотермарку"
     UPDATE public."Processing_Watermarks"
     SET "LastProcessedTimestamp" = end_timestamp
     WHERE "ProcessName" = 'OhlcvAggregator';
-
 END;
 $$ LANGUAGE plpgsql;
-
-SELECT 'Функция sp_aggregate_trades_to_ohlcv успешно обновлена до инкрементальной версии.' AS "Статус";
