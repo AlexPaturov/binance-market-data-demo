@@ -25,8 +25,7 @@ public class AuditRepository : IAuditRepository
     public async Task GenerateNewAuditBlocksAsync()
     {
         using var db = Connection;
-        // Этот SQL-запрос довольно сложный, но эффективный.
-        // Он находит минимальную дату в Trades, максимальную в Audit_Blocks,
+        // Находит минимальную дату в Trades, максимальную в Audit_Blocks,
         // и генерирует все недостающие 3-дневные интервалы.
         const string sql = @"
             INSERT INTO public.""Audit_Blocks"" (""Symbol"", ""BlockStartDate"", ""Status"")
@@ -103,7 +102,7 @@ public class AuditRepository : IAuditRepository
         {
             NewStatus = newStatus,
             Symbol = symbol,
-            BlockStartDate = DateOnly.FromDateTime(blockStartDate) // Передаем как DateOnly/Date
+            BlockStartDate = blockStartDate // Передаем как DateOnly/Date
         });
     }
 }
