@@ -32,6 +32,7 @@ public class Program
             .ReadFrom.Configuration(configuration)
             .Enrich.FromLogContext()
             .Enrich.WithShortSourceContext()
+            .Enrich.WithThreadId()
             .Enrich.With<EnrichWithSourceClass>()
             .CreateLogger();
 

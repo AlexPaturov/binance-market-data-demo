@@ -1,14 +1,8 @@
 ﻿using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Entities;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using BinanceDataCollector.Worker.Common;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using System;
+
 
 namespace BinanceDataCollector.Worker.Workers;
 
@@ -37,7 +31,7 @@ public class BinanceCollectorWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Центральный сборщик данных запущен.");
+        _logger.LogInformation($"{LoggerNames.GetCurrentMethodName()} Центральный сборщик данных запущен.");
 
         // --- Запускаем задачу-писателя (Consumer) в фоновом режиме ---
         var writerTask = Task.Run(() => DatabaseWriterLoop(stoppingToken), stoppingToken);
@@ -168,10 +162,5 @@ public class BinanceCollectorWorker : BackgroundService
         {
             buffer.Clear();
         }
-    }
-
-    private string GetCurrentMethodName([CallerMemberName] string methodName = "")
-    {
-        return methodName;
     }
 }

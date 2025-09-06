@@ -9,12 +9,13 @@ public class HistoricalAuditorWorker : BackgroundService
     private readonly ILogger<HistoricalAuditorWorker> _logger;
     private readonly IServiceProvider _serviceProvider;
 
-    //private readonly TimeSpan _auditInterval = TimeSpan.FromHours(12); // prod
-    //private readonly TimeSpan _auditInterval = TimeSpan.FromHours(1); // for tests dev
+    //private readonly TimeSpan _quickAuditInterval = TimeSpan.FromHours(12); // prod
+    //private readonly TimeSpan _quickAuditInterval = TimeSpan.FromHours(1); // for tests dev
     private readonly TimeSpan _auditInterval = TimeSpan.FromMinutes(6); // for tests dev
     private readonly TimeSpan _failedBlockRetryInterval = TimeSpan.FromDays(1);
     private const int MaxRetries = 10;
     private const int BatchSize = 10; // Сколько блоков обрабатывать за один цикл
+    private readonly double _firstLaunch = 5; // первый запуск
 
     public HistoricalAuditorWorker(ILogger<HistoricalAuditorWorker> logger, IServiceProvider serviceProvider)
     {
@@ -24,8 +25,8 @@ public class HistoricalAuditorWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Воркер исторического аудита запущен.");
-        await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken); // перед 1-м запуском - ждём 5 минут
+        _logger.LogInformation("Воркер исторического аудита запущен.");     // 
+        await Task.Delay(TimeSpan.FromMinutes(_firstLaunch), stoppingToken); // перед 1-м запуском - ждём 5 минут
 
         while (!stoppingToken.IsCancellationRequested)
         {

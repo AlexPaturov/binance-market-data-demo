@@ -13,7 +13,7 @@ public class QuickDataAuditorWorker : BackgroundService
     private readonly IServiceProvider _serviceProvider;
 
     // Конфигурация аудитора
-    private readonly TimeSpan _auditInterval = TimeSpan.FromHours(1);
+    private readonly TimeSpan _quickAuditInterval = TimeSpan.FromHours(1);
     private readonly TimeSpan _minGapToTriggerFill = TimeSpan.FromMinutes(5);
     private readonly TimeSpan _apiLimitSleepDuration = TimeSpan.FromMinutes(5);
     private readonly TimeSpan _politeDelayBetweenRequests = TimeSpan.FromMilliseconds(500);
@@ -51,8 +51,8 @@ public class QuickDataAuditorWorker : BackgroundService
                     }
                 }
             }
-            _logger.LogInformation("--- Проверка целостности завершена. Следующий запуск через {Interval}. ---", _auditInterval);
-            await Task.Delay(_auditInterval, stoppingToken);
+            _logger.LogInformation("--- Проверка целостности завершена. Следующий запуск через {Interval}. ---", _quickAuditInterval);
+            await Task.Delay(_quickAuditInterval, stoppingToken);
         }
     }
 
@@ -62,7 +62,7 @@ public class QuickDataAuditorWorker : BackgroundService
         var binanceService = scope.ServiceProvider.GetRequiredService<IBinanceService>();
 
         // 1. Находим "дыру"
-        var lastTradeTimeMs = await tradeRepo.GetLastTradeTimeAsync(symbol); // Полу
+        var lastTradeTimeMs = await tradeRepo.GetLastTradeTimeAsync(symbol); 
         if (!lastTradeTimeMs.HasValue)
         {
             _logger.LogWarning("[{Symbol}] Нет исторических данных, аудит невозможен. Требуется первоначальная загрузка.", symbol);
