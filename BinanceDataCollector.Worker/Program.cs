@@ -4,7 +4,9 @@ using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.MarketScreenService;
+using BinanceDataCollector.Worker.Common;
 using BinanceDataCollector.Worker.Workers;
+using Microsoft.Extensions.Configuration;
 using Serilog;
 using Serilog.Enrichers;
 using Serilog.Enrichers.WithCaller;
@@ -16,26 +18,22 @@ public class Program
 {
     public static void Main(string[] args)
     {
-        // --- 2. Настраиваем "загрузочный" логгер Serilog ---
-        // Это позволит логировать ошибки, которые происходят ДО создания хоста
+        // =================================================================================
+        // ЭТАП 1: Минимальный "загрузочный" логгер.
+        // Его единственная цель - записать в консоль ошибку, если .Build() упадет.
+        // =================================================================================
         var configuration = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json")
-            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json", optional: true)
-            .Build();
+           .SetBasePath(Directory.GetCurrentDirectory())
+           .AddJsonFile("appsettings.json")
+           .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json", optional: true)
+           .Build();
 
         Log.Logger = new LoggerConfiguration()
-            .ReadFrom.Configuration(configuration) // Читаем ВСЕ настройки из appsettings
+            .ReadFrom.Configuration(configuration)
             .Enrich.FromLogContext()
-            .Enrich.WithProcessId()
-            .Enrich.WithThreadId()
-            .Enrich.WithCaller()
+            .Enrich.WithShortSourceContext()
+            .Enrich.With<EnrichWithSourceClass>()
             .CreateLogger();
-
-        //Log.Logger = new LoggerConfiguration()
-        //    .Enrich.FromLogContext()
-        //    .WriteTo.Console()
-        //    .CreateBootstrapLogger();
 
         try
         {
@@ -53,7 +51,7 @@ public class Program
                  services.AddHostedService<BinanceCollectorWorker>();           // Собираем данные от binance и сохраняем в базу
                  services.AddHostedService<QuickDataAuditorWorker>();           // Восстанавливаем дыры за 24 часа максимум
                  services.AddHostedService<HistoricalAuditorWorker>();          // Агрегация тиковых данных в свечи
-                 services.AddHostedService<OhlcvAggregatorWorker>();            // Агрегация тиковых данных в свечи
+                 //services.AddHostedService<OhlcvAggregatorWorker>();            // Агрегация тиковых данных в свечи
                  //services.AddHostedService<FeatureCalculatorWorker>();
 
                  // расчёт аналитики
