@@ -20,6 +20,8 @@ public class BinanceCollectorWorker : BackgroundService
 {
     private readonly ILogger<BinanceCollectorWorker> _logger;
     private readonly IServiceProvider _serviceProvider;
+    private readonly double _collectorStartDelayMinutes = 5; // задержк запуска проверки
+    private readonly double _mainWhileRestartDelaySeconds = 10; // задержка перезапуска главного цикла
 
     // Потокобезопасная очередь для сбора сделок.
     // Выступает в роли буфера между быстрым получением данных и более медленной записью в БД.
@@ -166,5 +168,10 @@ public class BinanceCollectorWorker : BackgroundService
         {
             buffer.Clear();
         }
+    }
+
+    private string GetCurrentMethodName([CallerMemberName] string methodName = "")
+    {
+        return methodName;
     }
 }

@@ -78,47 +78,6 @@ public class BinanceService : IBinanceService
         await Task.Delay(Timeout.Infinite, cancellationToken);
     }
 
-    //public async Task SubscribeToTradesAsync(string symbol, Func<Trade, Task> onTradeReceived, CancellationToken cancellationToken)
-    //{
-    //    var result = await _socketClient.SpotApi.ExchangeData.SubscribeToTradeUpdatesAsync(
-    //        symbol, 
-    //        async data => 
-    //        {
-    //            var tradeEvent = data.Data;
-    //            var trade = new Trade
-    //            {
-    //                TradeId = tradeEvent.Id,
-    //                Symbol = tradeEvent.Symbol,
-    //                Price = tradeEvent.Price,
-    //                Quantity = tradeEvent.Quantity,
-    //                // Pseudocode:
-    //                // 1. Check the BinanceStreamTrade class for a property representing the quote quantity.
-    //                // 2. If not present, look for an alternative property (e.g., tradeEvent.Quantity * tradeEvent.Price).
-    //                // 3. Replace QuoteQuantity assignment with the correct calculation or property.
-
-    //                // Replace this line:
-    //                // QuoteQuantity = tradeEvent.QuoteQuantity,
-
-    //                // With this:
-    //                QuoteQuantity = tradeEvent.Quantity * tradeEvent.Price,
-    //                TradeTime = new DateTimeOffset(tradeEvent.TradeTime).ToUnixTimeMilliseconds(),
-    //                IsBuyerMaker = tradeEvent.BuyerIsMaker, // Fixed property name
-    //                IsBestMatch = true                      // In WebSocket streams, this is always the best match
-    //            };
-
-    //            await onTradeReceived(trade);
-    //        },
-    //        cancellationToken
-    //     );
-
-    //    if (!result.Success)
-    //    {
-    //        _logger.LogError("Failed to subscribe to trade stream: {Error}", result.Error?.Message);
-    //        // Можно выбросить исключение, чтобы вызывающий код знал о провале
-    //        throw new InvalidOperationException($"Failed to subscribe to {symbol}: {result.Error?.Message}");
-    //    }
-    //}
-
     public async Task<IEnumerable<BinanceSymbol>> GetExchangeSymbolsAsync()
     {
         var result = await _restClient.SpotApi.ExchangeData.GetExchangeInfoAsync();
