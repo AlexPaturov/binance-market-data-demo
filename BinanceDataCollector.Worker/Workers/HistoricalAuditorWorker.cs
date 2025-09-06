@@ -1,5 +1,6 @@
 ﻿using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Entities;
+using BinanceDataCollector.Worker.Common;
 
 namespace BinanceDataCollector.Worker.Workers;
 
@@ -74,8 +75,12 @@ public class HistoricalAuditorWorker : BackgroundService
 
         try
         {
-            // 3. Ищем дыры ТОЛЬКО в этом блоке
-            var gaps = await analysisRepo.FindGapsInWindowAsync(symbol, blockStart, blockEnd);
+            IEnumerable<DataGap> gaps;
+            using (_logger.TimedOperation("Поиск дыр в блоке для {Symbol} от {Date}", symbol, blockStart.ToShortDateString()))
+            {
+                // 3. Ищем дыры ТОЛЬКО в этом блоке
+                gaps = await analysisRepo.FindGapsInWindowAsync(symbol, blockStart, blockEnd);
+            }
 
             bool allGapsFilled = true;
             if (gaps.Any())
@@ -86,7 +91,12 @@ public class HistoricalAuditorWorker : BackgroundService
                 // 4. Заполняем каждую дыру
                 foreach (var gap in gaps)
                 {
-                    bool success = await FillGapAsync(scope, symbol, gap.GapStart, gap.GapEnd, stoppingToken);
+                    bool success;
+                    using (_logger.TimedOperation(LogLevel.Debug, "Заполнение дыры для {Symbol} с {Start} по {End}", symbol, gap.GapStart, gap.GapEnd))
+                    {
+                        success = await FillGapAsync(scope, symbol, gap.GapStart, gap.GapEnd, stoppingToken);
+                    }
+
                     if (!success)
                     {
                         allGapsFilled = false;
@@ -95,18 +105,22 @@ public class HistoricalAuditorWorker : BackgroundService
                 }
             }
 
-            // 5. Обновляем статус блока
-            if (allGapsFilled)
+            // --- ИЗМЕРЯЕМ ОБНОВЛЕНИЕ СТАТУСА ---
+            using (_logger.TimedOperation(LogLevel.Debug, "Обновление статуса блока для {Symbol} от {Date}", symbol, blockStart.ToShortDateString()))
             {
-                await auditRepo.UpdateBlockStatusAsync(symbol, blockStart, "Completed", false);
-                _logger.LogInformation("[{Symbol}] Блок от {Date} успешно проверен и помечен как 'Completed'.",
-                    symbol, blockStart.ToShortDateString());
-            }
-            else
-            {
-                await auditRepo.UpdateBlockStatusAsync(symbol, blockStart, "Failed", true);
-                _logger.LogError("[{Symbol}] Не удалось заполнить все дыры в блоке от {Date}. Блок помечен как 'Failed'.",
-                    symbol, blockStart.ToShortDateString());
+                // 5. Обновляем статус блока
+                if (allGapsFilled)
+                {
+                    await auditRepo.UpdateBlockStatusAsync(symbol, blockStart, "Completed", false);
+                    _logger.LogInformation("[{Symbol}] Блок от {Date} успешно проверен и помечен как 'Completed'.",
+                        symbol, blockStart.ToShortDateString());
+                }
+                else
+                {
+                    await auditRepo.UpdateBlockStatusAsync(symbol, blockStart, "Failed", true);
+                    _logger.LogError("[{Symbol}] Не удалось заполнить все дыры в блоке от {Date}. Блок помечен как 'Failed'.",
+                        symbol, blockStart.ToShortDateString());
+                }
             }
         }
         catch (Exception ex)
