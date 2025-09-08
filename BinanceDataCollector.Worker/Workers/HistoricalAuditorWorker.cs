@@ -11,11 +11,12 @@ public class HistoricalAuditorWorker : BackgroundService
 
     //private readonly TimeSpan _quickAuditInterval = TimeSpan.FromHours(12); // prod
     //private readonly TimeSpan _quickAuditInterval = TimeSpan.FromHours(1); // for tests dev
-    private readonly TimeSpan _auditInterval = TimeSpan.FromMinutes(6); // for tests dev
     private readonly TimeSpan _failedBlockRetryInterval = TimeSpan.FromDays(1);
     private const int MaxRetries = 10;
     private const int BatchSize = 10; // Сколько блоков обрабатывать за один цикл
-    private readonly double _firstLaunch = 5; // первый запуск
+    //private readonly double _firstLaunch = 5; // первый запуск
+    private readonly TimeSpan _auditInterval = TimeSpan.FromMinutes(5); // интервал запуска глубокой проверки
+    private readonly double _firstLaunch = 2; // откладываем первый запуск
 
     public HistoricalAuditorWorker(ILogger<HistoricalAuditorWorker> logger, IServiceProvider serviceProvider)
     {
@@ -25,7 +26,7 @@ public class HistoricalAuditorWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Воркер исторического аудита запущен.");     // 
+        _logger.LogInformation("Воркер исторического аудита запущен.");     
         await Task.Delay(TimeSpan.FromMinutes(_firstLaunch), stoppingToken); // перед 1-м запуском - ждём 5 минут
 
         while (!stoppingToken.IsCancellationRequested)
@@ -35,8 +36,12 @@ public class HistoricalAuditorWorker : BackgroundService
                 using var scope = _serviceProvider.CreateScope();
                 var auditRepo = scope.ServiceProvider.GetRequiredService<IAuditRepository>();
 
-                // 1. Генерируем новые "задачи" для аудита
-                await auditRepo.GenerateNewAuditBlocksAsync();
+                // 1. Генерируем новые "задачи" для аудита с измерением времени
+                using (_logger.TimedOperation("Генерация новых аудиторских блоков"))
+                {
+                    await auditRepo.GenerateNewAuditBlocksAsync();  // 1. Генерируем новые "задачи" для аудита
+                }
+                await auditRepo.GenerateNewAuditBlocksAsync();  // 1. Генерируем новые "задачи" для аудита
 
                 // 2. Получаем порцию работы
                 var blocksToProcess = await auditRepo.GetBlocksToProcessAsync(MaxRetries, BatchSize);
@@ -76,41 +81,13 @@ public class HistoricalAuditorWorker : BackgroundService
 
         try
         {
-            IEnumerable<DataGap> gaps;
-            using (_logger.TimedOperation("Поиск дыр в блоке для {Symbol} от {Date}", symbol, blockStart.ToShortDateString()))
-            {
-                // 3. Ищем дыры ТОЛЬКО в этом блоке
-                gaps = await analysisRepo.FindGapsInWindowAsync(symbol, blockStart, blockEnd);
-            }
-
-            bool allGapsFilled = true;
-            if (gaps.Any())
-            {
-                _logger.LogWarning("[{Symbol}] В блоке от {Date} найдено {Count} дыр. Начинаем заполнение.",
-                    symbol, blockStart.ToShortDateString(), gaps.Count());
-
-                // 4. Заполняем каждую дыру
-                foreach (var gap in gaps)
-                {
-                    bool success;
-                    using (_logger.TimedOperation(LogLevel.Debug, "Заполнение дыры для {Symbol} с {Start} по {End}", symbol, gap.GapStart, gap.GapEnd))
-                    {
-                        success = await FillGapAsync(scope, symbol, gap.GapStart, gap.GapEnd, stoppingToken);
-                    }
-
-                    if (!success)
-                    {
-                        allGapsFilled = false;
-                        break; // Прерываем обработку этого блока, если хоть одна дыра не заполнилась
-                    }
-                }
-            }
+            
 
             // --- ИЗМЕРЯЕМ ОБНОВЛЕНИЕ СТАТУСА ---
             using (_logger.TimedOperation(LogLevel.Debug, "Обновление статуса блока для {Symbol} от {Date}", symbol, blockStart.ToShortDateString()))
             {
                 // 5. Обновляем статус блока
-                if (allGapsFilled)
+                if (true)
                 {
                     await auditRepo.UpdateBlockStatusAsync(symbol, blockStart, "Completed", false);
                     _logger.LogInformation("[{Symbol}] Блок от {Date} успешно проверен и помечен как 'Completed'.",
@@ -132,13 +109,5 @@ public class HistoricalAuditorWorker : BackgroundService
         }
     }
 
-    // Вспомогательный метод FillGapAsync остается почти таким же,
-    // но теперь он должен возвращать bool (успех/неудача)
-    private async Task<bool> FillGapAsync(IServiceScope scope, string symbol, long startMs, long endMs, CancellationToken stoppingToken)
-    {
-        // ... (логика с FetchResult, ApiLimit и т.д.) ...
-        // В конце, если произошла GeneralError или другая ошибка, возвращаем false.
-        // Если все данные скачаны, возвращаем true.
-        return true; // Заглушка
-    }
+
 }

@@ -137,6 +137,7 @@ public class BinanceService : IBinanceService
         return (IEnumerable<BinanceSpotKline>)allKlines;
     }
 
+    // отказываемся от временных промежутков в пользу заполнений диапазонов по недостающим id
     public async Task<FetchResult> GetHistoricalAggTradesAsync(
         string symbol, 
         DateTime startTime, 
@@ -145,8 +146,7 @@ public class BinanceService : IBinanceService
     {
         try
         {
-            var result = await _restClient.SpotApi.ExchangeData.GetAggregatedTradeHistoryAsync(
-                symbol, startTime: startTime, limit: 1000, ct: cancellationToken);
+            var result = await _restClient.SpotApi.ExchangeData.GetAggregatedTradeHistoryAsync(symbol, startTime: startTime, limit: 1000, ct: cancellationToken);
 
             if (!result.Success)
             {
@@ -193,6 +193,62 @@ public class BinanceService : IBinanceService
         }
     }
 
+    public async Task<FetchResult> GetHistoricalAggTradesQuick(
+        string symbol, 
+        long fromId, 
+        CancellationToken cancellationToken,
+        int limit = 1000
+    )
+    {
+        try
+        {
+            // Используем перегрузку метода из Binance.Net с параметром fromId
+            var result = await _restClient.SpotApi.ExchangeData.GetTradeHistoryAsync(symbol, fromId: fromId, limit: limit, ct: cancellationToken);
+
+            if (!result.Success)
+            {
+                // --- ОБРАБОТКА ОШИБОК API ---
+                if (result.Error != null)
+                {
+                    // Коды 429 (Too Many Requests) и 418 (IP Banned) - это ошибки лимитов
+                    if (result.Error.Code == 429 || result.Error.Code == 418)
+                    {
+                        _logger.LogWarning("[{Symbol}] Достигнут лимит API Binance. Код: {Code}", symbol, result.Error.Code);
+                        return FetchResult.ApiLimitResult();
+                    }
+                }
+
+                _logger.LogError("[{Symbol}] Ошибка при загрузке исторических сделок: {Error}", symbol, result.Error?.Message);
+                return FetchResult.ErrorResult();
+            }
+
+            if (!result.Data.Any())
+            {
+                // Если данных нет, возвращаем успешный, но пустой результат
+                return FetchResult.SuccessResult(new List<Trade>());
+            }
+
+            // --- Маппинг в нашу доменную модель ---
+            var trades = result.Data.Select(t => new Trade
+            {
+                TradeId = t.OrderId,
+                Symbol = symbol,
+                Price = t.Price,
+                Quantity = t.BaseQuantity,
+                QuoteQuantity = t.Price * t.BaseQuantity,
+                TradeTime = new DateTimeOffset(t.TradeTime).ToUnixTimeMilliseconds(),
+                IsBuyerMaker = t.BuyerIsMaker,
+                IsBestMatch = t.IsBestMatch,
+            }).ToList();
+
+            return FetchResult.SuccessResult(trades);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[{Symbol}] Непредвиденная ошибка при запросе к GetAggregatedTradeHistoryAsync с fromId {FromId}.", symbol, fromId);
+            return FetchResult.ErrorResult();
+        }
+    }
 }
 
 

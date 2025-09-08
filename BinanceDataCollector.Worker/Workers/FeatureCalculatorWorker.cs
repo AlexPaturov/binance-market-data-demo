@@ -6,6 +6,7 @@ namespace BinanceDataCollector.Worker.Workers;
 /// Фоновый сервис, который отвечает за расчет всех технических индикаторов (признаков)
 /// и сохранение их в "витрину данных" Ohlcv_Features.
 /// Работает по инкрементальному принципу ("статусы + вотермарки").
+/// Двигается по свечам
 /// </summary>
 public class FeatureCalculatorWorker : BackgroundService
 {

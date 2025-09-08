@@ -59,23 +59,7 @@ public  class AnalysisRepository : IAnalysisRepository
         return await db.QueryAsync<CvdResult>(sql, new { Symbol = symbol, StartTimeMs = startTimeMs, EndTimeMs = endTimeMs });
     }
 
-    /// <summary>
-    /// 
-    /// </summary>
-    /// <param name="symbol"></param>
-    /// <param name="minGapInSeconds"></param>
-    /// <returns></returns>
-    /// <exception cref="NotImplementedException"></exception>
-    public async Task<IEnumerable<DataGap>> FindTradeGapsAsync(string symbol, int minGapInSeconds)
-    {
-        using var db = Connection;
-        const string sql = "SELECT * FROM public.sp_find_trade_gaps(@Symbol, @MinGapInSeconds)";
-        return await db.QueryAsync<DataGap>(
-            sql, 
-            new { Symbol = symbol, MinGapInSeconds = minGapInSeconds },
-            commandTimeout: 600
-            );
-    }
+
 
     /// <summary>
     ///  Получает статистику по качеству данных (статусам блоков аудита)
@@ -101,26 +85,4 @@ public  class AnalysisRepository : IAnalysisRepository
         return await db.QueryAsync<DataQualityStat>(sql, parameters);
     }
 
-    /// <summary>
-    /// МЕТОД ДЛЯ ПОИСКА ДЫР В ОКНЕ
-    /// </summary>
-    /// <param name="symbol"></param>
-    /// <param name="startTime"></param>
-    /// <param name="endTime"></param>
-    /// <returns></returns>
-    public async Task<IEnumerable<DataGap>> FindGapsInWindowAsync(string symbol, DateTime startTime, DateTime endTime)
-    {
-        using var db = Connection;
-        const string sql = "SELECT * FROM public.sp_find_gaps_in_window(@Symbol, @StartTimeMs, @EndTimeMs, @MinGapSeconds)";
-
-        var parameters = new
-        {
-            Symbol = symbol,
-            StartTimeMs = new DateTimeOffset(startTime).ToUnixTimeMilliseconds(),
-            EndTimeMs = new DateTimeOffset(endTime).ToUnixTimeMilliseconds(),
-            MinGapSeconds = 300 // Минимальный разрыв в 5 минут, чтобы считать дырой
-        };
-
-        return await db.QueryAsync<DataGap>(sql, parameters, commandTimeout: 600);
-    }
 }

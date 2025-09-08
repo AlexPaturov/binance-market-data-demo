@@ -4,6 +4,7 @@ using Dapper;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using System.Data;
+using System.Data.Common;
 
 namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 
@@ -87,4 +88,44 @@ public class TradeRepository : ITradeRepository
         // 2. Выполняем как обычный ТЕКСТОВЫЙ запрос.
         await db.ExecuteAsync(sql, commandTimeout: 600);
     }
+
+    // на уаление ?
+    public async Task<long?> GetLastTradeIdAsync(string symbol)
+    {
+        using var db = Connection;
+        const string sql = @"SELECT MAX(""TradeId"") FROM public.""Trades"" WHERE ""Symbol"" = @Symbol";
+        return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol });
+    }
+
+    // список всех дыр для символа за 24 часа
+    public async Task<List<DataGap>> GetGapsForSymbolDayAsync(string symbol)
+    {
+        const string sql = @"
+            WITH OrderedTrades AS (
+                SELECT
+                    ""TradeId"",
+                    -- Используем LAG() для получения ID предыдущей сделки
+                    LAG(""TradeId"", 1) OVER (ORDER BY ""TradeId"" ASC) AS ""PrevTradeId""
+                FROM public.""Trades""
+                WHERE 
+                    ""Symbol"" = @Symbol 
+                    -- Фильтрация по TradeTime гораздо эффективнее, если по нему есть индекс.
+                    -- Мы вычисляем временную метку 24 часа назад ОДИН РАЗ.
+                    AND ""TradeTime"" >= (EXTRACT(EPOCH FROM (NOW() - INTERVAL '24 hours')) * 1000)::BIGINT
+            )
+            SELECT
+                ""PrevTradeId"" + 1 AS ""GapStart"", -- Маппинг на record DataGap
+                ""TradeId"" - 1 AS ""GapEnd""       -- Маппинг на record DataGap
+            FROM OrderedTrades
+            WHERE
+                -- Дыра есть, если ID не идут подряд
+                ""TradeId"" > ""PrevTradeId"" + 1
+            ORDER BY 
+                ""GapStart"" ASC; -- Сортируем по началу дыры
+            ";
+        using var db = Connection;
+        var gaps = await db.QueryAsync<DataGap>(sql, new { Symbol = symbol });
+        return gaps.AsList();
+    }
+
 }

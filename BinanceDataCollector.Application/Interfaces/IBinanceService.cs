@@ -55,4 +55,14 @@ public interface IBinanceService
         DateTime startTime,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Загружаем сделку от указанного id и не более 1000 за раз
+    /// </summary>
+    /// <param name="symbol"></param>
+    /// <param name="fromId"></param>
+    /// <param name="cancellationToken"></param>
+    /// <param name="limit"></param>
+    /// <returns></returns>
+    Task<FetchResult> GetHistoricalAggTradesQuick(string symbol, long fromId, CancellationToken cancellationToken, int limit = 1000);
+
 }

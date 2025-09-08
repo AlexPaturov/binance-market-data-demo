@@ -42,24 +42,30 @@ public class Program
             var host = Host.CreateDefaultBuilder(args)
              .ConfigureServices((hostContext, services) => {
                  IConfiguration configuration = hostContext.Configuration;              // Получаем конфигурацию (appsettings.json)
-                 services.AddScoped<IBinanceService, BinanceService>();                 // 4. Регистрация внешних сервисов
-                 services.AddTransient<MarketScreener>();                               // Сканер можно делать Transient
-                 services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();// 2. Регистрация репозитория для сбора топ-Х пар по которым необходимо собирать статистику
-                 services.AddScoped<IOrderRepository, OrderRepository>();   // Регистрация репозиториев (Dapper) Для каждого репозитория будет создаваться свой экземпляр
+                 services.AddScoped<IBinanceService, BinanceService>();                 // 
+                 services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();// сбор топ-Х пар по которым необходимо собирать статистику
+                 services.AddScoped<IOrderRepository, OrderRepository>();   
                  services.AddScoped<ITradeRepository, TradeRepository>();
                  services.AddScoped<IAuditRepository, AuditRepository>();
+                 services.AddScoped<IOhlcvRepository, OhlcvRepository>();       // расчёт аналитики - свечи
+                 services.AddScoped<IFeatureRepository, FeatureRepository>();
+                 services.AddScoped<IAnalysisRepository, AnalysisRepository>(); // расчёт 
+                 services.AddTransient<IIndicatorService, IndicatorService>();  // расчёт аналитики - индикаторы
+                 services.AddTransient<MarketScreener>();                               
+
                  services.AddHostedService<SymbolUpdateWorker>();               // сервис обновления списка пар
                  services.AddHostedService<BinanceCollectorWorker>();           // Собираем данные от binance и сохраняем в базу
+                 
+                 // переделать с временных рядов на traidId
                  services.AddHostedService<QuickDataAuditorWorker>();           // Восстанавливаем дыры за 24 часа максимум
-                 services.AddHostedService<HistoricalAuditorWorker>();          // Агрегация тиковых данных в свечи
-                 //services.AddHostedService<OhlcvAggregatorWorker>();            // Агрегация тиковых данных в свечи
-                 //services.AddHostedService<FeatureCalculatorWorker>();
 
-                 // расчёт аналитики
-                 services.AddScoped<IOhlcvRepository, OhlcvRepository>();
-                 services.AddScoped<IFeatureRepository, FeatureRepository>();
-                 services.AddScoped<IAnalysisRepository, AnalysisRepository>();
-                 services.AddTransient<IIndicatorService, IndicatorService>();
+                 // переделать с временных рядов на traidId
+                 //services.AddHostedService<HistoricalAuditorWorker>();          // Глубокое восстановление дыр
+                 
+                 
+                 //services.AddHostedService<OhlcvAggregatorWorker>();          // Агрегация тиковых данных в свечи
+                 //services.AddHostedService<FeatureCalculatorWorker>();
+                 
              })
             .UseSerilog()
             .Build();

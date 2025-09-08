@@ -11,12 +11,14 @@ public class TimedLogOperation : IDisposable
     private readonly ILogger _logger;
     private readonly LogLevel _logLevel;
     private readonly string _message;
+
     private readonly Stopwatch _stopwatch;
 
     public TimedLogOperation(ILogger logger, LogLevel logLevel, string message, params object[] args)
     {
         _logger = logger;
         _logLevel = logLevel;
+        _message = message;
         _logger.Log(logLevel, "Начинаем операцию: {OperationMessage}...", message);
         _stopwatch = Stopwatch.StartNew();
     }

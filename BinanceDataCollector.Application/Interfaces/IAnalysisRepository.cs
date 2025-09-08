@@ -7,13 +7,6 @@ public interface IAnalysisRepository
 {
     Task<IEnumerable<CvdResult>> GetCvdForOhlcvAsync(string symbol, DateTime startTime, DateTime endTime);
 
-    /// <summary>
-    /// Поиск всех диапазонов дыр в базе с самой первой записи
-    /// </summary>
-    /// <param name="symbol">Пара по которой ищем дыру</param>
-    /// <param name="minGapInSeconds">Временной диапазон для дыры</param>
-    /// <returns></returns>
-    Task<IEnumerable<DataGap>> FindTradeGapsAsync(string symbol, int minGapInSeconds);
 
     /// <summary>
     ///  Перед тем как обучать модель на данных, например, за последний год, вы можете вызвать этот метод. 
@@ -26,12 +19,4 @@ public interface IAnalysisRepository
     /// <returns></returns>
     Task<IEnumerable<DataQualityStat>> GetDataQualityStatsAsync(string symbol, DateOnly startDate, DateOnly endDate);
 
-    /// <summary>
-    /// для поиска разрывов в данных ТОЛЬКО в указанном временном окне
-    /// </summary>
-    /// <param name="symbol"></param>
-    /// <param name="startTime"></param>
-    /// <param name="endTime"></param>
-    /// <returns></returns>
-    Task<IEnumerable<DataGap>> FindGapsInWindowAsync(string symbol, DateTime startTime, DateTime endTime);
 }

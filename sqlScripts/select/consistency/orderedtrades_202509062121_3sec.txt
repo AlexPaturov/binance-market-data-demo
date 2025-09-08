@@ -1,0 +1,78 @@
+public record DataGap(long GapStart, long GapEnd);
+
+сделай метод по интерфейсу
+public List<DataGap> GetGapsForSymbolDay(string symbol);
+который принимает на вход символ например 'BTCUSDT'
+и делает запрос в базу в диапазоне от момента вызова метола и на 24 часа назад, 
+ищет все дыры и возвращает список List<DataGap>, если дыр не найдено - вернёт пустой List<DataGap>
+используй этот запрос и оптимизируй его под мои требования
+WITH DateParams AS (
+    -- Задайте здесь параметры поиска
+    SELECT 
+        'BTCUSDT' AS symbol,
+        '2025-09-08'::date AS start_date,
+        '2025-09-08'::date AS end_date
+),
+FilteredTrades AS (
+    SELECT 
+        t."TradeId",
+        t."TradeTime",
+        t."Symbol"
+    FROM public."Trades" t
+    CROSS JOIN DateParams dp
+    WHERE t."Symbol" = dp.symbol
+      AND DATE(to_timestamp(t."TradeTime" / 1000.0) AT TIME ZONE 'UTC') >= dp.start_date
+      AND DATE(to_timestamp(t."TradeTime" / 1000.0) AT TIME ZONE 'UTC') <= dp.end_date
+),
+OrderedTrades AS (
+    SELECT
+        "TradeId",
+        "TradeTime", 
+        -- Получаем ID ПРЕДЫДУЩЕЙ сделки
+        LAG("TradeId", 1) OVER (PARTITION BY "Symbol" ORDER BY "TradeId" ASC) AS "PrevTradeId",
+        -- Получаем время ПРЕДЫДУЩЕЙ сделки, чтобы видеть временные рамки дыры
+        LAG("TradeTime", 1) OVER (PARTITION BY "Symbol" ORDER BY "TradeId" ASC) AS "PrevTradeTime"
+    FROM FilteredTrades
+)
+SELECT
+    "PrevTradeId" + 1 AS "FirstMissing_TradeId",
+    "TradeId" - 1 AS "LastMissing_TradeId",
+    ("TradeId" - "PrevTradeId" - 1) AS "MissingTrades_Count",
+    to_timestamp("PrevTradeTime" / 1000.0) AT TIME ZONE 'UTC' AS "GapStart_UTC",
+    to_timestamp("TradeTime" / 1000.0) AT TIME ZONE 'UTC' AS "GapEnd_UTC",
+    -- Дополнительно: длительность пропуска
+    EXTRACT(EPOCH FROM (
+        to_timestamp("TradeTime" / 1000.0) - to_timestamp("PrevTradeTime" / 1000.0)
+    )) / 60 AS "Gap_Duration_Minutes"
+FROM OrderedTrades
+WHERE
+    -- Дыра есть, если текущий ID не является следующим за предыдущим
+    "TradeId" > "PrevTradeId" + 1
+    AND "PrevTradeId" IS NOT NULL  -- Исключаем первую запись
+ORDER BY 
+    "MissingTrades_Count" DESC;
+
+    using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Threading.Tasks;
+using Dapper; // Подключи Dapper для удобства
+
+public record DataGap(long GapStart, long GapEnd);
+
+public interface ITradeRepository
+{
+    Task<List<DataGap>> GetGapsForSymbolDay(string symbol);
+}
+
+public class TradeRepository : ITradeRepository
+{
+    private readonly IDbConnection _dbConnection;
+
+    public TradeRepository(IDbConnection dbConnection)
+    {
+        _dbConnection = dbConnection;
+    }
+
+   
+}

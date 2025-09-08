@@ -1,5 +1,6 @@
 ﻿using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Entities;
+using static System.Formats.Asn1.AsnWriter;
 
 namespace BinanceDataCollector.Worker.Workers;
 
@@ -13,10 +14,9 @@ public class QuickDataAuditorWorker : BackgroundService
     private readonly IServiceProvider _serviceProvider;
 
     // Конфигурация аудитора
-    private readonly TimeSpan _quickAuditInterval = TimeSpan.FromHours(1);
-    private readonly TimeSpan _minGapToTriggerFill = TimeSpan.FromMinutes(5);
-    private readonly TimeSpan _apiLimitSleepDuration = TimeSpan.FromMinutes(5);
-    private readonly TimeSpan _politeDelayBetweenRequests = TimeSpan.FromMilliseconds(500);
+    private readonly TimeSpan _quickAuditInterval = TimeSpan.FromHours(1);                  // оставляем
+    private readonly TimeSpan _apiLimitSleepDuration = TimeSpan.FromMinutes(5);             // оставляем
+    private readonly TimeSpan _politeDelayBetweenRequests = TimeSpan.FromMilliseconds(500); // оставляем
 
     public QuickDataAuditorWorker(ILogger<QuickDataAuditorWorker> logger, IServiceProvider serviceProvider)
     {
@@ -27,105 +27,121 @@ public class QuickDataAuditorWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Воркер-аудитор ТИКОВЫХ данных запущен.");
-        await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken);
+        await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken); // переделать - я жду "какие-то 2 минуты", а может ждать не нужно? или ждать нужно больше?
 
+        #region главный цикл программы
         while (!stoppingToken.IsCancellationRequested)
         {
+            var startTime = DateTime.UtcNow; // логирую время выполнения запонения дыр для всех пар
             _logger.LogInformation("--- Начинаем плановую проверку целостности ТИКОВЫХ данных ---");
+
+            #region создаём область, в которой будет выполнена работа
             using (var scope = _serviceProvider.CreateScope())
             {
                 var symbolRepo = scope.ServiceProvider.GetRequiredService<ITrackedSymbolRepository>();
                 var activeSymbols = (await symbolRepo.GetActiveSymbolsAsync()).ToList();
+                var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
                 _logger.LogInformation("Обнаружено {Count} активных символов для проверки.", activeSymbols.Count);
 
-                foreach (var symbol in activeSymbols)
+                #region поиск дыр для каждой активной пары символов
+                foreach (var symbol in activeSymbols) 
                 {
                     if (stoppingToken.IsCancellationRequested) break;
                     try
                     {
-                        await ProcessSymbolGapsAsync(scope, symbol, stoppingToken);
+                        // 1 получить для каждой пары список дыр за 24 часа
+                        var gaps = await tradeRepo.GetGapsForSymbolDayAsync(symbol);
+                        foreach (var gap in gaps) 
+                        {
+                            _logger.LogInformation("Начало дыры {StartId} окончание {EndId} для символа {Symbol}",
+                                gap.GapStart, gap.GapEnd, symbol);
+                            await FillGapAsync(scope, symbol, gap, stoppingToken);
+                        }
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "[{Symbol}] Непредвиденная ошибка при аудиторской проверке символа.", symbol);
                     }
                 }
+                #endregion
             }
-            _logger.LogInformation("--- Проверка целостности завершена. Следующий запуск через {Interval}. ---", _quickAuditInterval);
-            await Task.Delay(_quickAuditInterval, stoppingToken);
+            #endregion
+
+            var duration = DateTime.UtcNow - startTime;
+            _logger.LogInformation("--- Проверка целостности завершена. Потраченное время {LostTime} Следующий запуск через {Interval}. ---", duration, _quickAuditInterval);
+            await Task.Delay(_quickAuditInterval, stoppingToken); // ожидание до следующего запуска
         }
+        #endregion
     }
 
-    private async Task ProcessSymbolGapsAsync(IServiceScope scope, string symbol, CancellationToken stoppingToken)
+    private async Task<bool> FillGapAsync(
+        IServiceScope scope, 
+        string symbol,
+        DataGap gap, 
+        CancellationToken stoppingToken)
     {
-        var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
         var binanceService = scope.ServiceProvider.GetRequiredService<IBinanceService>();
+        var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
 
-        // 1. Находим "дыру"
-        var lastTradeTimeMs = await tradeRepo.GetLastTradeTimeAsync(symbol); 
-        if (!lastTradeTimeMs.HasValue)
+        long currentFromId = gap.GapStart;
+        long gapEndId = gap.GapEnd;
+        long tradesToFetch = gapEndId - currentFromId + 1;
+
+        _logger.LogWarning("[{Symbol}] Обнаружена дыра в {Count} сделок с ID {StartId} по {EndId}. Начинаем заполнение.",
+            symbol, tradesToFetch, currentFromId, gapEndId);
+
+        // Главный цикл, который работает, пока мы не "закроем" всю дыру
+        while (currentFromId <= gapEndId && !stoppingToken.IsCancellationRequested)
         {
-            _logger.LogWarning("[{Symbol}] Нет исторических данных, аудит невозможен. Требуется первоначальная загрузка.", symbol);
-            return;
-        }
+            // Динамически вычисляем, сколько еще осталось загрузить
+            long remainingTrades = gapEndId - currentFromId + 1;
+            // Определяем размер следующего запроса: либо остаток, либо максимальная страница 1000
+            int currentLimit = (int)Math.Min(remainingTrades, 1000);
 
-        var lastTradeTime = DateTimeOffset.FromUnixTimeMilliseconds(lastTradeTimeMs.Value).DateTime;
-        if ((DateTime.UtcNow - lastTradeTime) <= _minGapToTriggerFill)
-        {
-            _logger.LogInformation("[{Symbol}] Проверка пройдена. Дыр в данных не обнаружено.", symbol);
-            return;
-        }
-
-        _logger.LogWarning("[{Symbol}] Обнаружена дыра в данных, начиная с {LastTradeTime}. Начинаем процесс заполнения.",
-            symbol, lastTradeTime.ToString("yyyy-MM-dd HH:mm:ss"));
-
-        var currentStartTime = lastTradeTime.AddMilliseconds(1);
-
-        // 2. "Умный" цикл заполнения
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            var fetchResult = await binanceService.GetHistoricalAggTradesAsync(symbol, currentStartTime, stoppingToken);
+            var fetchResult = await binanceService.GetHistoricalAggTradesQuick(symbol, currentFromId, stoppingToken, currentLimit);
 
             switch (fetchResult.Status)
             {
                 case FetchStatus.Success:
                     if (!fetchResult.Data.Any())
                     {
-                        // Данные закончились, дыра заполнена
-                        _logger.LogInformation("[{Symbol}] Дыра успешно заполнена. Новых сделок в этом диапазоне больше нет.", symbol);
-                        return; // Выходим из цикла и метода
+                        _logger.LogError("[{Symbol}] Binance не вернул данные для ID >= {FromId}, хотя должен был. Пропускаем дыру.", symbol, currentFromId);
+                        return false; // Ошибка, дыра не заполнена
                     }
 
                     await tradeRepo.BulkInsertAsync(fetchResult.Data);
 
-                    var firstTrade = fetchResult.Data.First();
-                    var lastTrade = fetchResult.Data.Last();
+                    var lastFilledTrade = fetchResult.Data.Last();
+                    _logger.LogInformation("[{Symbol}] [БЫСТРЫЙ АУДИТ] Успешно заполнено {Count} сделок. Последний ID: {LastId}.",
+                        symbol, fetchResult.Data.Count, lastFilledTrade.TradeId);
 
-                    _logger.LogInformation(
-                        "[{Symbol}] [АУДИТ] Успешно заполнено {Count} сделок в диапазоне с {Start} по {End}.",
-                        symbol, fetchResult.Data.Count,
-                        DateTimeOffset.FromUnixTimeMilliseconds(firstTrade.TradeTime).ToString("HH:mm:ss"),
-                        DateTimeOffset.FromUnixTimeMilliseconds(lastTrade.TradeTime).ToString("HH:mm:ss"));
+                    currentFromId = lastFilledTrade.TradeId + 1; // Сдвигаем курсор
 
-                    // Сдвигаем курсор на следующую порцию
-                    currentStartTime = DateTimeOffset.FromUnixTimeMilliseconds(lastTrade.TradeTime).DateTime.AddMilliseconds(1);
+                    // Если мы заполнили все, что было в плане, выходим
+                    if (currentFromId > gapEndId) break;
 
-                    // Вежливая пауза
-                    await Task.Delay(_politeDelayBetweenRequests, stoppingToken);
+                    await Task.Delay(500, stoppingToken); // Вежливая пауза
                     break;
 
                 case FetchStatus.ApiLimit:
-                    _logger.LogError("[{Symbol}] [API LIMIT] Превышен лимит запросов к API. Засыпаем на {SleepDuration}...",
-                        symbol, _apiLimitSleepDuration);
-                    await Task.Delay(_apiLimitSleepDuration, stoppingToken);
-                    // Остаемся в цикле, чтобы повторить тот же самый запрос
-                    break;
+                    _logger.LogError("[{Symbol}] [API LIMIT] Превышен лимит. Засыпаем на 5 минут...", symbol);
+                    await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+                    break; // Остаемся в цикле, чтобы повторить запрос
 
                 case FetchStatus.GeneralError:
-                    _logger.LogError("[{Symbol}] Произошла ошибка API. Прекращаем попытки для этого символа в текущем цикле аудита.", symbol);
-                    return; // Выходим из цикла и метода
+                    _logger.LogError("[{Symbol}] Ошибка API при заполнении дыры. Прекращаем попытки для этого блока.", symbol);
+                    return false; // Ошибка, дыра не заполнена
             }
         }
+
+        // Проверяем, что вышли из цикла, потому что все заполнили, а не потому что отменили
+        if (stoppingToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        _logger.LogWarning("[{Symbol}] Дыра с ID {StartId} по {EndId} успешно заполнена.", symbol, gap.GapStart, gap.GapEnd);
+        return true;
     }
 
 }

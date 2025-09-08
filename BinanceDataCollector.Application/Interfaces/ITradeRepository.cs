@@ -1,5 +1,4 @@
 ﻿using BinanceDataCollector.Domain.Entities;
-using System.Diagnostics;
 
 namespace BinanceDataCollector.Application.Interfaces;
 
@@ -23,4 +22,12 @@ public interface ITradeRepository
     /// </summary>
     /// <returns></returns>
     Task ExecuteAggregationAsync();
+
+    // на удаление
+    /// <summary>
+    /// Находит максимальный TradeId для указанного символа.
+    /// </summary>
+    Task<long?> GetLastTradeIdAsync(string symbol);
+
+    Task<List<DataGap>> GetGapsForSymbolDayAsync(string symbol);
 }
