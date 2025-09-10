@@ -1,5 +1,7 @@
 using BinanceDataCollector.Application.Analytics;
+using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.Application.Interfaces;
+using BinanceDataCollector.Application.Services;
 using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
@@ -42,22 +44,25 @@ public class Program
             var host = Host.CreateDefaultBuilder(args)
              .ConfigureServices((hostContext, services) => {
                  IConfiguration configuration = hostContext.Configuration;              // Получаем конфигурацию (appsettings.json)
-                 services.AddScoped<IBinanceService, BinanceService>();                 // 
+                 services.AddScoped<IBinanceService, BinanceService>();                 
                  services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();// сбор топ-Х пар по которым необходимо собирать статистику
                  services.AddScoped<IOrderRepository, OrderRepository>();   
                  services.AddScoped<ITradeRepository, TradeRepository>();
                  services.AddScoped<IAuditRepository, AuditRepository>();
+                 services.AddTransient<IAuditService, AuditService>(); // <-- 
+                 services.AddScoped<IHistoricalAuditRepository, HistoricalAuditRepository>(); // <-- 
                  services.AddScoped<IOhlcvRepository, OhlcvRepository>();       // расчёт аналитики - свечи
                  services.AddScoped<IFeatureRepository, FeatureRepository>();
                  services.AddScoped<IAnalysisRepository, AnalysisRepository>(); // расчёт 
                  services.AddTransient<IIndicatorService, IndicatorService>();  // расчёт аналитики - индикаторы
-                 services.AddTransient<MarketScreener>();                               
+                 services.AddTransient<MarketScreener>();
+                 services.AddSingleton<BinanceApiDispatcher>();
 
                  services.AddHostedService<SymbolUpdateWorker>();               // сервис обновления списка пар
                  services.AddHostedService<BinanceCollectorWorker>();           // Собираем данные от binance и сохраняем в базу
                  
                  // переделать с временных рядов на traidId
-                 services.AddHostedService<QuickDataAuditorWorker>();           // Восстанавливаем дыры за 24 часа максимум
+                 services.AddHostedService<QuickAuditorWorker>();           // Восстанавливаем дыры за 24 часа максимум
 
                  // переделать с временных рядов на traidId
                  //services.AddHostedService<HistoricalAuditorWorker>();          // Глубокое восстановление дыр

@@ -30,4 +30,25 @@ public interface ITradeRepository
     Task<long?> GetLastTradeIdAsync(string symbol);
 
     Task<List<DataGap>> GetGapsForSymbolDayAsync(string symbol);
+
+    /// <summary>
+    /// Находит ID последней сделки, которая произошла ДО указанной временной метки.
+    /// </summary>
+    /// <param name="symbol">Символ.</param>
+    /// <param name="timestampMs">Временная метка в Unix миллисекундах.</param>
+    /// <returns>ID последней сделки или null, если таких сделок нет.</returns>
+    Task<long?> GetLastTradeIdBeforeTimestampAsync(string symbol, long timestampMs);
+
+    /// <summary>
+    /// Получает самую последнюю сделку для указанного символа.
+    /// </summary>
+    /// <param name="symbol">Символ.</param>
+    /// <returns>Объект последней сделки или null, если данных нет.</returns>
+    Task<Trade?> GetLastTradeAsync(string symbol);
+
+    /// <summary>
+    /// Получает УПОРЯДОЧЕННЫЙ список TradeId для указанного символа в заданном диапазоне ID.
+    /// </summary>
+    Task<IEnumerable<long>> GetTradeIdsInWindowAsync(string symbol, long startTradeId, long endTradeId);
+
 }

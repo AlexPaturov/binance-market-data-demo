@@ -26,30 +26,6 @@ public class AuditRepository : IAuditRepository
     {
         using var db = Connection;
 
-        //const string sql = @"
-        //    INSERT INTO public.""Audit_Blocks"" (""Symbol"", ""BlockStartDate"", ""Status"")
-        //    WITH DateSeries AS (
-        //        SELECT generate_series(
-        //            -- Начинаем с самой старой даты в Trades
-        //            (SELECT date_trunc('day', to_timestamp(MIN(""TradeTime"") / 1000.0)) FROM public.""Trades""),
-        //            -- Заканчиваем сегодняшним днем
-        //            date_trunc('day', NOW() AT TIME ZONE 'utc'),
-        //            '3 day'::interval
-        //        )::date AS BlockDate
-        //    ),
-        //    Symbols AS (
-        //        SELECT DISTINCT ""Symbol"" FROM public.""Trades""
-        //    )
-        //    SELECT
-        //        s.""Symbol"",
-        //        ds.BlockDate,
-        //        'Pending' AS ""Status""
-        //    FROM Symbols s
-        //    CROSS JOIN DateSeries ds
-        //    -- Вставляем только те комбинации (Символ, ДатаБлока), которых еще нет
-        //    ON CONFLICT (""Symbol"", ""BlockStartDate"") DO NOTHING;
-        //";
-
         const string sql = @"
             INSERT INTO public.""Audit_Blocks"" (""Symbol"", ""BlockStartDate"", ""Status"")
             WITH Symbols AS (

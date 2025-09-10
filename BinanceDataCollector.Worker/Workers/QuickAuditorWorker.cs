@@ -8,9 +8,9 @@ namespace BinanceDataCollector.Worker.Workers;
 /// Фоновый сервис, который проверяет целостность тиковых данных в таблице Trades
 /// и автоматически заполняет небольшие пробелы.
 /// </summary>
-public class QuickDataAuditorWorker : BackgroundService
+public class QuickAuditorWorker : BackgroundService
 {
-    private readonly ILogger<QuickDataAuditorWorker> _logger;
+    private readonly ILogger<QuickAuditorWorker> _logger;
     private readonly IServiceProvider _serviceProvider;
 
     // Конфигурация аудитора
@@ -18,7 +18,7 @@ public class QuickDataAuditorWorker : BackgroundService
     private readonly TimeSpan _apiLimitSleepDuration = TimeSpan.FromMinutes(5);             // оставляем
     private readonly TimeSpan _politeDelayBetweenRequests = TimeSpan.FromMilliseconds(500); // оставляем
 
-    public QuickDataAuditorWorker(ILogger<QuickDataAuditorWorker> logger, IServiceProvider serviceProvider)
+    public QuickAuditorWorker(ILogger<QuickAuditorWorker> logger, IServiceProvider serviceProvider)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
@@ -58,12 +58,20 @@ public class QuickDataAuditorWorker : BackgroundService
                             await FillGapAsync(scope, symbol, gap, stoppingToken);
                         }
                     }
+                    catch (OperationCanceledException)
+                    {
+                        _logger.LogInformation("Операция быстрого аудита была отменена.");
+                        break; // Выходим из foreach
+                    }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "[{Symbol}] Непредвиденная ошибка при аудиторской проверке символа.", symbol);
                     }
                 }
                 #endregion
+
+                if (stoppingToken.IsCancellationRequested)
+                    break; // Если мы вышли из foreach по break, нужно выйти и из while.
             }
             #endregion
 
@@ -98,7 +106,7 @@ public class QuickDataAuditorWorker : BackgroundService
             // Определяем размер следующего запроса: либо остаток, либо максимальная страница 1000
             int currentLimit = (int)Math.Min(remainingTrades, 1000);
 
-            var fetchResult = await binanceService.GetHistoricalAggTradesQuick(symbol, currentFromId, stoppingToken, currentLimit);
+            var fetchResult = await binanceService.GetHistoricalAggTradesById(symbol, currentFromId, stoppingToken, currentLimit);
 
             switch (fetchResult.Status)
             {

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Npgsql;
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics;
 
 namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 
@@ -128,4 +129,58 @@ public class TradeRepository : ITradeRepository
         return gaps.AsList();
     }
 
+    public async Task<long?> GetLastTradeIdBeforeTimestampAsync(string symbol, long timestampMs)
+    {
+        using var db = Connection;
+
+        // Этот запрос очень эффективно использует индекс IX_Trades_Symbol_TradeTime
+        const string sql = @"
+            SELECT ""TradeId""
+            FROM public.""Trades""
+            WHERE ""Symbol"" = @Symbol AND ""TradeTime"" < @TimestampMs
+            ORDER BY ""TradeTime"" DESC, ""TradeId"" DESC
+            LIMIT 1;
+        ";
+
+        return await db.QuerySingleOrDefaultAsync<long?>(sql, new
+        {
+            Symbol = symbol,
+            TimestampMs = timestampMs
+        });
+    }
+
+    public async Task<Trade?> GetLastTradeAsync(string symbol)
+    {
+        using var db = Connection;
+
+        // Этот запрос также эффективно использует индекс IX_Trades_Symbol_TradeTime
+        const string sql = @"
+            SELECT *
+            FROM public.""Trades""
+            WHERE ""Symbol"" = @Symbol
+            ORDER BY ""TradeTime"" DESC, ""TradeId"" DESC
+            LIMIT 1;
+    ";
+        return await db.QuerySingleOrDefaultAsync<Trade>(sql, new { Symbol = symbol });
+    }
+
+    public async Task<IEnumerable<long>> GetTradeIdsInWindowAsync(string symbol, long startTradeId, long endTradeId)
+    {
+        using var db = Connection;
+
+        const string sql = @"
+        SELECT ""TradeId"" 
+        FROM public.""Trades""
+        WHERE ""Symbol"" = @Symbol 
+          AND ""TradeId"" >= @StartTradeId 
+          AND ""TradeId"" <= @EndTradeId
+        ORDER BY ""TradeId"" ASC";
+
+        return await db.QueryAsync<long>(sql, new
+        {
+            Symbol = symbol,
+            StartTradeId = startTradeId,
+            EndTradeId = endTradeId
+        });
+    }
 }

@@ -21,8 +21,10 @@ public interface IBinanceService
     /// <summary>
     /// Получает информацию о всех символах, торгуемых на бирже.
     /// </summary>
+    /// </summary>
+    /// <param name="cancellationToken"></param>
     /// <returns>Коллекция символов.</returns>
-    Task<IEnumerable<BinanceSymbol>> GetExchangeSymbolsAsync();
+    Task<IEnumerable<BinanceSymbol>> GetExchangeSymbolsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Получает 24-часовую статистику (тикеры) для всех символов.
@@ -50,7 +52,7 @@ public interface IBinanceService
     /// Загружает историю агрегированных сделок пачками по 1000
     /// </summary>
     /// <returns>Коллекция исторических сделок.</returns>
-    Task<FetchResult> GetHistoricalAggTradesAsync(
+    Task<FetchResult> GetHistoricalAggTradesByTime(
         string symbol,
         DateTime startTime,
         CancellationToken cancellationToken);
@@ -63,6 +65,16 @@ public interface IBinanceService
     /// <param name="cancellationToken"></param>
     /// <param name="limit"></param>
     /// <returns></returns>
-    Task<FetchResult> GetHistoricalAggTradesQuick(string symbol, long fromId, CancellationToken cancellationToken, int limit = 1000);
+    Task<FetchResult> GetHistoricalAggTradesById(string symbol, long fromId, CancellationToken cancellationToken, int limit = 1000);
 
+    /// <summary>
+    /// Загружает историю СЫРЫХ сделок, начиная с указанного TradeId.
+    /// Используется для точного заполнения дыр в данных.
+    /// </summary>
+    /// <param name="symbol">Символ.</param>
+    /// <param name="fromId">ID сделки, с которой начать поиск.</param>
+    /// <param name="cancellationToken">Токен отмены.</param>
+    /// <param name="limit">Количество записей для загрузки (макс. 1000).</param>
+    /// <returns>Результат загрузки со списком сырых сделок.</returns>
+    Task<FetchResult> GetHistoricalRawTradesAsync(string symbol, long fromId, CancellationToken cancellationToken, int limit = 1000);
 }
