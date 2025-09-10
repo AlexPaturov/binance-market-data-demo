@@ -40,7 +40,6 @@ public class BinanceApiDispatcher
             // Ставим задачу в очередь своего приоритета
             tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             _waitQueues[(int)priority].Enqueue(tcs);
-
             _logger.LogTrace("Запрос с приоритетом {Priority} поставлен в очередь.", priority);
         }
 
@@ -80,29 +79,21 @@ public class BinanceApiDispatcher
 
     private void TryProcessQueue()
     {
-        // Неблокирующая попытка "захватить" семафор.
-        // Если он свободен, значит, можно выдать разрешение следующему в очереди.
         if (_networkAccessSemaphore.Wait(0))
         {
-            Task.Run(() => {
-                lock (_lock)
+            lock (_lock)
+            {
+                for (int i = 0; i < _waitQueues.Length; i++)
                 {
-                    // Проходим по очередям от самого высокого приоритета к самому низкому
-                    for (int i = 0; i < _waitQueues.Length; i++)
+                    if (_waitQueues[i].Count > 0)
                     {
-                        if (_waitQueues[i].Count > 0)
-                        {
-                            var tcs = _waitQueues[i].Dequeue();
-                            // Выдаем "пропуск" задаче с самым высоким приоритетом
-                            tcs.TrySetResult(true);
-                            return; // Выходим, так как пропуск выдан
-                        }
+                        var tcs = _waitQueues[i].Dequeue();
+                        tcs.TrySetResult(true);
+                        return;
                     }
-
-                    // Если все очереди пусты, просто освобождаем семафор
-                    _networkAccessSemaphore.Release();
                 }
-            });
+                _networkAccessSemaphore.Release();
+            }
         }
     }
 
