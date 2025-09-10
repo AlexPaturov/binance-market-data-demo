@@ -30,13 +30,20 @@ public class Program
            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json", optional: true)
            .Build();
 
+        //Log.Logger = new LoggerConfiguration()
+        //    .ReadFrom.Configuration(configuration)
+        //    .Enrich.FromLogContext()
+        //    .Enrich.WithShortSourceContext()
+        //    .Enrich.WithThreadId()
+        //    .Enrich.With<EnrichWithSourceClass>()
+        //    .CreateLogger();
+
         Log.Logger = new LoggerConfiguration()
-            .ReadFrom.Configuration(configuration)
-            .Enrich.FromLogContext()
-            .Enrich.WithShortSourceContext()
-            .Enrich.WithThreadId()
-            .Enrich.With<EnrichWithSourceClass>()
-            .CreateLogger();
+    .Enrich.FromLogContext()
+   
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
+
 
         try
         {
@@ -72,7 +79,14 @@ public class Program
                  //services.AddHostedService<FeatureCalculatorWorker>();
                  
              })
-            .UseSerilog()
+            .UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
+                // Эта одна строка теперь делает ВСЁ, что нужно
+                .ReadFrom.Configuration(context.Configuration)
+                .Enrich.FromLogContext()
+                .Enrich.WithProcessId()
+                .Enrich.WithThreadId()
+                .Enrich.With<EnrichWithSourceClass>()
+                .Enrich.WithCaller())
             .Build();
 
             Log.Information("Запуск хоста...");
