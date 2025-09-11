@@ -1,4 +1,4 @@
-name: Deploy Binance Collector (Self-hosted)
+name: Build, Test, and Deploy Binance Collector (Self-hosted)
 
 on:
   push:
