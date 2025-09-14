@@ -68,7 +68,6 @@ public class HistoricalAuditorWorker
         var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
         var analysisRepo = scope.ServiceProvider.GetRequiredService<IAnalysisRepository>();
         var auditRepo = scope.ServiceProvider.GetRequiredService<IHistoricalAuditRepository>();
-        var analysisService = scope.ServiceProvider.GetRequiredService<IAuditService>();
 
         string symbol = watermark.Symbol;
         long startTradeId = watermark.LastChecked_TradeId + 1;
@@ -102,7 +101,7 @@ public class HistoricalAuditorWorker
 
                 // 4. Ищем дыры в определенном окне
                 var tradeIdsInWindow = await tradeRepo.GetTradeIdsInWindowAsync(symbol, startTradeId, endTradeId.Value);
-                var gaps = analysisService.FindTradeIdGaps(tradeIdsInWindow).ToList(); 
+                var gaps = await analysisRepo.FindGapsInWindowAsync(symbol, startTradeId, endTradeId.Value);
                 bool allGapsFilled = true;
 
                 if (gaps.Any())

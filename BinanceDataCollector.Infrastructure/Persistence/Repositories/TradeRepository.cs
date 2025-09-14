@@ -187,7 +187,7 @@ public class TradeRepository : ITradeRepository
             Symbol = symbol,
             StartTradeId = startTradeId,
             EndTradeId = endTradeId
-        });
+        }, commandTimeout: 600);
     }
 
 

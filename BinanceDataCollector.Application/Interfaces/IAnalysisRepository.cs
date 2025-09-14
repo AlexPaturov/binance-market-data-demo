@@ -19,4 +19,7 @@ public interface IAnalysisRepository
     /// <returns></returns>
     Task<IEnumerable<DataQualityStat>> GetDataQualityStatsAsync(string symbol, DateOnly startDate, DateOnly endDate);
 
+    Task<List<DataGap>> FindGapsInWindowAsync(string symbol, long startTradeId, long endTradeId);
+
+
 }

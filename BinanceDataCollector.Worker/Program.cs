@@ -1,6 +1,5 @@
 using BinanceDataCollector.Application.Analytics;
 using BinanceDataCollector.Application.Interfaces;
-using BinanceDataCollector.Application.Services;
 using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
@@ -105,7 +104,6 @@ public class Program
             builder.Services.AddScoped<IOhlcvRepository, OhlcvRepository>();
             builder.Services.AddScoped<IFeatureRepository, FeatureRepository>();
             builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
-            builder.Services.AddTransient<IAuditService, AuditService>();
             builder.Services.AddTransient<IIndicatorService, IndicatorService>();
             builder.Services.AddTransient<MarketScreener>();
             builder.Services.AddTransient<SymbolUpdateWorker>();

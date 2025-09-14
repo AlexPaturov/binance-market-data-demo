@@ -85,4 +85,20 @@ public  class AnalysisRepository : IAnalysisRepository
         return await db.QueryAsync<DataQualityStat>(sql, parameters);
     }
 
+
+    public async Task<List<DataGap>> FindGapsInWindowAsync(string symbol, long startTradeId, long endTradeId)
+    {
+        using var db = Connection;
+        const string sql = "SELECT * FROM public.sp_find_trade_id_gaps_in_window(@Symbol, @StartTradeId, @EndTradeId)";
+
+        var gaps = await db.QueryAsync<DataGap>(sql, new
+        {
+            Symbol = symbol,
+            StartTradeId = startTradeId,
+            EndTradeId = endTradeId
+        }, commandTimeout: 300); // <-- Ставим БОЛЬШОЙ таймаут (5 минут)
+
+        return gaps.AsList();
+    }
+
 }
