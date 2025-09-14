@@ -4,7 +4,14 @@ namespace BinanceDataCollector.Application.Interfaces;
 
 public interface ITradeRepository
 {
-    Task<Trade?> GetByIdAsync(long tradeId, string symbol);
+    /// <summary>
+    /// Находит одну сделку по ее уникальному составному ключу (Symbol и TradeId).
+    /// </summary>
+    /// <param name="tradeId">ID сделки.</param>
+    /// <param name="symbol">Символ.</param>
+    /// <returns>Объект сделки или null, если она не найдена.</returns>
+    Task<Trade?> GetTradeByIdAsync(long tradeId, string symbol);
+    
     Task<IEnumerable<Trade>> GetLatestTradesAsync(string symbol, int count);
 
     // Самый важный метод для быстрой вставки множества записей
@@ -29,6 +36,10 @@ public interface ITradeRepository
     /// </summary>
     Task<long?> GetLastTradeIdAsync(string symbol);
 
+
+    /// <summary>
+    /// Находит все пропуски в последовательности TradeId для указанного символа за последние 48 часов.
+    /// </summary>
     Task<List<DataGap>> GetGapsForSymbolDayAsync(string symbol);
 
     /// <summary>
@@ -50,5 +61,7 @@ public interface ITradeRepository
     /// Получает УПОРЯДОЧЕННЫЙ список TradeId для указанного символа в заданном диапазоне ID.
     /// </summary>
     Task<IEnumerable<long>> GetTradeIdsInWindowAsync(string symbol, long startTradeId, long endTradeId);
+
+
 
 }

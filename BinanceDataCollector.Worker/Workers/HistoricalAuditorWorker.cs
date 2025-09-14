@@ -1,75 +1,66 @@
-﻿using BinanceDataCollector.Application.Common;
-using BinanceDataCollector.Application.Interfaces;
+﻿using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Worker.Common;
-using Microsoft.AspNetCore.Components;
-using Microsoft.Extensions.DependencyInjection;
+using Hangfire.Client;
+using Hangfire;
 
 namespace BinanceDataCollector.Worker.Workers;
 /// <summary>
 /// Выполняет глубокий, инкрементальный аудит исторических данных,
 /// проверяя целостность последовательности TradeId небольшими окнами.
 /// </summary>
-public class HistoricalAuditorWorker : BackgroundService
+//
+public class HistoricalAuditorWorker
 {
     private readonly ILogger<HistoricalAuditorWorker> _logger;
     private readonly IServiceProvider _serviceProvider;
 
     // --- Конфигурация ---
-    private readonly TimeSpan _auditInterval = TimeSpan.FromHours(1);
     private readonly TimeSpan _retryInterval = TimeSpan.FromDays(1);
     private const int BatchSize = 5; // Сколько символов обрабатывать за один цикл
     private const int MaxRetries = 10;
     private readonly TimeSpan _windowSize = TimeSpan.FromDays(3);
-    private readonly BinanceApiDispatcher _dispatcher;
 
-    public HistoricalAuditorWorker(ILogger<HistoricalAuditorWorker> logger, IServiceProvider serviceProvider, BinanceApiDispatcher dispatcher   )
+    public HistoricalAuditorWorker(
+        ILogger<HistoricalAuditorWorker> logger,
+        IServiceProvider serviceProvider
+    )
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
-        _dispatcher = dispatcher;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    [Queue("historical_audit")]
+    public async Task AuditNextBatchAsync()
     {
-        _logger.LogInformation("Воркер исторического аудита (по TradeId) запущен.");
-        await Task.Delay(TimeSpan.FromMinutes(2), stoppingToken); // Первоначальная задержка
-
-        while (!stoppingToken.IsCancellationRequested)
+        _logger.LogInformation("--- Начинаем исторический аудит ---");
+        using (_logger.TimedOperation("Один цикл исторического аудита"))
         {
-            using (_logger.TimedOperation("Полный цикл исторического аудита"))
+            try
             {
-                try
+                using var scope = _serviceProvider.CreateScope();
+                var auditRepo = scope.ServiceProvider.GetRequiredService<IHistoricalAuditRepository>();
+                await auditRepo.InitializeAuditForNewSymbolsAsync(); // Эта логика может быть в отдельном воркере, как мы обсуждали
+
+                var symbolsToAudit = await auditRepo.GetSymbolsToAuditAsync(BatchSize, MaxRetries, _retryInterval);
+                if (!symbolsToAudit.Any())
                 {
-                    using var scope = _serviceProvider.CreateScope();
-                    var auditRepo = scope.ServiceProvider.GetRequiredService<IHistoricalAuditRepository>();
-
-                    // 1. Находим новые символы и создаем для них начальные вотермарки
-                    await auditRepo.InitializeAuditForNewSymbolsAsync();
-
-                    // 2. Получаем пачку "задач" на аудит
-                    var symbolsToAudit = await auditRepo.GetSymbolsToAuditAsync(BatchSize, MaxRetries, _retryInterval);
-
-                    if (!symbolsToAudit.Any())
-                    {
-                        _logger.LogInformation("Нет символов для исторического аудита в данный момент.");
-                    }
-                    else
-                    {
-                        foreach (var watermark in symbolsToAudit)
-                        {
-                            if (stoppingToken.IsCancellationRequested) break;
-                            await ProcessSymbolAuditAsync(scope, watermark, stoppingToken);
-                        }
-                    }
+                    _logger.LogInformation("Нет символов для исторического аудита в данный момент.");
+                    return; // Просто выходим
                 }
-                catch (Exception ex)
+
+                foreach (var watermark in symbolsToAudit)
                 {
-                    _logger.LogError(ex, "Критическая ошибка в главном цикле исторического аудитора.");
+                    await ProcessSymbolAuditAsync(scope, watermark, CancellationToken.None); // Передаем CancellationToken.None, т.к. Hangfire сам управляет таймаутами
                 }
             }
-            await Task.Delay(_auditInterval, stoppingToken);
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Критическая ошибка - HistoricalAuditorWorker");
+                throw;  // 5. Перевыбрасываем исключение, чтобы Hangfire пометил задачу как Failed
+            }
         }
+        _logger.LogInformation("--- Исторический аудит закончен ---");
     }
 
     private async Task ProcessSymbolAuditAsync(IServiceScope scope, HistoricalWatermark watermark, CancellationToken stoppingToken)
@@ -82,7 +73,7 @@ public class HistoricalAuditorWorker : BackgroundService
         string symbol = watermark.Symbol;
         long startTradeId = watermark.LastChecked_TradeId + 1;
 
-        using (_logger.TimedOperation("Аудит символа {Symbol} с TradeId {StartId}", symbol, startTradeId))
+        using (_logger.TimedOperation("Аудит символа [{Symbol}] с TradeId {StartId}", symbol, startTradeId))
         {
             try
             {
@@ -111,7 +102,7 @@ public class HistoricalAuditorWorker : BackgroundService
 
                 // 4. Ищем дыры в определенном окне
                 var tradeIdsInWindow = await tradeRepo.GetTradeIdsInWindowAsync(symbol, startTradeId, endTradeId.Value);
-                var gaps = analysisService.FindTradeIdGaps(tradeIdsInWindow).ToList();
+                var gaps = analysisService.FindTradeIdGaps(tradeIdsInWindow).ToList(); 
                 bool allGapsFilled = true;
 
                 if (gaps.Any())
@@ -119,9 +110,20 @@ public class HistoricalAuditorWorker : BackgroundService
                     _logger.LogWarning("[{Symbol}] В диапазоне ID {StartId}-{EndId} найдено {Count} дыр.", symbol, startTradeId, endTradeId.Value, gaps.Count);
                     foreach (var gap in gaps)
                     {
-                        if (stoppingToken.IsCancellationRequested) { allGapsFilled = false; break; }
-                        bool success = await FillGapAsync(scope, symbol, gap, stoppingToken);
-                        if (!success) { allGapsFilled = false; break; }
+                        // 2. Определяем, какие календарные дни (UTC) затрагивает эта дыра.
+                        var startTrade = await tradeRepo.GetTradeByIdAsync(gap.GapStart, symbol);
+                        var endTrade = await tradeRepo.GetTradeByIdAsync(gap.GapEnd, symbol);
+
+                        var datesToDownload = GetDatesBetween(startTrade.TradeTime, endTrade.TradeTime);
+
+                        // 3. Ставим задачи в Hangfire для нового воркера.
+                        foreach (var date in datesToDownload)
+                        {
+                            _logger.LogWarning("Планируем загрузку архива для {Symbol} за {Date}", symbol, date);
+                            BackgroundJob.Enqueue<ArchiveImportWorker>(
+                                worker => worker.ImportArchiveAsync(symbol, date, CancellationToken.None)
+                            );
+                        }
                     }
                 }
                 else
@@ -165,47 +167,60 @@ public class HistoricalAuditorWorker : BackgroundService
 
         using (_logger.TimedOperation(LogLevel.Warning, "[{Symbol}] Заполнение дыры в {Count} сделок с ID {StartId} по {EndId}", symbol, tradesToFetch, currentFromId, gapEndId))
         {
-            // Перед КАЖДЫМ запросом в цикле мы запрашиваем доступ с самым низким приоритетом.
-            using (await _dispatcher.AquireAccessAsync(ApiRequestPriority.HistoricalAudit, stoppingToken))
+            while (currentFromId <= gapEndId && !stoppingToken.IsCancellationRequested)
             {
-                while (currentFromId <= gapEndId && !stoppingToken.IsCancellationRequested)
+                long remainingTrades = gapEndId - currentFromId + 1;
+                int currentLimit = (int)Math.Min(remainingTrades, 1000);
+
+                // Используем новый метод для получения СЫРЫХ сделок
+                var fetchResult = await binanceService.GetHistoricalRawTradesAsync(symbol, currentFromId, stoppingToken, currentLimit);
+
+                switch (fetchResult.Status)
                 {
-                    long remainingTrades = gapEndId - currentFromId + 1;
-                    int currentLimit = (int)Math.Min(remainingTrades, 1000);
-
-                    // Используем новый метод для получения СЫРЫХ сделок
-                    var fetchResult = await binanceService.GetHistoricalRawTradesAsync(symbol, currentFromId, stoppingToken, currentLimit);
-
-                    switch (fetchResult.Status)
-                    {
-                        case FetchStatus.Success:
-                            if (!fetchResult.Data.Any())
-                            {
-                                _logger.LogError("[{Symbol}] Binance не вернул данные для ID >= {FromId}, хотя должен был. Заполнение дыры прервано.", symbol, currentFromId);
-                                return false;
-                            }
-
-                            await tradeRepo.BulkInsertAsync(fetchResult.Data);
-                            var lastFilledTrade = fetchResult.Data.Last();
-                            currentFromId = lastFilledTrade.TradeId + 1;
-
-                            if (currentFromId > gapEndId) break;
-                            await Task.Delay(500, stoppingToken);
-                            break;
-
-                        case FetchStatus.ApiLimit:
-                            _logger.LogError("[{Symbol}] [API LIMIT] Превышен лимит. Засыпаем на 5 минут...", symbol);
-                            await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
-                            break;
-
-                        case FetchStatus.GeneralError:
-                            _logger.LogError("[{Symbol}] Ошибка API при заполнении дыры. Прекращаем попытки.", symbol);
+                    case FetchStatus.Success:
+                        if (!fetchResult.Data.Any())
+                        {
+                            _logger.LogError("[{Symbol}] Binance не вернул данные для ID >= {FromId}, хотя должен был. Заполнение дыры прервано.", symbol, currentFromId);
                             return false;
-                    }
+                        }
+
+                        await tradeRepo.BulkInsertAsync(fetchResult.Data);
+                        var lastFilledTrade = fetchResult.Data.Last();
+                        currentFromId = lastFilledTrade.TradeId + 1;
+
+                        if (currentFromId > gapEndId) break;
+                        await Task.Delay(500, stoppingToken);
+                        break;
+
+                    case FetchStatus.ApiLimit:
+                        _logger.LogError("[{Symbol}] [API LIMIT] Превышен лимит. Засыпаем на 5 минут...", symbol);
+                        await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+                        break;
+
+                    case FetchStatus.GeneralError:
+                        _logger.LogError("[{Symbol}] Ошибка API при заполнении дыры. Прекращаем попытки.", symbol);
+                        return false;
                 }
             }
 
             return !stoppingToken.IsCancellationRequested;
+        }
+    }
+
+    /// <summary>
+    /// Возвращает список всех уникальных календарных дней (UTC),
+    /// находящихся между двумя временными метками.
+    /// </summary>
+    private IEnumerable<DateOnly> GetDatesBetween(long startTimestampMs, long endTimestampMs)
+    {
+        var startDate = DateTimeOffset.FromUnixTimeMilliseconds(startTimestampMs).UtcDateTime.Date;
+        var endDate = DateTimeOffset.FromUnixTimeMilliseconds(endTimestampMs).UtcDateTime.Date;
+
+        var currentDate = startDate;
+        while (currentDate <= endDate)
+        {
+            yield return DateOnly.FromDateTime(currentDate);
+            currentDate = currentDate.AddDays(1);
         }
     }
 }

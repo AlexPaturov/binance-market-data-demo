@@ -5,4 +5,4 @@
 
 using System.Diagnostics.CodeAnalysis;
 
-[assembly: SuppressMessage("Minor Code Smell", "S6667:Logging in a catch clause should pass the caught exception as a parameter.", Justification = "<Pending>", Scope = "member", Target = "~M:BinanceDataCollector.Worker.Workers.QuickAuditorWorker.ExecuteAsync(System.Threading.CancellationToken)~System.Threading.Tasks.Task")]
+[assembly: SuppressMessage("Minor Code Smell", "S6667:Logging in a catch clause should pass the caught exception as a parameter.", Justification = "<Pending>", Scope = "member", Target = "~M:BinanceDataCollector.Worker.Workers.QuickAuditorWorker.CheckAndFillRecentGapsAsync(System.Threading.CancellationToken)~System.Threading.Tasks.Task")]

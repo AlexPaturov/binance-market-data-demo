@@ -21,10 +21,16 @@ public class TradeRepository : ITradeRepository
 
     private IDbConnection Connection => new NpgsqlConnection(_connectionString);
 
-    public async Task<Trade?> GetByIdAsync(long tradeId, string symbol)
+    public async Task<Trade?> GetTradeByIdAsync(long tradeId, string symbol)
     {
         using var db = Connection;
-        const string sql = "SELECT * FROM \"Trades\" WHERE \"TradeId\" = @TradeId AND \"Symbol\" = @Symbol";
+
+        const string sql = @"
+            SELECT * 
+            FROM public.""Trades"" 
+            WHERE ""TradeId"" = @TradeId AND ""Symbol"" = @Symbol;
+        ";
+
         return await db.QuerySingleOrDefaultAsync<Trade>(sql, new { TradeId = tradeId, Symbol = symbol });
     }
 
@@ -98,7 +104,7 @@ public class TradeRepository : ITradeRepository
         return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol });
     }
 
-    // список всех дыр для символа за 24 часа
+    // список всех дыр для символа за 48 часов
     public async Task<List<DataGap>> GetGapsForSymbolDayAsync(string symbol)
     {
         const string sql = @"
@@ -111,8 +117,8 @@ public class TradeRepository : ITradeRepository
                 WHERE 
                     ""Symbol"" = @Symbol 
                     -- Фильтрация по TradeTime гораздо эффективнее, если по нему есть индекс.
-                    -- Мы вычисляем временную метку 24 часа назад ОДИН РАЗ.
-                    AND ""TradeTime"" >= (EXTRACT(EPOCH FROM (NOW() - INTERVAL '24 hours')) * 1000)::BIGINT
+                    -- Мы вычисляем временную метку 48 часов назад ОДИН РАЗ.
+                    AND ""TradeTime"" >= (EXTRACT(EPOCH FROM (NOW() - INTERVAL '48 hours')) * 1000)::BIGINT
             )
             SELECT
                 ""PrevTradeId"" + 1 AS ""GapStart"", -- Маппинг на record DataGap
@@ -183,4 +189,7 @@ public class TradeRepository : ITradeRepository
             EndTradeId = endTradeId
         });
     }
+
+
+
 }

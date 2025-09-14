@@ -65,7 +65,7 @@ public interface IBinanceService
     /// <param name="cancellationToken"></param>
     /// <param name="limit"></param>
     /// <returns></returns>
-    Task<FetchResult> GetHistoricalAggTradesById(string symbol, long fromId, CancellationToken cancellationToken, int limit = 1000);
+    Task<FetchResult> GetHistoricalAggTradesById(string symbol, long fromId, int limit = 1000);
 
     /// <summary>
     /// Загружает историю СЫРЫХ сделок, начиная с указанного TradeId.

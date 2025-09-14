@@ -29,18 +29,22 @@ public class HistoricalAuditRepository : IHistoricalAuditRepository
             INSERT INTO public.""HistoricalAudit_Watermarks"" 
                 (""Symbol"", ""LastChecked_TradeId"", ""LastChecked_Timestamp"", ""Status"", ""LastAttempt_UTC"")
             SELECT
-                t.""Symbol"",
-                MIN(t.""TradeId"") - 1,
-                MIN(t.""TradeTime"") - 1,
+                ts.""Symbol"",
+                0, -- Начинаем с самого начала
+                (EXTRACT(EPOCH FROM ts.""DateAdded"") * 1000)::BIGINT - 1, -- Начинаем со времени добавления
                 'Pending',
                 NOW() AT TIME ZONE 'utc'
-            FROM public.""Trades"" t
-            LEFT JOIN public.""HistoricalAudit_Watermarks"" w ON t.""Symbol"" = w.""Symbol""
-            WHERE w.""Symbol"" IS NULL
-            GROUP BY t.""Symbol""
+            FROM public.""TrackedSymbols"" ts
+            -- Выбираем только те символы, которых еще нет в вотермарках
+            WHERE NOT EXISTS (
+                SELECT 1 
+                FROM public.""HistoricalAudit_Watermarks"" w 
+                WHERE w.""Symbol"" = ts.""Symbol""
+            )
             ON CONFLICT (""Symbol"") DO NOTHING;
         ";
-        await db.ExecuteAsync(sql, commandTimeout: 120);
+
+        await db.ExecuteAsync(sql, commandTimeout: 300);
     }
 
     public async Task<IEnumerable<HistoricalWatermark>> GetSymbolsToAuditAsync(int batchSize, int maxRetries, TimeSpan retryInterval)

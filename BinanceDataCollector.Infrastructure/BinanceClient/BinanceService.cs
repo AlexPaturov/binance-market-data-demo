@@ -3,7 +3,6 @@ using Binance.Net.Enums;
 
 using Binance.Net.Interfaces;
 using Binance.Net.Objects.Models.Spot;
-using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Entities;
 using CryptoExchange.Net.Objects;
@@ -20,18 +19,16 @@ public class BinanceService : IBinanceService
     private readonly ILogger<BinanceService> _logger;
     private readonly BinanceSocketClient _socketClient;
     private readonly BinanceRestClient _restClient;
-    private readonly BinanceApiDispatcher _dispatcher; // диспетчеризация запросов к api binance
 
     public BinanceService(
-        ILogger<BinanceService> logger, 
-        IConfiguration configuration, 
-        BinanceApiDispatcher dispatcher
+        ILogger<BinanceService> logger,
+        IConfiguration configuration
     )
     {
         _logger = logger;
 
         _restClient = new BinanceRestClient(options => {
-            options.RateLimitingBehaviour = RateLimitingBehaviour.Wait; 
+            options.RateLimitingBehaviour = RateLimitingBehaviour.Wait;
         });
 
         _socketClient = new BinanceSocketClient(options => {
@@ -39,7 +36,6 @@ public class BinanceService : IBinanceService
             options.ReconnectInterval = TimeSpan.FromSeconds(30);           // Настройка интервала переподключения
         });
 
-        _dispatcher = dispatcher;
     }
 
     public async Task SubscribeToMultipleTradesAsync(IEnumerable<string> symbols, Action<Trade> onTradeReceived, CancellationToken cancellationToken)
@@ -86,17 +82,15 @@ public class BinanceService : IBinanceService
 
     public async Task<IEnumerable<BinanceSymbol>> GetExchangeSymbolsAsync(CancellationToken cancellationToken = default)
     {
-        // Это быстрый запрос с высоким приоритетом
-        using (await _dispatcher.AquireAccessAsync(ApiRequestPriority.Realtime, cancellationToken))
+
+        var result = await _restClient.SpotApi.ExchangeData.GetExchangeInfoAsync();
+        if (!result.Success)
         {
-            var result = await _restClient.SpotApi.ExchangeData.GetExchangeInfoAsync();
-            if (!result.Success)
-            {
-                _logger.LogError("Не удалось получить информацию о бирже: {Error}", result.Error?.Message);
-                return Enumerable.Empty<BinanceSymbol>();
-            }
-            return result.Data.Symbols;
+            _logger.LogError("Не удалось получить информацию о бирже: {Error}", result.Error?.Message);
+            return Enumerable.Empty<BinanceSymbol>();
         }
+        return result.Data.Symbols;
+
     }
 
     public async Task<IEnumerable<Binance24HPrice>> Get24hTickerStatisticsAsync()
@@ -111,10 +105,10 @@ public class BinanceService : IBinanceService
     }
 
     public async Task<IEnumerable<BinanceSpotKline>> GetHistoricalKlinesAsync(
-       string symbol, 
-       KlineInterval interval, 
-       DateTime startTime, 
-       DateTime endTime, 
+       string symbol,
+       KlineInterval interval,
+       DateTime startTime,
+       DateTime endTime,
        CancellationToken cancellationToken
     )
     {
@@ -149,8 +143,8 @@ public class BinanceService : IBinanceService
 
     // отказываемся от временных промежутков в пользу заполнений диапазонов по недостающим id
     public async Task<FetchResult> GetHistoricalAggTradesByTime(
-        string symbol, 
-        DateTime startTime, 
+        string symbol,
+        DateTime startTime,
         CancellationToken cancellationToken
     )
     {
@@ -204,16 +198,15 @@ public class BinanceService : IBinanceService
     }
 
     public async Task<FetchResult> GetHistoricalAggTradesById(
-        string symbol, 
-        long fromId, 
-        CancellationToken cancellationToken,
+        string symbol,
+        long fromId,
         int limit = 1000
     )
     {
         try
         {
             // Используем перегрузку метода из Binance.Net с параметром fromId
-            var result = await _restClient.SpotApi.ExchangeData.GetTradeHistoryAsync(symbol, fromId: fromId, limit: limit, ct: cancellationToken);
+            var result = await _restClient.SpotApi.ExchangeData.GetTradeHistoryAsync(symbol, fromId: fromId, limit: limit);
 
             if (!result.Success)
             {
@@ -261,58 +254,55 @@ public class BinanceService : IBinanceService
     }
 
     public async Task<FetchResult> GetHistoricalRawTradesAsync(
-        string symbol, 
-        long fromId, 
-        CancellationToken cancellationToken, 
+        string symbol,
+        long fromId,
+        CancellationToken cancellationToken,
         int limit = 1000
     )
     {
         try
         {
-            // Исторический аудит имеет самый низкий приоритет
-            using (await _dispatcher.AquireAccessAsync(ApiRequestPriority.HistoricalAudit, cancellationToken))
+            // Используем другой метод из Binance.Net - GetTradeHistoryAsync, который обращается к эндпоинту /api/v3/trades (сырые сделки).
+            var result = await _restClient.SpotApi.ExchangeData.GetTradeHistoryAsync(symbol, fromId: fromId, limit: limit, ct: cancellationToken);
+
+            // --- Обработка ошибок API (аналогично старому методу) ---
+            if (!result.Success)
             {
-                // Используем другой метод из Binance.Net - GetTradeHistoryAsync, который обращается к эндпоинту /api/v3/trades (сырые сделки).
-                var result = await _restClient.SpotApi.ExchangeData.GetTradeHistoryAsync(symbol, fromId: fromId, limit: limit, ct: cancellationToken);
-
-                // --- Обработка ошибок API (аналогично старому методу) ---
-                if (!result.Success)
+                if (result.Error != null)
                 {
-                    if (result.Error != null)
+                    if (result.Error.Code == 429 || result.Error.Code == 418)
                     {
-                        if (result.Error.Code == 429 || result.Error.Code == 418)
-                        {
-                            _logger.LogWarning("[{Symbol}] Достигнут лимит API Binance (GetTradeHistoryAsync). Код: {Code}", symbol, result.Error.Code);
-                            return FetchResult.ApiLimitResult();
-                        }
+                        _logger.LogWarning("[{Symbol}] Достигнут лимит API Binance (GetTradeHistoryAsync). Код: {Code}", symbol, result.Error.Code);
+                        return FetchResult.ApiLimitResult();
                     }
-                    _logger.LogError("[{Symbol}] Ошибка при загрузке сырых исторических сделок: {Error}", symbol, result.Error?.Message);
-                    return FetchResult.ErrorResult();
                 }
+                _logger.LogError("[{Symbol}] Ошибка при загрузке сырых исторических сделок: {Error}", symbol, result.Error?.Message);
+                return FetchResult.ErrorResult();
+            }
 
-                if (!result.Data.Any())
-                {
-                    return FetchResult.SuccessResult(new List<Trade>());
-                }
+            if (!result.Data.Any())
+            {
+                return FetchResult.SuccessResult(new List<Trade>());
+            }
 
-                // --- Маппинг из BinanceTrade в нашу доменную модель Trade ---
-                // Этот маппинг немного отличается от GetAggregatedTradeHistoryAsync
-                var trades = result.Data.Select(t => new Trade
-                {
-                    TradeId = t.OrderId,
-                    Symbol = symbol,
-                    Price = t.Price,
-                    Quantity = t.BaseQuantity
-                    ,
-                    QuoteQuantity = t.QuoteQuantity, // В сырых сделках это поле есть
-                    TradeTime = new DateTimeOffset(t.TradeTime).ToUnixTimeMilliseconds(),
-                    IsBuyerMaker = t.BuyerIsMaker,
-                    IsBestMatch = t.IsBestMatch,
-                    OrderId = t.OrderId // Также можем получить OrderId
-                }).ToList();
+            // --- Маппинг из BinanceTrade в нашу доменную модель Trade ---
+            // Этот маппинг немного отличается от GetAggregatedTradeHistoryAsync
+            var trades = result.Data.Select(t => new Trade
+            {
+                TradeId = t.OrderId,
+                Symbol = symbol,
+                Price = t.Price,
+                Quantity = t.BaseQuantity
+                ,
+                QuoteQuantity = t.QuoteQuantity, // В сырых сделках это поле есть
+                TradeTime = new DateTimeOffset(t.TradeTime).ToUnixTimeMilliseconds(),
+                IsBuyerMaker = t.BuyerIsMaker,
+                IsBestMatch = t.IsBestMatch,
+                OrderId = t.OrderId // Также можем получить OrderId
+            }).ToList();
 
-                return FetchResult.SuccessResult(trades);
-            } // Блокировка автоматически снимается
+            return FetchResult.SuccessResult(trades);
+
         }
         catch (Exception ex)
         {

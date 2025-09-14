@@ -1,18 +1,15 @@
 using BinanceDataCollector.Application.Analytics;
-using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Application.Services;
-using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.MarketScreenService;
 using BinanceDataCollector.Worker.Common;
 using BinanceDataCollector.Worker.Workers;
-using Microsoft.Extensions.Configuration;
+using Hangfire;
+using Hangfire.PostgreSql;
 using Serilog;
-using Serilog.Enrichers;
 using Serilog.Enrichers.WithCaller;
-using System.Threading.Channels;
 
 namespace BinanceDataCollector.Worker;
 
@@ -20,37 +17,51 @@ public class Program
 {
     public static void Main(string[] args)
     {
-        // =================================================================================
-        // ЭТАП 1: Минимальный "загрузочный" логгер.
-        // Его единственная цель - записать в консоль ошибку, если .Build() упадет.
-        // =================================================================================
+        #region Минимальный "загрузочный" логгер - записать в консоль ошибку, если .Build() упадет.
         var configuration = new ConfigurationBuilder()
            .SetBasePath(Directory.GetCurrentDirectory())
            .AddJsonFile("appsettings.json")
            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json", optional: true)
            .Build();
 
-        //Log.Logger = new LoggerConfiguration()
-        //    .ReadFrom.Configuration(configuration)
-        //    .Enrich.FromLogContext()
-        //    .Enrich.WithShortSourceContext()
-        //    .Enrich.WithThreadId()
-        //    .Enrich.With<EnrichWithSourceClass>()
-        //    .CreateLogger();
-
         Log.Logger = new LoggerConfiguration()
-    .Enrich.FromLogContext()
-   
-    .WriteTo.Console()
-    .CreateBootstrapLogger();
-
+        .Enrich.FromLogContext()
+        .WriteTo.Console()
+        .CreateBootstrapLogger();
+        #endregion
 
         try
         {
             Log.Information("Запускаем приложение...");
             var host = Host.CreateDefaultBuilder(args)
              .ConfigureServices((hostContext, services) => {
-                 IConfiguration configuration = hostContext.Configuration;              // Получаем конфигурацию (appsettings.json)
+                 IConfiguration configuration = hostContext.Configuration;
+                 
+                 #region ===== НАСТРОЙКА HANGFIRE =====
+                 services.AddHangfire(config => config
+                     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                     .UseSimpleAssemblyNameTypeSerializer()
+                     .UseRecommendedSerializerSettings()
+                     .UsePostgreSqlStorage(options => {
+                         options.UseNpgsqlConnection(hostContext.Configuration.GetConnectionString("HangfireConnection"));
+                     }
+                 ));
+
+                 services.AddHangfireServer(options =>
+                 {
+                     // Указываем, какие очереди и в каком порядке обрабатывать.
+                     options.Queues = new[] {
+                        "realtime",         // Высший: Мгновенные системные задачи
+                        "live",             // Высокий: Сбор данных в реальном времени (если будете использовать)
+                        "quick_audit",      // Средний: Быстрый аудит "горячих" данных
+                        "historical_audit", // Низкий: Планирование "капитального ремонта"
+                        "archive_import",   // Очень низкий: Скачивание и импорт тяжелых архивов
+                        "default"           // Самый низкий: Все остальное, что без очереди
+                     };
+                     // WorkerCount можно настроить, но по умолчанию он = Environment.ProcessorCount * 5
+                 });
+                 #endregion
+
                  services.AddScoped<IBinanceService, BinanceService>();                 
                  services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();// сбор топ-Х пар по которым необходимо собирать статистику
                  services.AddScoped<IOrderRepository, OrderRepository>();   
@@ -63,24 +74,15 @@ public class Program
                  services.AddScoped<IAnalysisRepository, AnalysisRepository>(); // расчёт 
                  services.AddTransient<IIndicatorService, IndicatorService>();  // расчёт аналитики - индикаторы
                  services.AddTransient<MarketScreener>();
-                 services.AddSingleton<BinanceApiDispatcher>();
-
-                 services.AddHostedService<SymbolUpdateWorker>();               // сервис обновления списка пар
+                 services.AddTransient<SymbolUpdateWorker>();               // сервис обновления списка пар
+                 services.AddTransient<HistoricalAuditorWorker>();          // Глубокое восстановление дыр
+                 services.AddTransient<AuditInitializationWorker>();
+                 services.AddTransient<QuickAuditorWorker>();           // Восстанавливаем дыры за 24 часа максимум
+                 services.AddHostedService<HangfireJobsService>();
+                 services.AddHostedService<DashboardHostedService>();
                  services.AddHostedService<BinanceCollectorWorker>();           // Собираем данные от binance и сохраняем в базу
-                 
-                 // переделать с временных рядов на traidId
-                 services.AddHostedService<QuickAuditorWorker>();           // Восстанавливаем дыры за 24 часа максимум
-
-                 // переделать с временных рядов на traidId
-                 //services.AddHostedService<HistoricalAuditorWorker>();          // Глубокое восстановление дыр
-                 
-                 
-                 //services.AddHostedService<OhlcvAggregatorWorker>();          // Агрегация тиковых данных в свечи
-                 //services.AddHostedService<FeatureCalculatorWorker>();
-                 
              })
             .UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
-                // Эта одна строка теперь делает ВСЁ, что нужно
                 .ReadFrom.Configuration(context.Configuration)
                 .Enrich.FromLogContext()
                 .Enrich.WithProcessId()
@@ -95,6 +97,7 @@ public class Program
         catch (Exception ex)
         {
             Log.Fatal(ex, "Хост завершился с непредвиденной ошибкой");
+            // TODO write to file
         }
         finally
         {
