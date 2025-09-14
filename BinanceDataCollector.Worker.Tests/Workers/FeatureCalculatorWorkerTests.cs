@@ -1,5 +1,4 @@
 ﻿using BinanceDataCollector.Application.Analytics.Models;
-using BinanceDataCollector.Application.Analytics;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Worker.Workers;
@@ -86,7 +85,7 @@ public class FeatureCalculatorWorkerTests : IDisposable
 
         // Настраиваем моки на возврат простых данных
         _mockSymbolRepo.Setup(r => r.GetActiveSymbolsAsync()).ReturnsAsync(new List<string> { symbol });
-        _mockOhlcvRepo.Setup(r => r.GetAllBySymbolAsync(symbol)).ReturnsAsync(klinesToReturn);
+        //_mockOhlcvRepo.Setup(r => r.GetAllBySymbolAsync(symbol)).ReturnsAsync(klinesToReturn);
         _mockIndicatorService.Setup(s => s.CalculateAll(symbol, klinesToReturn)).Returns(featuresToReturn);
         _mockFeatureRepo.Setup(r => r.GetLastFeatureTimeAsync(symbol)).ReturnsAsync((long?)null); // Для "оглупленной" версии это не важно
         _mockAnalysisRepo.Setup(r => r.GetCvdForOhlcvAsync(symbol, It.IsAny<DateTime>(), It.IsAny<DateTime>())).ReturnsAsync(new List<CvdResult>());
