@@ -3,6 +3,7 @@ using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Application.Services;
 using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
+using BinanceDataCollector.Infrastructure.Services;
 using BinanceDataCollector.MarketScreenService;
 using BinanceDataCollector.Worker.Common;
 using BinanceDataCollector.Worker.Workers;
@@ -10,6 +11,8 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using Serilog;
 using Serilog.Enrichers.WithCaller;
+using System.Diagnostics;
+using System.Net;
 
 namespace BinanceDataCollector.Worker;
 
@@ -31,68 +34,106 @@ public class Program
         #endregion
 
         try
-        {
+        { 
             Log.Information("Запускаем приложение...");
-            var host = Host.CreateDefaultBuilder(args)
-             .ConfigureServices((hostContext, services) => {
-                 IConfiguration configuration = hostContext.Configuration;
-                 
-                 #region ===== НАСТРОЙКА HANGFIRE =====
-                 services.AddHangfire(config => config
-                     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-                     .UseSimpleAssemblyNameTypeSerializer()
-                     .UseRecommendedSerializerSettings()
-                     .UsePostgreSqlStorage(options => {
-                         options.UseNpgsqlConnection(hostContext.Configuration.GetConnectionString("HangfireConnection"));
-                     }
-                 ));
 
-                 services.AddHangfireServer(options =>
-                 {
-                     // Указываем, какие очереди и в каком порядке обрабатывать.
-                     options.Queues = new[] {
-                        "realtime",         // Высший: Мгновенные системные задачи
-                        "live",             // Высокий: Сбор данных в реальном времени (если будете использовать)
-                        "quick_audit",      // Средний: Быстрый аудит "горячих" данных
-                        "historical_audit", // Низкий: Планирование "капитального ремонта"
-                        "archive_import",   // Очень низкий: Скачивание и импорт тяжелых архивов
-                        "default"           // Самый низкий: Все остальное, что без очереди
-                     };
-                     // WorkerCount можно настроить, но по умолчанию он = Environment.ProcessorCount * 5
-                 });
-                 #endregion
-
-                 services.AddScoped<IBinanceService, BinanceService>();                 
-                 services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();// сбор топ-Х пар по которым необходимо собирать статистику
-                 services.AddScoped<IOrderRepository, OrderRepository>();   
-                 services.AddScoped<ITradeRepository, TradeRepository>();
-                 services.AddScoped<IAuditRepository, AuditRepository>();
-                 services.AddTransient<IAuditService, AuditService>(); // <-- 
-                 services.AddScoped<IHistoricalAuditRepository, HistoricalAuditRepository>(); // <-- 
-                 services.AddScoped<IOhlcvRepository, OhlcvRepository>();       // расчёт аналитики - свечи
-                 services.AddScoped<IFeatureRepository, FeatureRepository>();
-                 services.AddScoped<IAnalysisRepository, AnalysisRepository>(); // расчёт 
-                 services.AddTransient<IIndicatorService, IndicatorService>();  // расчёт аналитики - индикаторы
-                 services.AddTransient<MarketScreener>();
-                 services.AddTransient<SymbolUpdateWorker>();               // сервис обновления списка пар
-                 services.AddTransient<HistoricalAuditorWorker>();          // Глубокое восстановление дыр
-                 services.AddTransient<AuditInitializationWorker>();
-                 services.AddTransient<QuickAuditorWorker>();           // Восстанавливаем дыры за 24 часа максимум
-                 services.AddHostedService<HangfireJobsService>();
-                 services.AddHostedService<DashboardHostedService>();
-                 services.AddHostedService<BinanceCollectorWorker>();           // Собираем данные от binance и сохраняем в базу
-             })
-            .UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
-                .ReadFrom.Configuration(context.Configuration)
+            var builder = WebApplication.CreateBuilder(args);
+            builder.WebHost.UseUrls("http://*:7001");
+            builder.Logging.ClearProviders();
+            builder.Logging.AddSerilog(new LoggerConfiguration()
+                .ReadFrom.Configuration(builder.Configuration)
                 .Enrich.FromLogContext()
                 .Enrich.WithProcessId()
                 .Enrich.WithThreadId()
                 .Enrich.With<EnrichWithSourceClass>()
-                .Enrich.WithCaller())
-            .Build();
+                .Enrich.WithCaller()
+                .CreateLogger());
+
+            #region Настройка Hangfire
+            builder.Services.AddHangfire(config => config
+                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                .UseSimpleAssemblyNameTypeSerializer()
+                .UseRecommendedSerializerSettings()
+                .UsePostgreSqlStorage(options => {
+                    options.UseNpgsqlConnection(
+                        builder.Configuration.GetConnectionString("HangfireConnection"));
+                }));
+
+            // --- Сервер для быстрых, приоритетных задач ---
+            builder.Services.AddHangfireServer(options =>
+            {
+                options.ServerName = "PriorityServer";
+                options.Queues = new[] { "realtime", "quick_audit"}; // Слушает ТОЛЬКО эти очереди
+               
+                options.WorkerCount = 
+                (Debugger.IsAttached || builder.Environment.IsDevelopment()) 
+                    ? Math.Max(4, Environment.ProcessorCount)  // на деве 8 ядер у маширы
+                    : Math.Max(2, Environment.ProcessorCount);  // на проде 4 ядра
+            });
+
+            // --- Сервер для тяжелых, фоновых задач ---
+            builder.Services.AddHangfireServer(options =>
+            {
+                options.ServerName = "BackgroundServer";
+                options.Queues = new[] { "historical_audit", "archive_import", "default" }; // Слушает ТОЛЬКО эти
+                options.WorkerCount =
+                (Debugger.IsAttached || builder.Environment.IsDevelopment()) 
+                    ? Environment.ProcessorCount * 4 
+                    : Environment.ProcessorCount * 2; // Выделяем ему ядра процессора
+            });
+            #endregion
+
+            #region Регистрация сервисов
+            builder.Services.AddHttpClient("BinanceArchive", client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(10); // Большие архивы могут качаться долго
+                client.DefaultRequestHeaders.Add("User-Agent", "BinanceDataCollector/1.0");
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                MaxConnectionsPerServer = 10, // Ограничиваем подключения к Binance
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+                PooledConnectionLifetime = TimeSpan.FromMinutes(15), // Переиспользование соединений
+                ConnectTimeout = TimeSpan.FromSeconds(30),
+                ResponseDrainTimeout = TimeSpan.FromSeconds(10)
+            });
+
+            builder.Services.AddScoped<IBinanceService, BinanceService>();
+            builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
+            builder.Services.AddScoped<ITradeRepository, TradeRepository>();
+            builder.Services.AddScoped<IHistoricalAuditRepository, HistoricalAuditRepository>();
+            builder.Services.AddScoped<IOhlcvRepository, OhlcvRepository>();
+            builder.Services.AddScoped<IFeatureRepository, FeatureRepository>();
+            builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
+            builder.Services.AddTransient<IAuditService, AuditService>();
+            builder.Services.AddTransient<IIndicatorService, IndicatorService>();
+            builder.Services.AddTransient<MarketScreener>();
+            builder.Services.AddTransient<SymbolUpdateWorker>();
+            builder.Services.AddTransient<HistoricalAuditorWorker>();
+            builder.Services.AddTransient<AuditInitializationWorker>();
+            builder.Services.AddTransient<QuickAuditorWorker>();
+            builder.Services.AddTransient<IArchiveService, ArchiveService>();
+            builder.Services.AddTransient<ArchiveImportWorker>();
+
+            // Ваши IHostedService
+            builder.Services.AddHostedService<HangfireJobsService>();
+            builder.Services.AddHostedService<BinanceCollectorWorker>();
+            #endregion
+
+            var app = builder.Build();
+
+            // --- 5. Настройка веб-пайплайна (Middleware) ---
+            // Включаем Hangfire Dashboard
+            app.UseHangfireDashboard("/hangfire", new DashboardOptions
+            {
+                Authorization = new[] { new HangfireAuthorizationFilter() }
+            });
+
+            // Добавляем простой эндпоинт для проверки, что веб-сервер жив
+            app.MapGet("/", () => "BinanceDataCollector is running.");
 
             Log.Information("Запуск хоста...");
-            host.Run();
+            app.Run();
         }
         catch (Exception ex)
         {

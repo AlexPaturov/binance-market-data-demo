@@ -28,6 +28,9 @@ jobs:
         docker build -t $IMAGE_TAG:latest .
         docker push $IMAGE_TAG:latest
 
+    - name: Copy docker-compose file to deployment directory
+      run: cp docker-compose.yml /opt/BinanceCollector/docker-compose.yml
+
     - name: Deploy with Docker Compose
       run: |
         cd /opt/BinanceCollector

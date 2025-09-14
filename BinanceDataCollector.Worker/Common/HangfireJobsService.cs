@@ -1,5 +1,6 @@
 ﻿using BinanceDataCollector.Worker.Workers;
 using Hangfire;
+using System.Diagnostics;
 
 namespace BinanceDataCollector.Worker.Common;
 
@@ -7,11 +8,17 @@ public class HangfireJobsService : IHostedService
 {
     private readonly IRecurringJobManager _recurringJobManager;
     private readonly ILogger<HangfireJobsService> _logger;
+    private readonly bool _isDevelopment;
 
-    public HangfireJobsService(IRecurringJobManager recurringJobManager, ILogger<HangfireJobsService> logger)
+    public HangfireJobsService(
+        IRecurringJobManager recurringJobManager, 
+        ILogger<HangfireJobsService> logger,
+        IHostEnvironment environment
+    )
     {
         _recurringJobManager = recurringJobManager;
         _logger = logger;
+        _isDevelopment = Debugger.IsAttached || environment.IsDevelopment();
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -32,33 +39,17 @@ public class HangfireJobsService : IHostedService
         _recurringJobManager.AddOrUpdate<HistoricalAuditorWorker>(
             "historical-audit",
             worker => worker.AuditNextBatchAsync(),
-            "0 22 * * *", // "0 22 * * *" => "в 00 минут, в 22 часа, каждый день, каждый месяц, каждый день недели"
+            _isDevelopment ? "*/30 * * * *" : "0 */6 * * *",  // prod каждые 6 часов по UTC 6,12,18,00 : dev каждые 5 минут
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
         );
 
-        // "quick_audit": Каждые 5 минут. Проверять все символы на неполноту в рамках 24 часового окна
+        // "quick_audit": Каждые 10 минут. Проверять все символы на неполноту в рамках 24 часового окна
         _recurringJobManager.AddOrUpdate<QuickAuditorWorker>(
             "quick_audit",
             worker => worker.CheckAndFillRecentGapsAsync(),
-            "*/5 * * * *",
+             _isDevelopment ? "*/2 * * * *" : "*/10 * * * *", // Если dev - каждые 2 минуты, если prod - каждые 10 минут
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
         );
-
-        // --------------------------------------------------------------------------------
-        //_recurringJobManager.AddOrUpdate<HistoricalAuditorWorker>(
-        //    "historical-audit",
-        //    worker => worker.AuditNextBatchAsync(),
-        //     "*/3 * * * *",
-        //    new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        //);
-
-        //_recurringJobManager.AddOrUpdate<QuickAuditorWorker>(
-        //    "quick_audit",
-        //    worker => worker.CheckAndFillRecentGapsAsync(),
-        //    "*/5 * * * *",
-        //    new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        //);
-        // --------------------------------------------------------------------------------
 
         _recurringJobManager.AddOrUpdate<AuditInitializationWorker>(
             "audit-initializer",

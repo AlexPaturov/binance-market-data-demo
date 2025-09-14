@@ -38,7 +38,7 @@ public interface ITradeRepository
 
 
     /// <summary>
-    /// Находит все пропуски в последовательности TradeId для указанного символа за последние 48 часов.
+    /// Находит все пропуски в последовательности TradeId для указанного символа за последние 24 часов.
     /// </summary>
     Task<List<DataGap>> GetGapsForSymbolDayAsync(string symbol);
 

@@ -74,7 +74,7 @@ public class TradeRepository : ITradeRepository
         using var db = Connection;
 
         // 3. Выполняем как обычный ТЕКСТОВЫЙ запрос.
-        await db.ExecuteAsync(sql, parameters);
+        await db.ExecuteAsync(sql, parameters, commandTimeout: 600);
     }
 
     public async Task<long?> GetLastTradeTimeAsync(string symbol)
@@ -104,7 +104,7 @@ public class TradeRepository : ITradeRepository
         return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol });
     }
 
-    // список всех дыр для символа за 48 часов
+    // список всех дыр для символа за 24 часа
     public async Task<List<DataGap>> GetGapsForSymbolDayAsync(string symbol)
     {
         const string sql = @"
@@ -118,7 +118,7 @@ public class TradeRepository : ITradeRepository
                     ""Symbol"" = @Symbol 
                     -- Фильтрация по TradeTime гораздо эффективнее, если по нему есть индекс.
                     -- Мы вычисляем временную метку 48 часов назад ОДИН РАЗ.
-                    AND ""TradeTime"" >= (EXTRACT(EPOCH FROM (NOW() - INTERVAL '48 hours')) * 1000)::BIGINT
+                    AND ""TradeTime"" >= (EXTRACT(EPOCH FROM (NOW() - INTERVAL '24 hours')) * 1000)::BIGINT
             )
             SELECT
                 ""PrevTradeId"" + 1 AS ""GapStart"", -- Маппинг на record DataGap

@@ -4,6 +4,9 @@ using Hangfire;
 
 namespace BinanceDataCollector.Worker;
 
+/// <summary>
+/// Первичное создание вотермарки для каждого символа
+/// </summary>
 public class AuditInitializationWorker
 {
     private readonly IHistoricalAuditRepository _auditRepo;

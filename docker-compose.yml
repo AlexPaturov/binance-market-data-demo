@@ -30,8 +30,11 @@ services:
     depends_on:
       - db
       - seq # <-- Добавляем зависимость от Seq
+    ports:
+      - "7001:7001" # Пробрасываем порт 7001 хост-машины на порт 7001 контейнера
     environment:
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=bindatacoll;Password=dt_hfgd_yyyd
+      - ConnectionStrings__HangfireConnection=Host=db;Port=5432;Database=market_analytics_jobs;Username=bindatacoll;Password=dt_hfgd_yyyd
       - SEQ_URL=http://seq
 volumes:
   postgres_data:

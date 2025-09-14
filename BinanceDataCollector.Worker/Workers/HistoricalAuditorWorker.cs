@@ -108,23 +108,32 @@ public class HistoricalAuditorWorker
                 if (gaps.Any())
                 {
                     _logger.LogWarning("[{Symbol}] В диапазоне ID {StartId}-{EndId} найдено {Count} дыр.", symbol, startTradeId, endTradeId.Value, gaps.Count);
+                    
                     foreach (var gap in gaps)
                     {
                         // 2. Определяем, какие календарные дни (UTC) затрагивает эта дыра.
                         var startTrade = await tradeRepo.GetTradeByIdAsync(gap.GapStart, symbol);
                         var endTrade = await tradeRepo.GetTradeByIdAsync(gap.GapEnd, symbol);
 
+                        var twentyFourHoursAgo = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-24)); // пропускаем всё что раньше 24 часов от настоящей даты
                         var datesToDownload = GetDatesBetween(startTrade.TradeTime, endTrade.TradeTime);
 
                         // 3. Ставим задачи в Hangfire для нового воркера.
                         foreach (var date in datesToDownload)
                         {
+                            if (date >= twentyFourHoursAgo) 
+                            {
+                                _logger.LogInformation("[{Symbol}] Пропускаем планирование для даты {Date}, т.к. это 'горячая' зона QuickAuditor.", symbol, date);
+                                continue; // Переходим к следующей дате
+                            }
+
                             _logger.LogWarning("Планируем загрузку архива для {Symbol} за {Date}", symbol, date);
                             BackgroundJob.Enqueue<ArchiveImportWorker>(
                                 worker => worker.ImportArchiveAsync(symbol, date, CancellationToken.None)
                             );
                         }
                     }
+
                 }
                 else
                 {
