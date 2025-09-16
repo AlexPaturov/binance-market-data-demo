@@ -84,16 +84,14 @@ public class TradeRepository : ITradeRepository
         return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol });
     }
 
-    public async Task ExecuteAggregationAsync()
+    public async Task ExecuteAggregationAsync(long startTimestamp, long endTimestamp)
     {
         using var db = Connection;
-
-        // 1. Формируем SQL-запрос, который ВЫЗЫВАЕТ функцию через SELECT.
-        const string sql = "SELECT public.sp_aggregate_trades_to_ohlcv()";
-
-        // Увеличиваем таймаут, так как агрегация может быть долгой
-        // 2. Выполняем как обычный ТЕКСТОВЫЙ запрос.
-        await db.ExecuteAsync(sql, commandTimeout: 600);
+        const string sql = "SELECT public.sp_aggregate_trades_to_ohlcv(@Start, @End)";
+        // Даем процедуре достаточно времени на выполнение одной порции
+        await db.ExecuteAsync(sql,
+            new { Start = startTimestamp, End = endTimestamp },
+            commandTimeout: 300); // 5 минут
     }
 
     // на уаление ?
@@ -190,6 +188,38 @@ public class TradeRepository : ITradeRepository
         }, commandTimeout: 600);
     }
 
+    public async Task<List<DataGap>> FindGapsInTimeWindowAsync(string symbol, DateTime startTime, DateTime endTime)
+    {
+        using var db = Connection;
+        var startTimeMs = new DateTimeOffset(startTime).ToUnixTimeMilliseconds();
+        var endTimeMs = new DateTimeOffset(endTime).ToUnixTimeMilliseconds();
 
+        // Этот запрос очень похож на наш старый, но он будет работать
+        // с маленькими временными окнами, поэтому будет быстрым.
+        const string sql = @"
+        WITH OrderedTrades AS (
+            SELECT
+                ""TradeId"",
+                LAG(""TradeId"", 1) OVER (ORDER BY ""TradeId"" ASC) AS ""PrevTradeId""
+            FROM public.""Trades""
+            WHERE 
+                ""Symbol"" = @Symbol 
+                AND ""TradeTime"" >= @StartTimeMs
+                AND ""TradeTime"" < @EndTimeMs
+        )
+        SELECT
+            ""PrevTradeId"" + 1 AS ""GapStart"",
+            ""TradeId"" - 1 AS ""GapEnd""
+        FROM OrderedTrades
+        WHERE ""TradeId"" > ""PrevTradeId"" + 1;
+    ";
 
+        var gaps = await db.QueryAsync<DataGap>(sql, new
+        {
+            Symbol = symbol,
+            StartTimeMs = startTimeMs,
+            EndTimeMs = endTimeMs
+        });
+        return gaps.AsList();
+    }
 }

@@ -27,8 +27,10 @@ public interface ITradeRepository
     /// <summary>
     /// Агрегирует тиковые данные в свечи
     /// </summary>
+    /// <param name="startTimestamp"></param>
+    /// <param name="endTimestamp"></param>
     /// <returns></returns>
-    Task ExecuteAggregationAsync();
+    Task ExecuteAggregationAsync(long startTimestamp, long endTimestamp);
 
     // на удаление
     /// <summary>
@@ -62,6 +64,8 @@ public interface ITradeRepository
     /// </summary>
     Task<IEnumerable<long>> GetTradeIdsInWindowAsync(string symbol, long startTradeId, long endTradeId);
 
-
-
+    /// <summary>
+    /// Находит дыры в TradeId в ЗАДАННОМ ВРЕМЕННОМ ОКНЕ.
+    /// </summary>
+    Task<List<DataGap>> FindGapsInTimeWindowAsync(string symbol, DateTime startTime, DateTime endTime);
 }

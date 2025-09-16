@@ -21,8 +21,29 @@ public class OhlcvRepository : IOhlcvRepository
     public async Task<IEnumerable<Ohlcv>> ClaimNewKlinesForProcessingAsync(int batchSize)
     {
         using var db = Connection;
-        const string sql = "SELECT * FROM public.sp_claim_new_ohlcv_for_features(@BatchSize)";
-        return await db.QueryAsync<Ohlcv>(sql, new { BatchSize = batchSize });
+        const string sql = @"
+            WITH candidates AS (
+                -- 1. Находим кандидатов для обработки
+                SELECT ""Symbol"", ""OpenTime""
+                FROM public.""Ohlcv_1min""
+                WHERE ""ProcessingStatus"" = 'new'
+                ORDER BY ""OpenTime"" ASC
+                LIMIT @BatchSize
+                -- Блокируем строки, чтобы другой воркер их не тронул
+                FOR UPDATE SKIP LOCKED 
+            ),
+            updated AS (
+                -- 2. Атомарно обновляем их статус на 'processing'
+                UPDATE public.""Ohlcv_1min""
+                SET ""ProcessingStatus"" = 'processing'
+                WHERE (""Symbol"", ""OpenTime"") IN (SELECT ""Symbol"", ""OpenTime"" FROM candidates)
+                -- 3. Возвращаем обновленные строки
+                RETURNING *
+            )
+            SELECT * FROM updated ORDER BY ""OpenTime"" ASC;
+        ";
+
+        return await db.QueryAsync<Ohlcv>(sql, new { BatchSize = batchSize }, commandTimeout: 300);
     }
 
     public async Task MarkKlinesAsProcessedAsync(IEnumerable<long> openTimes)

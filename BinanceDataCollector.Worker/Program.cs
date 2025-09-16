@@ -110,8 +110,11 @@ public class Program
             builder.Services.AddTransient<HistoricalAuditorWorker>();
             builder.Services.AddTransient<AuditInitializationWorker>();
             builder.Services.AddTransient<QuickAuditorWorker>();
+            builder.Services.AddTransient<FillGapWorker>();
             builder.Services.AddTransient<IArchiveService, ArchiveService>();
             builder.Services.AddTransient<ArchiveImportWorker>();
+            builder.Services.AddTransient<OhlcvAggregatorWorker>();
+            builder.Services.AddTransient<FeatureCalculatorWorker>();
 
             // Ваши IHostedService
             builder.Services.AddHostedService<HangfireJobsService>();

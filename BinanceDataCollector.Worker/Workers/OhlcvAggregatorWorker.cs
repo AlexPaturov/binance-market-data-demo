@@ -1,4 +1,6 @@
 ﻿using BinanceDataCollector.Application.Interfaces;
+using BinanceDataCollector.Worker.Common;
+using Hangfire;
 
 namespace BinanceDataCollector.Worker.Workers;
 
@@ -6,59 +8,68 @@ namespace BinanceDataCollector.Worker.Workers;
 /// Фоновый сервис, который периодически агрегирует сырые сделки (тиковые данные)
 /// из таблицы Trades в минутные свечи (OHLCV) в таблице Ohlcv_1min.
 /// </summary>
-public class OhlcvAggregatorWorker : BackgroundService
+
+[Queue("historical_audit")] // <-- СТАВИМ В МЕНЕЕ ПРИОРИТЕТНУЮ ОЧЕРЕДЬ
+[DisableConcurrentExecution(15 * 60)]
+public class OhlcvAggregatorWorker
 {
-    private readonly ILogger<OhlcvAggregatorWorker> _logger;
     private readonly IServiceProvider _serviceProvider;
+    private readonly ILogger<OhlcvAggregatorWorker> _logger;
+    private readonly TimeSpan _windowSize = TimeSpan.FromDays(1); // Обрабатываем по 1 дню за раз
 
-    // Статический объект для блокировки. Гарантирует, что только один
-    // экземпляр этого воркера (даже в теории) сможет выполнять работу.
-    private static readonly SemaphoreSlim _semaphore = new(1, 1);
-
-    public OhlcvAggregatorWorker(ILogger<OhlcvAggregatorWorker> logger, IServiceProvider serviceProvider)
+    public OhlcvAggregatorWorker(
+        IServiceProvider serviceProvider,
+        ILogger<OhlcvAggregatorWorker> logger
+    ) 
     {
-        _logger = logger;
         _serviceProvider = serviceProvider;
+        _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public async Task AggregateNextBatchAsync() // Новое имя
     {
-        _logger.LogInformation("Воркер-агрегатор свечей запущен.");
-        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
-
-        while (!stoppingToken.IsCancellationRequested)
+        using (_logger.TimedOperation("Плановая агрегация свечей (одна порция)"))
         {
-            // Пытаемся "захватить" семафор. Если он уже захвачен,
-            // просто пропускаем этот цикл и ждем следующей минуты.
-            if (!await _semaphore.WaitAsync(0, stoppingToken))
-            {
-                _logger.LogWarning("Предыдущая задача агрегации все еще выполняется. Пропускаем текущий запуск.");
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-                continue;
-            }
-
             try
             {
-                _logger.LogTrace("Запускаем плановую агрегацию свечей...");
-                using (var scope = _serviceProvider.CreateScope())
+                using var scope = _serviceProvider.CreateScope();
+                var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
+                var auditRepo = scope.ServiceProvider.GetRequiredService<IAuditRepository>(); // Нужен репозиторий для вотермарок
+
+                // 1. Получаем вотермарку - с какого момента начинать
+                var watermark = await auditRepo.GetAggregationWatermarkAsync(); // <-- Новый метод в репозитории
+                if (watermark.Status == "Completed")
                 {
-                    var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
-                    await tradeRepo.ExecuteAggregationAsync();
+                    _logger.LogInformation("Агрегация всех сделок завершена.");
+                    return;
                 }
-                _logger.LogTrace("Агрегация свечей завершена.");
+
+                long startTimestamp = watermark.LastProcessedTimestamp + 1;
+                long endTimestamp = startTimestamp + (long)_windowSize.TotalMilliseconds;
+
+                // 2. Проверяем, не залезли ли мы в "горячую" зону
+                var oneHourAgo = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds();
+                if (startTimestamp >= oneHourAgo)
+                {
+                    _logger.LogInformation("Агрегация достигла 'горячей' зоны. Пропускаем цикл.");
+                    await auditRepo.UpdateAggregationWatermarkAsync(startTimestamp - 1, "Completed");
+                    return;
+                }
+
+                // 3. Вызываем "глупую" процедуру для обработки ОДНОГО окна
+                await tradeRepo.ExecuteAggregationAsync(startTimestamp, endTimestamp);
+
+                // 4. Сдвигаем вотермарку вперед
+                await auditRepo.UpdateAggregationWatermarkAsync(endTimestamp, "Pending");
+
+                _logger.LogInformation("Успешно агрегированы сделки в окне до {EndTime}",
+                    DateTimeOffset.FromUnixTimeMilliseconds(endTimestamp));
             }
             catch (Exception ex)
             {
-                // Логируем ошибку, но не "роняем" весь воркер
-                _logger.LogError(ex, "Произошла ошибка во время агрегации свечей.");
+                _logger.LogError(ex, "Ошибка при агрегации порции свечей.");
+                throw;
             }
-            finally
-            {
-                // ОБЯЗАТЕЛЬНО освобождаем семафор, чтобы следующий цикл мог работать.
-                _semaphore.Release();
-            }
-
-            await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
         }
     }
 }

@@ -29,4 +29,6 @@ public interface IOhlcvRepository
     /// <param name="limit">Количество свечей для выборки.</param>
     /// <returns>Коллекция исторических свечей.</returns>
     Task<IEnumerable<Ohlcv>> GetWarmupKlinesAsync(string symbol, long beforeTime, int limit);
+
+   
 }

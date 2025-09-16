@@ -39,7 +39,7 @@ public class HangfireJobsService : IHostedService
         _recurringJobManager.AddOrUpdate<HistoricalAuditorWorker>(
             "historical-audit",
             worker => worker.AuditNextBatchAsync(),
-            _isDevelopment ? "*/30 * * * *" : "0 */6 * * *",  // prod каждые 6 часов по UTC 6,12,18,00 : dev каждые 5 минут
+            _isDevelopment ? "*/30 * * * *" : "0 */6 * * *",  // prod каждые 6 часов по UTC 6,12,18,00 : dev каждые 30 минут
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
         );
 
@@ -56,6 +56,20 @@ public class HangfireJobsService : IHostedService
             worker => worker.CreateWatermarksForNewSymbolsAsync(),
             Cron.Daily(), // Тоже раз в день
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
+        );
+
+        // Агрегация свечей - каждую минуту
+        _recurringJobManager.AddOrUpdate<OhlcvAggregatorWorker>(
+            "ohlcv-aggregator",
+            worker => worker.AggregateNextBatchAsync(),
+            Cron.Minutely() // Каждую минуту
+        );
+
+        // Расчет индикаторов - каждые 2 минуты
+        _recurringJobManager.AddOrUpdate<FeatureCalculatorWorker>(
+            "feature-calculator",
+            worker => worker.CalculateFeaturesAsync(),
+            "*/2 * * * *" // Каждые 2 минуты
         );
 
         _logger.LogInformation("Периодические задачи зарегистрированы.");
