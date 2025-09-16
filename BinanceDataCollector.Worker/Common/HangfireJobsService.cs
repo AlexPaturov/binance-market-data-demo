@@ -9,6 +9,7 @@ public class HangfireJobsService : IHostedService
     private readonly IRecurringJobManager _recurringJobManager;
     private readonly ILogger<HangfireJobsService> _logger;
     private readonly bool _isDevelopment;
+    //IHostEnvironment _environment;
 
     public HangfireJobsService(
         IRecurringJobManager recurringJobManager, 
