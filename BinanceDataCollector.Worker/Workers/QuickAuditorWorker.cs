@@ -1,4 +1,5 @@
 ﻿using BinanceDataCollector.Application.Interfaces;
+using BinanceDataCollector.Worker.Common;
 using Hangfire;
 
 namespace BinanceDataCollector.Worker.Workers;
@@ -10,7 +11,7 @@ namespace BinanceDataCollector.Worker.Workers;
 [DisableConcurrentExecution(15 * 60)]
 public class QuickAuditorWorker
 {
-    private readonly IServiceProvider _serviceProvider;
+    private readonly GapProcessingTracker _tracker;
     private readonly ITrackedSymbolRepository _trackedSymbolRepository;
     private readonly ITradeRepository _tradeRepository;
     private readonly IBackgroundJobClient _backgroundJobClient;
@@ -19,14 +20,14 @@ public class QuickAuditorWorker
     private readonly TimeSpan _chunkWindow = TimeSpan.FromHours(1); // Проверяем по 1 часу
 
     public QuickAuditorWorker(
-        IServiceProvider serviceProvider,
+        GapProcessingTracker tracker,
         ITrackedSymbolRepository trackedSymbolRepository,
         ITradeRepository tradeRepository,
         IBackgroundJobClient backgroundJobClient,
         ILogger<QuickAuditorWorker> logger
         )
     {
-        _serviceProvider = serviceProvider;
+        _tracker = tracker;
         _trackedSymbolRepository = trackedSymbolRepository;
         _tradeRepository = tradeRepository;
         _backgroundJobClient = backgroundJobClient;
@@ -54,13 +55,23 @@ public class QuickAuditorWorker
 
                 if (gaps.Any())
                 {
-                    _logger.LogWarning("[{Symbol}] В окне {Start}-{End} найдено {Count} дыр.", symbol, windowStart, windowEnd, gaps.Count);
+                    _logger.LogWarning("[{Symbol}] В окне [{Start}] - [{End}] найдено {Count} дыр.", 
+                        symbol, windowStart.ToString("yyyy-MM-dd HH:mm:ss"), windowEnd.ToString("yyyy-MM-dd HH:mm:ss"), gaps.Count);
                     foreach (var gap in gaps)
                     {
                         // 2. Ставим задачи на заполнение
-                        _backgroundJobClient.Enqueue<FillGapWorker>(
-                            x => x.FillWithApiAsync(symbol, gap, JobCancellationToken.Null)
-                        );
+                        if (_tracker.TryMarkAsProcessing(symbol, gap))
+                        {
+                            // Если удалось пометить - значит, это новая дыра. Ставим задачу.
+                            _backgroundJobClient.Enqueue<FillGapWorker>(
+                                x => x.FillWithApiAsync(symbol, gap, JobCancellationToken.Null)
+                            );
+                        }
+                        else
+                        {
+                            // Эта дыра уже в обработке, игнорируем.
+                            _logger.LogDebug("[{Symbol}] Дыра {gap} уже находится в обработке. Пропускаем.", symbol, gap);
+                        }
                     }
                 }
 

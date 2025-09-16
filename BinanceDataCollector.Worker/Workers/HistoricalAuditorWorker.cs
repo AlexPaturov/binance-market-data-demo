@@ -114,6 +114,17 @@ public class HistoricalAuditorWorker
                         var startTrade = await tradeRepo.GetTradeByIdAsync(gap.GapStart, symbol);
                         var endTrade = await tradeRepo.GetTradeByIdAsync(gap.GapEnd, symbol);
 
+                        #region ДЛЯ ОТЛАДКИ 
+                        if (startTrade == null || endTrade == null)
+                        {
+                            _logger.LogWarning("[{Symbol}] Не удалось найти крайние сделки для дыры {StartId}-{EndId}",
+                                symbol, gap.GapStart, gap.GapEnd);
+                            continue;
+                        }
+                        _logger.LogDebug("[{Symbol}] Проверяем дыру между сделками: StartTradeId={startId}, StartTradeTime={startTime}, EndTradeId={endId}, EndTradeTime={endTime}",
+                        symbol, startTrade.TradeId, startTrade.TradeTime, endTrade.TradeId, endTrade.TradeTime);
+                        #endregion
+
                         var twentyFourHoursAgo = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-24)); // пропускаем всё что раньше 24 часов от настоящей даты
                         var datesToDownload = GetDatesBetween(startTrade.TradeTime, endTrade.TradeTime);
 
@@ -221,6 +232,17 @@ public class HistoricalAuditorWorker
     /// </summary>
     private IEnumerable<DateOnly> GetDatesBetween(long startTimestampMs, long endTimestampMs)
     {
+        // ===== ЗАЩИТНАЯ ПРОВЕРКА =====
+        if (startTimestampMs <= 0 || endTimestampMs <= 0 || startTimestampMs > endTimestampMs)
+        {
+            // Если временные метки некорректны или перепутаны,
+            // возвращаем пустую коллекцию, чтобы избежать ошибки.
+            _logger.LogWarning("Получены некорректные временные метки для GetDatesBetween: Start={start}, End={end}. Пропускаем.",
+                startTimestampMs, endTimestampMs);
+            yield break;
+        }
+        // =============================
+
         var startDate = DateTimeOffset.FromUnixTimeMilliseconds(startTimestampMs).UtcDateTime.Date;
         var endDate = DateTimeOffset.FromUnixTimeMilliseconds(endTimestampMs).UtcDateTime.Date;
 

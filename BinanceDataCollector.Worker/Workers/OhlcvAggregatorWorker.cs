@@ -13,16 +13,19 @@ namespace BinanceDataCollector.Worker.Workers;
 [DisableConcurrentExecution(15 * 60)]
 public class OhlcvAggregatorWorker
 {
-    private readonly IServiceProvider _serviceProvider;
+    private readonly ITradeRepository _tradeRepository;
+    private readonly IAuditRepository _auditRepository;
     private readonly ILogger<OhlcvAggregatorWorker> _logger;
     private readonly TimeSpan _windowSize = TimeSpan.FromDays(1); // Обрабатываем по 1 дню за раз
 
     public OhlcvAggregatorWorker(
-        IServiceProvider serviceProvider,
+        ITradeRepository tradeRepository,
+        IAuditRepository auditRepository,
         ILogger<OhlcvAggregatorWorker> logger
     ) 
     {
-        _serviceProvider = serviceProvider;
+        _tradeRepository = tradeRepository;
+        _auditRepository = auditRepository;
         _logger = logger;
     }
 
@@ -32,12 +35,8 @@ public class OhlcvAggregatorWorker
         {
             try
             {
-                using var scope = _serviceProvider.CreateScope();
-                var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
-                var auditRepo = scope.ServiceProvider.GetRequiredService<IAuditRepository>(); // Нужен репозиторий для вотермарок
-
                 // 1. Получаем вотермарку - с какого момента начинать
-                var watermark = await auditRepo.GetAggregationWatermarkAsync(); // <-- Новый метод в репозитории
+                var watermark = await _auditRepository.GetAggregationWatermarkAsync(); // <-- Новый метод в репозитории
                 if (watermark.Status == "Completed")
                 {
                     _logger.LogInformation("Агрегация всех сделок завершена.");
@@ -52,18 +51,18 @@ public class OhlcvAggregatorWorker
                 if (startTimestamp >= oneHourAgo)
                 {
                     _logger.LogInformation("Агрегация достигла 'горячей' зоны. Пропускаем цикл.");
-                    await auditRepo.UpdateAggregationWatermarkAsync(startTimestamp - 1, "Completed");
+                    await _auditRepository.UpdateAggregationWatermarkAsync(startTimestamp - 1, "Completed");
                     return;
                 }
 
-                // 3. Вызываем "глупую" процедуру для обработки ОДНОГО окна
-                await tradeRepo.ExecuteAggregationAsync(startTimestamp, endTimestamp);
-
+                // 3. Вызываем процедуру для обработки ОДНОГО окна
+                await _tradeRepository.ExecuteAggregationAsync(startTimestamp, endTimestamp);
                 // 4. Сдвигаем вотермарку вперед
-                await auditRepo.UpdateAggregationWatermarkAsync(endTimestamp, "Pending");
+                await _auditRepository.UpdateAggregationWatermarkAsync(endTimestamp, "Pending");
 
-                _logger.LogInformation("Успешно агрегированы сделки в окне до {EndTime}",
-                    DateTimeOffset.FromUnixTimeMilliseconds(endTimestamp));
+                _logger.LogInformation("Успешно агрегированы сделки в окне с {StartTime} по {EndTime}",
+                    DateTimeOffset.FromUnixTimeMilliseconds(startTimestamp).ToString("yyyy-MM-dd HH:mm:ss"),
+                    DateTimeOffset.FromUnixTimeMilliseconds(endTimestamp).ToString("yyyy-MM-dd HH:mm:ss"));
             }
             catch (Exception ex)
             {

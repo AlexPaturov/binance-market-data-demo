@@ -42,6 +42,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Worker
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "sql", "sql", "{7091B7D6-BB6B-495E-98D5-C7E656785C9F}"
 	ProjectSection(SolutionItems) = preProject
+		duplicetes_hangfire_jobs.sql = duplicetes_hangfire_jobs.sql
 		sp_aggregate_trades_to_ohlcv.sql = sp_aggregate_trades_to_ohlcv.sql
 	EndProjectSection
 EndProject

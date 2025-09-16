@@ -116,6 +116,7 @@ public class Program
             builder.Services.AddTransient<ArchiveImportWorker>();
             builder.Services.AddTransient<OhlcvAggregatorWorker>();
             builder.Services.AddTransient<FeatureCalculatorWorker>();
+            builder.Services.AddSingleton<GapProcessingTracker>();
 
             // Ваши IHostedService
             builder.Services.AddHostedService<HangfireJobsService>();
