@@ -44,7 +44,7 @@ public class TradeRepository : ITradeRepository
             WHERE ""Symbol"" = @Symbol 
             ORDER BY ""TradeTime"" DESC
             LIMIT @Count";
-        return await db.QueryAsync<Trade>(sql, new { Symbol = symbol, Count = count });
+        return await db.QueryAsync<Trade>(sql, new { Symbol = symbol, Count = count }, commandTimeout: 120);
     }
 
     public async Task BulkInsertAsync(IEnumerable<Trade> trades)
@@ -81,7 +81,7 @@ public class TradeRepository : ITradeRepository
     {
         using var db = Connection;
         const string sql = "SELECT MAX(\"TradeTime\") FROM \"Trades\" WHERE \"Symbol\" = @Symbol";
-        return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol });
+        return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol }, commandTimeout: 120);
     }
 
     public async Task ExecuteAggregationAsync(long startTimestamp, long endTimestamp)
@@ -99,7 +99,7 @@ public class TradeRepository : ITradeRepository
     {
         using var db = Connection;
         const string sql = @"SELECT MAX(""TradeId"") FROM public.""Trades"" WHERE ""Symbol"" = @Symbol";
-        return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol });
+        return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol }, commandTimeout: 120);
     }
 
     // список всех дыр для символа за 24 часа
@@ -129,7 +129,7 @@ public class TradeRepository : ITradeRepository
                 ""GapStart"" ASC; -- Сортируем по началу дыры
             ";
         using var db = Connection;
-        var gaps = await db.QueryAsync<DataGap>(sql, new { Symbol = symbol });
+        var gaps = await db.QueryAsync<DataGap>(sql, new { Symbol = symbol }, commandTimeout: 120);
         return gaps.AsList();
     }
 
@@ -150,7 +150,7 @@ public class TradeRepository : ITradeRepository
         {
             Symbol = symbol,
             TimestampMs = timestampMs
-        });
+        }, commandTimeout: 120);
     }
 
     public async Task<Trade?> GetLastTradeAsync(string symbol)
@@ -165,7 +165,7 @@ public class TradeRepository : ITradeRepository
             ORDER BY ""TradeTime"" DESC, ""TradeId"" DESC
             LIMIT 1;
     ";
-        return await db.QuerySingleOrDefaultAsync<Trade>(sql, new { Symbol = symbol });
+        return await db.QuerySingleOrDefaultAsync<Trade>(sql, new { Symbol = symbol }, commandTimeout: 120);
     }
 
     public async Task<IEnumerable<long>> GetTradeIdsInWindowAsync(string symbol, long startTradeId, long endTradeId)
@@ -219,7 +219,7 @@ public class TradeRepository : ITradeRepository
             Symbol = symbol,
             StartTimeMs = startTimeMs,
             EndTimeMs = endTimeMs
-        });
+        }, commandTimeout: 120);
         return gaps.AsList();
     }
 }
