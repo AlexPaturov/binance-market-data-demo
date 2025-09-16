@@ -100,7 +100,7 @@ public class FillGapWorker
         }
         finally 
         { 
-            _tracker.MarkAsCompleted(symbol, gap); 
+            _tracker.MarkGapAsCompleted(symbol, gap); 
         }
     }
 }

@@ -15,8 +15,9 @@ public class HistoricalAuditorWorker
     private readonly IHistoricalAuditRepository _auditRepository;
     private readonly ITradeRepository _tradeRepository;
     private readonly IAnalysisRepository _analysisRepository;
-
     private readonly ILogger<HistoricalAuditorWorker> _logger;
+    private readonly GapProcessingTracker _tracker;
+    private readonly IBackgroundJobClient _backgroundJobClient;
 
     // --- Конфигурация ---
     private readonly TimeSpan _retryInterval = TimeSpan.FromDays(1);
@@ -29,13 +30,17 @@ public class HistoricalAuditorWorker
         ILogger<HistoricalAuditorWorker> logger,
         IHistoricalAuditRepository auditRepository,
         ITradeRepository tradeRepository,
-        IAnalysisRepository analysisRepository
+        IAnalysisRepository analysisRepository,
+        GapProcessingTracker tracker,
+        IBackgroundJobClient backgroundJobClient
     )
     {
         _logger = logger;
         _auditRepository = auditRepository;
         _tradeRepository = tradeRepository;
         _analysisRepository = analysisRepository;
+        _tracker = tracker;
+        _backgroundJobClient = backgroundJobClient;
     }
 
     [Queue("historical_audit")]
@@ -138,10 +143,22 @@ public class HistoricalAuditorWorker
                                 continue; // Переходим к следующей дате
                             }
 
-                            _logger.LogWarning("Планируем загрузку архива для {Symbol} за {Date}", symbol, date);
-                            BackgroundJob.Enqueue<ArchiveImportWorker>(
-                                worker => worker.ImportArchiveAsync(symbol, date, CancellationToken.None)
-                            );
+                            // ===== ЗАЩИТА ОТ ДУБЛИРОВАНИЯ задач для hangfire =====
+                            if (_tracker.TryMarkArchiveAsProcessing(symbol, date))
+                            {
+                                // Если удалось "зарезервировать" - ставим задачу
+                                _logger.LogWarning("[{Symbol}] Планируем загрузку архива за {Date}", symbol, date);
+                                _backgroundJobClient.Enqueue<ArchiveImportWorker>(
+                                    worker => worker.ImportArchiveAsync(symbol, date, JobCancellationToken.Null)
+                                );
+                            }
+                            else
+                            {
+                                // Если не удалось - значит, такая работа уже ведется. Игнорируем.
+                                _logger.LogDebug("[{Symbol}] Загрузка архива за {Date} уже в процессе. Пропускаем.", symbol, date);
+                            }
+                            // ===================================
+
                         }
                     }
 

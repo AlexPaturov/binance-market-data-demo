@@ -2,8 +2,6 @@
 using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Worker.Common;
 using Hangfire;
-using System.Buffers;
-using System.Runtime;
 
 namespace BinanceDataCollector.Worker.Workers;
 
@@ -12,8 +10,8 @@ public class ArchiveImportWorker
 {
     private readonly IArchiveService _archiveService;
     private readonly ITradeRepository _tradeRepo;
+    private readonly GapProcessingTracker _tracker;
     private readonly ILogger<ArchiveImportWorker> _logger;
-   // private const int BatchSize = 20000; // <-- КОНФИГУРИРУЕМЫЙ РАЗМЕР ПАЧКИ
     private const int BatchSize = 5000; // <-- КОНФИГУРИРУЕМЫЙ РАЗМЕР ПАЧКИ
     private readonly List<Trade> _batch = new(BatchSize);
     private int _totalInserted;
@@ -21,34 +19,47 @@ public class ArchiveImportWorker
     public ArchiveImportWorker(
         IArchiveService archiveService,
         ITradeRepository tradeRepo,
+        GapProcessingTracker tracker,
         ILogger<ArchiveImportWorker> logger
     )
     {
         _archiveService = archiveService;
         _tradeRepo = tradeRepo;
+        _tracker = tracker;
         _logger = logger;
     }
 
     [Queue("archive_import")] // Самый низкий приоритет
     [DisableConcurrentExecution(timeoutInSeconds: 60 * 60)] // Одна загрузка - один час максимум
-    public async Task ImportArchiveAsync(string symbol, DateOnly date, CancellationToken cancellationToken)
+    public async Task ImportArchiveAsync(string symbol, DateOnly date, IJobCancellationToken cancellationToken)
     {
-        await foreach (var trade in _archiveService.DownloadAndParseTradesAsync(symbol, date, cancellationToken))
+        var token = cancellationToken.ShutdownToken;
+
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            _batch.Add(trade);
-
-            if (_batch.Count >= BatchSize)
+            await foreach (var trade in _archiveService.DownloadAndParseTradesAsync(symbol, date, token))
             {
-                await FlushBatch(symbol);
+                _batch.Add(trade);
+
+                if (_batch.Count >= BatchSize)
+                {
+                    await FlushBatch(symbol);
+                }
             }
+
+            if (_batch.Any())
+                await FlushBatch(symbol);
+
+            _logger.LogInformation("[{Symbol}] Вставлено {TotalCount} сделок за {Date}.", symbol, _totalInserted, date);
+
         }
-
-        if (_batch.Any())
-            await FlushBatch(symbol);
-
-        _logger.LogInformation("[{Symbol}] Вставлено {TotalCount} сделок за {Date}.", symbol, _totalInserted, date);
+        finally
+        {
+            // ===== ВАЖНО: Снимаем блокировку в любом случае! =====
+            _tracker.MarkArchiveAsCompleted(symbol, date);
+            _logger.LogInformation("[{Symbol}] Обработка архива за {Date} завершена, блокировка снята.", symbol, date);
+            // =======================================================
+        }
     }
 
     private async Task FlushBatch(string symbol)

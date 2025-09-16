@@ -11,7 +11,7 @@ namespace BinanceDataCollector.Worker.Workers;
 [DisableConcurrentExecution(15 * 60)]
 public class QuickAuditorWorker
 {
-    private readonly GapProcessingTracker _tracker;
+    private readonly GapProcessingTracker _gapTracker;
     private readonly ITrackedSymbolRepository _trackedSymbolRepository;
     private readonly ITradeRepository _tradeRepository;
     private readonly IBackgroundJobClient _backgroundJobClient;
@@ -20,17 +20,17 @@ public class QuickAuditorWorker
     private readonly TimeSpan _chunkWindow = TimeSpan.FromHours(1); // Проверяем по 1 часу
 
     public QuickAuditorWorker(
-        GapProcessingTracker tracker,
+        GapProcessingTracker gapTracker,
+        IBackgroundJobClient backgroundJobClient,
         ITrackedSymbolRepository trackedSymbolRepository,
         ITradeRepository tradeRepository,
-        IBackgroundJobClient backgroundJobClient,
         ILogger<QuickAuditorWorker> logger
         )
     {
-        _tracker = tracker;
+        _gapTracker = gapTracker;
+        _backgroundJobClient = backgroundJobClient;
         _trackedSymbolRepository = trackedSymbolRepository;
         _tradeRepository = tradeRepository;
-        _backgroundJobClient = backgroundJobClient;
         _logger = logger;
     }
 
@@ -60,7 +60,7 @@ public class QuickAuditorWorker
                     foreach (var gap in gaps)
                     {
                         // 2. Ставим задачи на заполнение
-                        if (_tracker.TryMarkAsProcessing(symbol, gap))
+                        if (_gapTracker.TryMarkAsProcessing(symbol, gap))
                         {
                             // Если удалось пометить - значит, это новая дыра. Ставим задачу.
                             _backgroundJobClient.Enqueue<FillGapWorker>(
