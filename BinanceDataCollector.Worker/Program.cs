@@ -104,6 +104,7 @@ public class Program
             builder.Services.AddScoped<IOhlcvRepository, OhlcvRepository>();
             builder.Services.AddScoped<IFeatureRepository, FeatureRepository>();
             builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
+            builder.Services.AddScoped<IAuditRepository, AuditRepository>();
             builder.Services.AddTransient<IIndicatorService, IndicatorService>();
             builder.Services.AddTransient<MarketScreener>();
             builder.Services.AddTransient<SymbolUpdateWorker>();
