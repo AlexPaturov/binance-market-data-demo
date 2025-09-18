@@ -16,7 +16,7 @@ public class FeatureCalculatorWorker
     private readonly IServiceProvider _serviceProvider;
 
     // Конфигурация воркера
-    private const int BatchSize = 5000;      // Сколько свечей обрабатывать за один цикл
+    private const int BatchSize = 500;      // Сколько свечей обрабатывать за один цикл
     private const int WarmupPeriod = 2016000; // 200 недель - максимальный период для наших MA
 
     public FeatureCalculatorWorker(ILogger<FeatureCalculatorWorker> logger, IServiceProvider serviceProvider)

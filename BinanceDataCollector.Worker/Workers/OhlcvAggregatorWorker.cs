@@ -16,7 +16,7 @@ public class OhlcvAggregatorWorker
     private readonly ITradeRepository _tradeRepository;
     private readonly IAuditRepository _auditRepository;
     private readonly ILogger<OhlcvAggregatorWorker> _logger;
-    private readonly TimeSpan _windowSize = TimeSpan.FromHours(2); // Обрабатываем по 2 часа за раз
+    private readonly TimeSpan _windowSize = TimeSpan.FromHours(1); // Обрабатываем по 2 часа за раз
 
     public OhlcvAggregatorWorker(
         ITradeRepository tradeRepository,
