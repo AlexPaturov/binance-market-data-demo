@@ -16,7 +16,7 @@ public class FeatureCalculatorWorker
     private readonly IServiceProvider _serviceProvider;
 
     // Конфигурация воркера
-    private const int BatchSize = 500;      // Сколько свечей обрабатывать за один цикл
+    private const int BatchSize = 100;      // Сколько свечей обрабатывать за один цикл
     private const int WarmupPeriod = 2016000; // 200 недель - максимальный период для наших MA
 
     public FeatureCalculatorWorker(ILogger<FeatureCalculatorWorker> logger, IServiceProvider serviceProvider)
@@ -26,7 +26,7 @@ public class FeatureCalculatorWorker
     }
 
     [Queue("default")] // Тоже задача среднего приоритета
-    [DisableConcurrentExecution(20 * 60)] // Даем 20 минут на расчет
+    [DisableConcurrentExecution(30 * 60)] // Даем 20 минут на расчет
     public async Task CalculateFeaturesAsync()
     {
         using (_logger.TimedOperation("Плановый расчет признаков"))
