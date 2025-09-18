@@ -2,6 +2,7 @@
 using BinanceDataCollector.Domain.Entities;
 using Dapper;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using System.Data;
 using System.Data.Common;
@@ -12,11 +13,16 @@ namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 public class TradeRepository : ITradeRepository
 {
     private readonly string _connectionString;
+    private readonly ILogger<TradeRepository> _logger;
 
-    public TradeRepository(IConfiguration configuration)
+    public TradeRepository(
+        IConfiguration configuration,
+        ILogger<TradeRepository> logger
+    )
     {
         _connectionString = configuration.GetConnectionString("DefaultConnection")
                         ?? throw new InvalidOperationException("Connection string not found.");
+        _logger = logger;
     }
 
     private IDbConnection Connection => new NpgsqlConnection(_connectionString);
@@ -170,6 +176,8 @@ public class TradeRepository : ITradeRepository
 
     public async Task<IEnumerable<long>> GetTradeIdsInWindowAsync(string symbol, long startTradeId, long endTradeId)
     {
+        // 1. Создаем Stopwatch для замера времени
+        var stopwatch = Stopwatch.StartNew();
         using var db = Connection;
 
         const string sql = @"
@@ -180,12 +188,39 @@ public class TradeRepository : ITradeRepository
           AND ""TradeId"" <= @EndTradeId
         ORDER BY ""TradeId"" ASC";
 
-        return await db.QueryAsync<long>(sql, new
+        try
         {
-            Symbol = symbol,
-            StartTradeId = startTradeId,
-            EndTradeId = endTradeId
-        }, commandTimeout: 600);
+            return await db.QueryAsync<long>(sql, new
+            {
+                Symbol = symbol,
+                StartTradeId = startTradeId,
+                EndTradeId = endTradeId
+            }, commandTimeout: 600);
+        }
+        catch (Exception ex)
+        {
+            // 2. Останавливаем Stopwatch в блоке catch
+            stopwatch.Stop();
+
+            // 3. Создаем новое, более информативное исключение
+            var detailedException = new InvalidOperationException(
+                $"Ошибка при поиске дыр для символа '{symbol}' в диапазоне ID {startTradeId}-{endTradeId} " +
+                $"после {stopwatch.ElapsedMilliseconds} мс.",
+                ex // <-- Вкладываем оригинальное исключение внутрь
+            );
+
+            // 4. Логируем ОРИГИНАЛЬНОЕ исключение со всеми деталями
+            _logger.LogError(ex,
+                "ЗАПРОС УПАЛ ПО ТАЙМАУТУ. Символ: {Symbol}, Диапазон ID: {StartId} - {EndId}, Время выполнения до сбоя: {Elapsed} мс.",
+                symbol,
+                startTradeId,
+                endTradeId,
+                stopwatch.ElapsedMilliseconds);
+
+            // 5. Пробрасываем НОВОЕ, обогащенное исключение наверх.
+            // Логика Hangfire по перезапуску не сломается.
+            throw detailedException;
+        }
     }
 
     public async Task<List<DataGap>> FindGapsInTimeWindowAsync(string symbol, DateTime startTime, DateTime endTime)

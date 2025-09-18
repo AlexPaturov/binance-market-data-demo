@@ -6,7 +6,7 @@
       "dotnetRunMessages": true,
         "environmentVariables": {
           // "DOTNET_ENVIRONMENT": "Development"
-             "DOTNET_ENVIRONMENT": "Production"
+           "DOTNET_ENVIRONMENT": "Production"
         }
     }
   }

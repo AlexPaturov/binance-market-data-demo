@@ -54,15 +54,16 @@ public class OhlcvAggregatorWorker
                     await _auditRepository.UpdateAggregationWatermarkAsync(startTimestamp - 1, "Completed");
                     return;
                 }
-
-                // 3. Вызываем процедуру для обработки ОДНОГО окна
-                await _tradeRepository.ExecuteAggregationAsync(startTimestamp, endTimestamp);
-                // 4. Сдвигаем вотермарку вперед
-                await _auditRepository.UpdateAggregationWatermarkAsync(endTimestamp, "Pending");
-
-                _logger.LogInformation("Успешно агрегированы сделки в окне с {StartTime} по {EndTime}",
-                    DateTimeOffset.FromUnixTimeMilliseconds(startTimestamp).ToString("yyyy-MM-dd HH:mm:ss"),
-                    DateTimeOffset.FromUnixTimeMilliseconds(endTimestamp).ToString("yyyy-MM-dd HH:mm:ss"));
+                
+                await _tradeRepository.ExecuteAggregationAsync(startTimestamp, endTimestamp);       // 3. Вызываем процедуру для обработки ОДНОГО окна
+                await _auditRepository.UpdateAggregationWatermarkAsync(endTimestamp, "Pending");    // 4. Сдвигаем вотермарку вперед
+                #region LogInformation
+                _logger.LogInformation(
+                      "Успешно агрегированы сделки в окне с {StartTime} по {EndTime}",
+                      DateTimeOffset.FromUnixTimeMilliseconds(startTimestamp).ToString("yyyy-MM-dd HH:mm:ss 'UTC'"),
+                      DateTimeOffset.FromUnixTimeMilliseconds(endTimestamp).ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
+                  );
+                #endregion
             }
             catch (Exception ex)
             {
