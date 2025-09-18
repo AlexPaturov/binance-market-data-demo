@@ -5,188 +5,159 @@ using Hangfire.Client;
 using Hangfire;
 
 namespace BinanceDataCollector.Worker.Workers;
+
+
 /// <summary>
-/// Выполняет глубокий, инкрементальный аудит исторических данных,
-/// проверяя целостность последовательности TradeId небольшими окнами.
+/// Выполняет глубокий, инкрементальный аудит исторических данных.
+/// Его задача - находить ВСЕ дыры в данных и ставить задачи на их исправление
+/// в правильные очереди в зависимости от "возраста" дыры.
 /// </summary>
-//
+[Queue("historical_audit")] // Эта задача всегда выполняется в низкоприоритетной очереди
+[DisableConcurrentExecution(30 * 60)] // Даем 30 минут на обработку одной пачки символов
 public class HistoricalAuditorWorker
 {
-    private readonly IHistoricalAuditRepository _auditRepository;
-    private readonly ITradeRepository _tradeRepository;
-    private readonly IAnalysisRepository _analysisRepository;
+    // --- Зависимости, внедренные через конструктор ---
+    private readonly IHistoricalAuditRepository _auditRepo;
+    private readonly ITradeRepository _tradeRepo;
+    private readonly IAnalysisRepository _analysisRepo;
+    private readonly IBackgroundJobClient _backgroundJobClient;
     private readonly ILogger<HistoricalAuditorWorker> _logger;
     private readonly GapProcessingTracker _tracker;
-    private readonly IBackgroundJobClient _backgroundJobClient;
 
     // --- Конфигурация ---
-    private readonly TimeSpan _retryInterval = TimeSpan.FromDays(1);
-    private const int BatchSize = 10; // Сколько символов обрабатывать за один цикл
+    private const int BatchSize = 5; // Сколько символов обрабатывать за один запуск
     private const int MaxRetries = 10;
-    private readonly TimeSpan _windowSize = TimeSpan.FromDays(1);
-    //private readonly TimeSpan _chunkWindow = TimeSpan.FromHours(1); // Определяем размер "шага", которым мы будем двигаться по истории
+    private readonly TimeSpan _retryInterval = TimeSpan.FromDays(1);
+    private readonly TimeSpan _chunkWindow = TimeSpan.FromHours(12); // Размер "шага", которым движемся по истории
 
     public HistoricalAuditorWorker(
+        IHistoricalAuditRepository auditRepo,
+        ITradeRepository tradeRepo,
+        IAnalysisRepository analysisRepo,
+        IBackgroundJobClient backgroundJobClient,
         ILogger<HistoricalAuditorWorker> logger,
-        IHistoricalAuditRepository auditRepository,
-        ITradeRepository tradeRepository,
-        IAnalysisRepository analysisRepository,
-        GapProcessingTracker tracker,
-        IBackgroundJobClient backgroundJobClient
-    )
+        GapProcessingTracker tracker)
     {
-        _logger = logger;
-        _auditRepository = auditRepository;
-        _tradeRepository = tradeRepository;
-        _analysisRepository = analysisRepository;
-        _tracker = tracker;
+        _auditRepo = auditRepo;
+        _tradeRepo = tradeRepo;
+        _analysisRepo = analysisRepo;
         _backgroundJobClient = backgroundJobClient;
+        _logger = logger;
+        _tracker = tracker;
     }
 
-    [Queue("historical_audit")]
+    /// <summary>
+    /// Основной метод, вызываемый Hangfire. Обрабатывает одну порцию "задач" на аудит.
+    /// </summary>
     public async Task AuditNextBatchAsync()
     {
-        _logger.LogInformation("--- Начинаем исторический аудит ---");
         using (_logger.TimedOperation("Один цикл исторического аудита"))
         {
             try
             {
-                await _auditRepository.InitializeAuditForNewSymbolsAsync(); // Эта логика может быть в отдельном воркере, как мы обсуждали
-
-                var symbolsToAudit = await _auditRepository.GetSymbolsToAuditAsync(BatchSize, MaxRetries, _retryInterval);
+                // Получаем пачку символов, требующих проверки.
+                var symbolsToAudit = await _auditRepo.GetSymbolsToAuditAsync(BatchSize, MaxRetries, _retryInterval);
                 if (!symbolsToAudit.Any())
                 {
                     _logger.LogInformation("Нет символов для исторического аудита в данный момент.");
-                    return; // Просто выходим
+                    return;
                 }
 
                 foreach (var watermark in symbolsToAudit)
                 {
-                    await ProcessSymbolAuditAsync(watermark, CancellationToken.None); // Передаем CancellationToken.None, т.к. Hangfire сам управляет таймаутами
+                    // Для каждого символа выполняем один "шаг" аудита
+                    await ProcessSymbolChunkAsync(watermark);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Критическая ошибка - HistoricalAuditorWorker");
-                throw;  // 5. Перевыбрасываем исключение, чтобы Hangfire пометил задачу как Failed
+                _logger.LogError(ex, "Критическая ошибка в HistoricalAuditorWorker");
+                throw; // Перевыбрасываем, чтобы Hangfire пометил задачу как Failed
             }
         }
-        _logger.LogInformation("--- Исторический аудит закончен ---");
     }
 
-    private async Task ProcessSymbolAuditAsync(HistoricalWatermark watermark, CancellationToken stoppingToken)
+    /// <summary>
+    /// Обрабатывает одну "порцию" (чанк) истории для одного символа.
+    /// </summary>
+    private async Task ProcessSymbolChunkAsync(HistoricalWatermark watermark)
     {
-        string symbol = watermark.Symbol;
-        long startTradeId = watermark.LastChecked_TradeId + 1;
+        var symbol = watermark.Symbol;
 
-        using (_logger.TimedOperation("Аудит символа [{Symbol}] с TradeId {StartId}", symbol, startTradeId))
+        try
         {
-            try
+            // 1. Определяем границы нашего "шага" (чанка) для проверки.
+            var windowStart = DateTimeOffset.FromUnixTimeMilliseconds(watermark.LastChecked_Timestamp + 1).UtcDateTime;
+            var windowEnd = windowStart + _chunkWindow;
+
+            // 2. "Защитный барьер": не лезем в "горячую" зону QuickAuditor'а.
+            if (windowEnd >= DateTime.UtcNow.AddHours(-48))
             {
-                // 3. Определяем конец окна для проверки
-                long endTimestamp = watermark.LastChecked_Timestamp + (long)_windowSize.TotalMilliseconds;
-                long? endTradeId = await _tradeRepository.GetLastTradeIdBeforeTimestampAsync(symbol, endTimestamp);
+                _logger.LogInformation("[{Symbol}] Исторический аудит достиг 'горячей' зоны. Считаем завершенным.", symbol);
+                await _auditRepo.UpdateWatermarkAsync(symbol, watermark.LastChecked_TradeId, watermark.LastChecked_Timestamp, "Completed", false);
+                return;
+            }
 
-                // Случай 1: В 3-дневном окне нет новых сделок
-                if (!endTradeId.HasValue || endTradeId.Value <= startTradeId)
+            // 3. Находим реальные границы TradeId в этом временном окне.
+            var (minId, maxId) = await _tradeRepo.GetMinMaxTradeIdInWindowAsync(symbol, windowStart, windowEnd);
+            if (!minId.HasValue || !maxId.HasValue)
+            {
+                // В этом окне нет сделок. Просто "перепрыгиваем" его, сдвигая вотермарку.
+                _logger.LogInformation("[{Symbol}] В окне {Start} - {End} нет сделок. Перепрыгиваем...", symbol, windowStart, windowEnd);
+                await _auditRepo.UpdateWatermarkAsync(symbol, watermark.LastChecked_TradeId, new DateTimeOffset(windowEnd).ToUnixTimeMilliseconds(), "Pending", false);
+                return;
+            }
+
+            // 4. Ищем дыры в этом диапазоне ID с помощью быстрой SQL-функции.
+            var gaps = await _analysisRepo.FindGapsInWindowAsync(symbol, minId.Value, maxId.Value);
+
+            if (gaps.Any())
+            {
+                _logger.LogWarning("[{Symbol}] В диапазоне ID {MinId}-{MaxId} найдено {Count} дыр.", symbol, minId.Value, maxId.Value, gaps.Count);
+
+                foreach (var gap in gaps)
                 {
-                    var lastTradeInDb = await _tradeRepository.GetLastTradeAsync(symbol);
-                    if (lastTradeInDb != null && lastTradeInDb.TradeTime > endTimestamp)
-                    {
-                        // Сделки есть, но они далеко в будущем. "Перепрыгиваем" пустое окно.
-                        _logger.LogInformation("[{Symbol}] В окне до {EndTime} нет сделок. Перепрыгиваем...", symbol, DateTimeOffset.FromUnixTimeMilliseconds(endTimestamp));
-                        await _auditRepository.UpdateWatermarkAsync(symbol, lastTradeInDb.TradeId, lastTradeInDb.TradeTime, "Pending", false);
-                    }
-                    else
-                    {
-                        // Мы дошли до конца истории. Считаем аудит завершенным.
-                        _logger.LogInformation("[{Symbol}] Достигнут конец истории. Аудит завершен.", symbol);
-                        await _auditRepository.UpdateWatermarkAsync(symbol, watermark.LastChecked_TradeId, watermark.LastChecked_Timestamp, "Completed", false);
-                    }
-                    return;
-                }
-
-                // 4. Ищем дыры в определенном окне
-                var tradeIdsInWindow = await _tradeRepository.GetTradeIdsInWindowAsync(symbol, startTradeId, endTradeId.Value);
-                var gaps = await _analysisRepository.FindGapsInWindowAsync(symbol, startTradeId, endTradeId.Value);
-                bool allGapsFilled = true;
-
-                if (gaps.Any())
-                {
-                    _logger.LogWarning("[{Symbol}] В диапазоне ID {StartId}-{EndId} найдено {Count} дыр.", symbol, startTradeId, endTradeId.Value, gaps.Count);
-                    
-                    foreach (var gap in gaps)
-                    {
-                        // 2. Определяем, какие календарные дни (UTC) затрагивает эта дыра.
-                        var startTrade = await _tradeRepository.GetTradeByIdAsync(gap.GapStart, symbol);
-                        var endTrade = await _tradeRepository.GetTradeByIdAsync(gap.GapEnd, symbol);
-
-                        #region ДЛЯ ОТЛАДКИ 
-                        if (startTrade == null || endTrade == null)
-                        {
-                            _logger.LogWarning("[{Symbol}] Не удалось найти крайние сделки для дыры {StartId}-{EndId}", symbol, gap.GapStart, gap.GapEnd);
-                            continue;
-                        }
-                        _logger.LogDebug("[{Symbol}] Проверяем дыру между сделками: StartTradeId={StartId}, StartTradeTime={StartTime}, EndTradeId={EndId}, EndTradeTime={EndTime}",
-                        symbol, startTrade.TradeId, startTrade.TradeTime, endTrade.TradeId, endTrade.TradeTime);
-                        #endregion
-
-                        var twentyFourHoursAgo = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-24)); // пропускаем всё что раньше 24 часов от настоящей даты
-                        var datesToDownload = GetDatesBetween(startTrade.TradeTime, endTrade.TradeTime);
-
-                        // 3. Ставим задачи в Hangfire для нового воркера.
-                        foreach (var date in datesToDownload)
-                        {
-                            if (date >= twentyFourHoursAgo) 
-                            {
-                                _logger.LogInformation("[{Symbol}] Пропускаем планирование для даты {Date}, т.к. это 'горячая' зона QuickAuditor.", symbol, date);
-                                continue; // Переходим к следующей дате
-                            }
-
-                            // ===== ЗАЩИТА ОТ ДУБЛИРОВАНИЯ задач для hangfire =====
-                            if (_tracker.TryMarkArchiveAsProcessing(symbol, date))
-                            {
-                                // Если удалось "зарезервировать" - ставим задачу
-                                _logger.LogWarning("[{Symbol}] Планируем загрузку архива за {Date}", symbol, date);
-                                _backgroundJobClient.Enqueue<ArchiveImportWorker>(
-                                    worker => worker.ImportArchiveAsync(symbol, date, JobCancellationToken.Null)
-                                );
-                            }
-                            else
-                            {
-                                // Если не удалось - значит, такая работа уже ведется. Игнорируем.
-                                _logger.LogDebug("[{Symbol}] Загрузка архива за {Date} уже в процессе. Пропускаем.", symbol, date);
-                            }
-                            // ===================================
-
-                        }
-                    }
-
-                }
-                else
-                {
-                    _logger.LogInformation("[{Symbol}] Дыр в диапазоне ID {StartId}-{EndId} не найдено.", symbol, startTradeId, endTradeId.Value);
-                }
-
-                // 5. Обновляем вотермарку
-                if (allGapsFilled)
-                {
-                    await _auditRepository.UpdateWatermarkAsync(symbol, endTradeId.Value, endTimestamp, "Pending", false);
-                    _logger.LogInformation("[{Symbol}] Успешно проверен диапазон до TradeId {EndId}. Вотермарка сдвинута.", symbol, endTradeId.Value);
-                }
-                else
-                {
-                    var newStatus = (watermark.RetryCount + 1 >= MaxRetries) ? "Failed_MaxRetries" : "Failed";
-                    await _auditRepository.UpdateWatermarkAsync(symbol, watermark.LastChecked_TradeId, watermark.LastChecked_Timestamp, newStatus, true);
-                    _logger.LogError("[{Symbol}] Не удалось заполнить дыры в диапазоне {StartId}-{EndId}. Попытка #{RetryCount}",
-                        symbol, startTradeId, endTradeId.Value, watermark.RetryCount + 1);
+                    // 5. Для каждой дыры ставим задачу на импорт архива.
+                    // Исторический аудитор ВСЕГДА использует архивы.
+                    ScheduleArchiveImport(symbol, gap);
                 }
             }
-            catch (Exception ex)
+
+            // 6. Успешно сдвигаем вотермарку на конец проверенного окна.
+            await _auditRepo.UpdateWatermarkAsync(symbol, maxId.Value, new DateTimeOffset(windowEnd).ToUnixTimeMilliseconds(), "Pending", false);
+            _logger.LogInformation("[{Symbol}] Успешно проверено окно до {WindowEnd} (TradeId: {MaxId}).", symbol, windowEnd, maxId.Value);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[{Symbol}] Ошибка при аудите порции данных. Вотермарка не сдвинута.", symbol);
+            // Обновляем с увеличением счетчика ошибок, не сдвигая вотермарку.
+            await _auditRepo.UpdateWatermarkAsync(symbol, watermark.LastChecked_TradeId, watermark.LastChecked_Timestamp, "Failed", true);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Ставит в очередь Hangfire задачи на скачивание архивов для закрытия дыры.
+    /// </summary>
+    private async void ScheduleArchiveImport(string symbol, DataGap gap)
+    {
+        // Определяем календарные дни, которые затрагивает дыра
+        var startTrade = await _tradeRepo.GetTradeByIdAsync(gap.GapStart, symbol);
+        var endTrade = await _tradeRepo.GetTradeByIdAsync(gap.GapEnd, symbol);
+
+        if (startTrade == null || endTrade == null) return;
+
+        var datesToDownload = GetDatesBetween(startTrade.TradeTime, endTrade.TradeTime);
+
+        foreach (var date in datesToDownload)
+        {
+            // Используем трекер, чтобы не ставить дублирующиеся задачи
+            if (_tracker.TryMarkArchiveAsProcessing(symbol, date))
             {
-                _logger.LogError(ex, "[{Symbol}] Критическая ошибка при аудите диапазона, начиная с TradeId {StartId}.", symbol, startTradeId);
-                var newStatus = (watermark.RetryCount + 1 >= MaxRetries) ? "Failed_MaxRetries" : "Failed";
-                await _auditRepository.UpdateWatermarkAsync(symbol, watermark.LastChecked_TradeId, watermark.LastChecked_Timestamp, newStatus, true);
+                _logger.LogWarning("[{Symbol}] Планируем загрузку архива за {Date} для закрытия дыры.", symbol, date);
+                _backgroundJobClient.Enqueue<ArchiveImportWorker>(
+                    worker => worker.ImportArchiveAsync(symbol, date, JobCancellationToken.Null)
+                );
             }
         }
     }

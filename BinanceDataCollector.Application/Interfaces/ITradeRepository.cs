@@ -68,4 +68,13 @@ public interface ITradeRepository
     /// Находит дыры в TradeId в ЗАДАННОМ ВРЕМЕННОМ ОКНЕ.
     /// </summary>
     Task<List<DataGap>> FindGapsInTimeWindowAsync(string symbol, DateTime startTime, DateTime endTime);
+
+    /// <summary>
+    /// Находит минимальный и максимальный TradeId в указанном временном окне.
+    /// </summary>
+    /// <param name="symbol">Символ.</param>
+    /// <param name="startTime">Начало временного окна (UTC).</param>
+    /// <param name="endTime">Конец временного окна (UTC).</param>
+    /// <returns>Кортеж, содержащий минимальный и максимальный ID, или (null, null), если сделок в окне нет.</returns>
+    Task<(long? minId, long? maxId)> GetMinMaxTradeIdInWindowAsync(string symbol, DateTime startTime, DateTime endTime);
 }

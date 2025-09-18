@@ -257,4 +257,34 @@ public class TradeRepository : ITradeRepository
         }, commandTimeout: 120);
         return gaps.AsList();
     }
+
+    /// <summary>
+    /// Находит минимальный и максимальный TradeId в указанном временном окне.
+    /// </summary>
+    /// <remarks>
+    /// Этот запрос эффективно использует композитный индекс по ("Symbol", "TradeTime").
+    /// Он быстро находит нужный временной диапазон и выполняет агрегацию
+    /// только на этом небольшом подмножестве данных.
+    /// </remarks>
+    public async Task<(long? minId, long? maxId)> GetMinMaxTradeIdInWindowAsync(string symbol, DateTime startTime, DateTime endTime)
+    {
+        using var db = Connection;
+        var startTimeMs = new DateTimeOffset(startTime).ToUnixTimeMilliseconds();
+        var endTimeMs = new DateTimeOffset(endTime).ToUnixTimeMilliseconds();
+
+        const string sql = @"
+            SELECT MIN(""TradeId""), MAX(""TradeId"")
+            FROM public.""Trades""
+            WHERE ""Symbol"" = @Symbol 
+            AND ""TradeTime"" >= @StartTimeMs 
+            AND ""TradeTime"" < @EndTimeMs";
+
+        // Dapper умеет мапить результат в кортеж (tuple)
+        return await db.QuerySingleOrDefaultAsync<(long?, long?)>(sql, new
+        {
+            Symbol = symbol,
+            StartTimeMs = startTimeMs,
+            EndTimeMs = endTimeMs
+        });
+    }
 }
