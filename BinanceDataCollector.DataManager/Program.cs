@@ -1,6 +1,6 @@
 using BinanceDataCollector.Application.Interfaces;
+using BinanceDataCollector.DataManager.Common;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
-using BinanceDataCollector.Worker.Common;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Serilog;
@@ -35,6 +35,7 @@ public class Program
         builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
         .ReadFrom.Configuration(context.Configuration)
         .Enrich.FromLogContext());
+        
         #region Настройка Hangfire
         builder.Services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -44,8 +45,10 @@ public class Program
                 options.UseNpgsqlConnection(
                     builder.Configuration.GetConnectionString("HangfireConnection"));
             }));
+        builder.Services.AddHangfireServer();
         #endregion
         builder.Services.AddControllersWithViews();
+
         
         builder.Services.AddScoped<ITradeRepository, TradeRepository>();
         builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
@@ -63,17 +66,12 @@ public class Program
 
         app.UseHttpsRedirection();
         app.UseStaticFiles();
-        app.UseRouting();
+
         app.UseAuthorization();
 
         // Включаем Hangfire Dashboard
-        app.UseHangfireDashboard("/hangfire", new DashboardOptions
-        {
-            Authorization = new[] { new HangfireAuthorizationFilter() }
-        });
-        app.MapControllerRoute(
-            name: "default",
-            pattern: "{controller=Home}/{action=Index}/{id?}");
+        app.MapHangfireDashboard("/hangfire", new DashboardOptions {Authorization = new[] { new AllowAllConnectionsFilter() }});
+        app.MapDefaultControllerRoute();
 
         Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 

@@ -1,6 +1,5 @@
 using BinanceDataCollector.Application.Analytics;
 using BinanceDataCollector.Application.Interfaces;
-using BinanceDataCollector.DataManager.Common;
 using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;

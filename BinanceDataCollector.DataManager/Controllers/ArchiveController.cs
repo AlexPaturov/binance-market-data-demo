@@ -51,7 +51,9 @@ public class ArchiveController : Controller
         foreach (var date in datesToDownload)
         {
             _logger.LogDebug("Ставим в очередь задачу на скачивание для {Symbol} за {Date}", symbol, date);
-            _backgroundJobClient.Enqueue<ArchiveDownloaderWorker>(worker => worker.DownloadArchiveAsync(symbol, date));
+            _backgroundJobClient.Enqueue<ArchiveDownloaderWorker>(
+                worker => worker.DownloadArchiveAsync(symbol, date)
+             );
         }
 
         // 3. Возвращаем успешный ответ

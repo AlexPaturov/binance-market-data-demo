@@ -2,7 +2,7 @@
 using Hangfire.Dashboard;
 using Hangfire.PostgreSql;
 
-namespace BinanceDataCollector.DataManager.Common;
+namespace BinanceDataCollector.Worker.Common;
 
 // 1. Создаем свой собственный, пустой фильтр авторизации, чтобы сделать дашборд публичным.
 // Это официальный способ, рекомендуемый документацией Hangfire.
