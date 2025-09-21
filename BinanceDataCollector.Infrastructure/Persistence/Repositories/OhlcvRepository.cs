@@ -71,4 +71,84 @@ public class OhlcvRepository : IOhlcvRepository
         return await db.QueryAsync<Ohlcv>(sql, new { Symbol = symbol, BeforeTime = beforeTime, Limit = limit });
     }
 
+    public async Task<long?> GetLastKlineOpenTimeAsync(string symbol)
+    {
+        using var db = Connection;
+        const string sql = @"SELECT MAX(""OpenTime"") FROM public.""Ohlcv_1min"" WHERE ""Symbol"" = @Symbol";
+        return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol });
+    }
+
+    /// <summary>
+    /// Выполняет массовую вставку или обновление (UPSERT) свечей в таблицу Ohlcv_1min.
+    /// </summary>
+    /// <remarks>
+    /// Этот метод использует высокопроизводительную команду PostgreSQL UNNEST для "разворачивания"
+    /// массивов данных в строки, а затем INSERT ... ON CONFLICT для атомарной вставки или обновления.
+    /// Это гораздо быстрее, чем вставлять записи по одной.
+    /// 
+    /// Логика ON CONFLICT:
+    /// - Если свечи с таким ("Symbol", "OpenTime") еще нет, она просто вставляется.
+    /// - Если свеча уже существует, она ОБНОВЛЯЕТСЯ. Это важно для "текущей", еще не закрытой свечи.
+    ///   - HighPrice обновляется на максимальное значение между старым и новым.
+    ///   - LowPrice обновляется на минимальное значение.
+    ///   - ClosePrice всегда перезаписывается новым значением.
+    ///   - Volume СУММИРУЕТСЯ со старым значением.
+    /// </remarks>
+    /// <param name="klines">Коллекция свечей для сохранения.</param>
+    public async Task BulkUpsertAsync(IEnumerable<Ohlcv> klines)
+    {
+        var klineList = klines.ToList();
+        if (!klineList.Any())
+        {
+            return; // Ничего не делаем, если список пуст
+        }
+
+        const string sql = @"
+            INSERT INTO public.""Ohlcv_1min"" (
+                ""Symbol"", 
+                ""OpenTime"", 
+                ""OpenPrice"", 
+                ""HighPrice"", 
+                ""LowPrice"", 
+                ""ClosePrice"", 
+                ""Volume"", 
+                ""ProcessingStatus"" -- Важно установить статус 'new' для новых свечей
+            )
+            SELECT 
+                p_symbol, 
+                p_open_time, 
+                p_open_price, 
+                p_high_price, 
+                p_low_price, 
+                p_close_price, 
+                p_volume,
+                'new' -- Новые/обновленные свечи готовы для расчета индикаторов
+            FROM UNNEST(
+                @Symbols, @OpenTimes, @OpenPrices, @HighPrices, 
+                @LowPrices, @ClosePrices, @Volumes
+            ) AS t(
+                p_symbol, p_open_time, p_open_price, p_high_price, 
+                p_low_price, p_close_price, p_volume
+            )
+            ON CONFLICT (""Symbol"", ""OpenTime"") DO UPDATE 
+            SET
+                ""HighPrice"" = GREATEST(public.""Ohlcv_1min"".""HighPrice"", EXCLUDED.""HighPrice""),
+                ""LowPrice"" = LEAST(public.""Ohlcv_1min"".""LowPrice"", EXCLUDED.""LowPrice""),
+                ""ClosePrice"" = EXCLUDED.""ClosePrice"",
+                ""Volume"" = public.""Ohlcv_1min"".""Volume"" + EXCLUDED.""Volume"",
+                ""ProcessingStatus"" = 'new';
+        ";
+
+        using var db = Connection;
+        await db.ExecuteAsync(sql, new
+        {
+            Symbols = klineList.Select(k => k.Symbol).ToArray(),
+            OpenTimes = klineList.Select(k => k.OpenTime).ToArray(),
+            OpenPrices = klineList.Select(k => k.OpenPrice).ToArray(),
+            HighPrices = klineList.Select(k => k.HighPrice).ToArray(),
+            LowPrices = klineList.Select(k => k.LowPrice).ToArray(),
+            ClosePrices = klineList.Select(k => k.ClosePrice).ToArray(),
+            Volumes = klineList.Select(k => k.Volume).ToArray()
+        });
+    }
 }

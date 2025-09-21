@@ -77,4 +77,10 @@ public interface ITradeRepository
     /// <param name="endTime">Конец временного окна (UTC).</param>
     /// <returns>Кортеж, содержащий минимальный и максимальный ID, или (null, null), если сделок в окне нет.</returns>
     Task<(long? minId, long? maxId)> GetMinMaxTradeIdInWindowAsync(string symbol, DateTime startTime, DateTime endTime);
+
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <returns></returns>
+    Task<Trade?> GetLastTradeAsync();
 }

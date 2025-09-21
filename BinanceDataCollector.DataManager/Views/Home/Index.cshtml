@@ -1,0 +1,64 @@
+﻿@model BinanceDataCollector.DataManager.Models.HomeViewModel
+@{
+    ViewData["Title"] = "System DAshbords";
+}
+
+<div class="text-center">
+    <h1 class="display-4">Welcome to Data Collector Dashboard</h1>
+    <p>System Status: <span class="badge bg-success">@Model.SystemStatus</span></p>
+</div>
+
+<hr />
+
+<div class="row">
+    <div class="col-md-6">
+        <h3>System Overview</h3>
+        <table class="table">
+            <tr>
+                <th>Tracked Symbols</th>
+                <td>@Model.TrackedSymbolsCount</td>
+            </tr>
+            @if (Model.LastTrade != null)
+            {
+                <tr>
+                    <th>Last Saved Trade ID</th>
+                    <td>@Model.LastTrade.TradeId (@Model.LastTrade.Symbol)</td>
+                </tr>
+                <tr>
+                    <th>Last Trade Time (UTC)</th>
+                    <td>@DateTimeOffset.FromUnixTimeMilliseconds(Model.LastTrade.TradeTime).ToString("yyyy-MM-dd HH:mm:ss.fff")</td>
+                </tr>
+            }
+            else
+            {
+                <tr>
+                    <td colspan="2" class="text-muted">No trades found in database yet.</td>
+                </tr>
+            }
+        </table>
+    </div>
+    <div class="col-md-6">
+        <h3>Hangfire Servers</h3>
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Server Name</th>
+                    <th>Queues</th>
+                    <th>Workers</th>
+                    <th>Heartbeat (UTC)</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var server in Model.HangfireServers)
+                {
+                    <tr>
+                        <td>@server.Name</td>
+                        <td><small>@server.Queues</small></td>
+                        <td>@server.WorkerCount</td>
+                        <td>@server.Heartbeat.ToString("HH:mm:ss")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>

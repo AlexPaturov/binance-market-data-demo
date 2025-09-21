@@ -145,7 +145,12 @@ public class HistoricalAuditorWorker
         var startTrade = await _tradeRepo.GetTradeByIdAsync(gap.GapStart, symbol);
         var endTrade = await _tradeRepo.GetTradeByIdAsync(gap.GapEnd, symbol);
 
-        if (startTrade == null || endTrade == null) return;
+        // Почему появляется мусор? Откуда он берется? Влияет ли это на целостность данных? !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        if (startTrade?.TradeTime <= 0 || endTrade?.TradeTime <= 0)
+        {
+            _logger.LogWarning("[{Symbol}] Не удалось найти крайние сделки для дыры {gap}. Планирование отменено.", symbol, gap);
+            return;
+        }
 
         var datesToDownload = GetDatesBetween(startTrade.TradeTime, endTrade.TradeTime);
 
@@ -168,8 +173,12 @@ public class HistoricalAuditorWorker
     /// </summary>
     private IEnumerable<DateOnly> GetDatesBetween(long startTimestampMs, long endTimestampMs)
     {
-        // ===== ЗАЩИТНАЯ ПРОВЕРКА =====
-        if (startTimestampMs <= 0 || endTimestampMs <= 0 || startTimestampMs > endTimestampMs)
+        long minValidTimestamp = -62135596800000;
+        long maxValidTimestamp = 253402300799999;
+
+        if (startTimestampMs < minValidTimestamp || startTimestampMs > maxValidTimestamp ||
+            endTimestampMs < minValidTimestamp || endTimestampMs > maxValidTimestamp ||
+            startTimestampMs > endTimestampMs)
         {
             // Если временные метки некорректны или перепутаны,
             // возвращаем пустую коллекцию, чтобы избежать ошибки.
@@ -178,6 +187,7 @@ public class HistoricalAuditorWorker
         }
         // =============================
 
+        
         var startDate = DateTimeOffset.FromUnixTimeMilliseconds(startTimestampMs).UtcDateTime.Date;
         var endDate = DateTimeOffset.FromUnixTimeMilliseconds(endTimestampMs).UtcDateTime.Date;
 

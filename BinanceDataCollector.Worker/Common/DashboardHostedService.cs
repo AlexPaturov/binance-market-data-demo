@@ -1,12 +1,8 @@
 ﻿using Hangfire;
 using Hangfire.Dashboard;
 using Hangfire.PostgreSql;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection; // <-- Важный using
-using Microsoft.Extensions.Hosting;
-namespace BinanceDataCollector.Worker.Common;
+
+namespace BinanceDataCollector.DataManager.Common;
 
 // 1. Создаем свой собственный, пустой фильтр авторизации, чтобы сделать дашборд публичным.
 // Это официальный способ, рекомендуемый документацией Hangfire.

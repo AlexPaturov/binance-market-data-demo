@@ -1,5 +1,6 @@
 using BinanceDataCollector.Application.Analytics;
 using BinanceDataCollector.Application.Interfaces;
+using BinanceDataCollector.DataManager.Common;
 using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
@@ -19,6 +20,8 @@ public class Program
 {
     public static void Main(string[] args)
     {
+        var startupStopwatch = Stopwatch.StartNew();
+
         #region Минимальный "загрузочный" логгер - записать в консоль ошибку, если .Build() упадет.
         var configuration = new ConfigurationBuilder()
            .SetBasePath(Directory.GetCurrentDirectory())
@@ -31,12 +34,16 @@ public class Program
         .WriteTo.Console()
         .CreateBootstrapLogger();
         #endregion
+        Log.Information("Serilog настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
         try
-        { 
+        {
+            
             Log.Information("Запускаем приложение...");
 
             var builder = WebApplication.CreateBuilder(args);
+            Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+
             builder.WebHost.UseUrls("http://*:7001");
             builder.Logging.ClearProviders();
             builder.Logging.AddSerilog(new LoggerConfiguration()
@@ -81,7 +88,9 @@ public class Program
                     : Environment.ProcessorCount * 2; // Выделяем ему ядра процессора
             });
             #endregion
+            Log.Information("Hangfire запущен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
+            builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
             #region Регистрация сервисов
             builder.Services.AddHttpClient("BinanceArchive", client =>
             {
@@ -123,8 +132,11 @@ public class Program
             builder.Services.AddHostedService<BinanceCollectorWorker>();
             #endregion
 
-            var app = builder.Build();
+            Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
+            var app = builder.Build();
+            Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+            
             // --- 5. Настройка веб-пайплайна (Middleware) ---
             // Включаем Hangfire Dashboard
             app.UseHangfireDashboard("/hangfire", new DashboardOptions
@@ -134,8 +146,10 @@ public class Program
 
             // Добавляем простой эндпоинт для проверки, что веб-сервер жив
             app.MapGet("/", () => "BinanceDataCollector is running.");
+            Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
-            Log.Information("Запуск хоста...");
+            Log.Information("Запуск хоста (app.Run)...");
+            startupStopwatch.Stop();
             app.Run();
         }
         catch (Exception ex)

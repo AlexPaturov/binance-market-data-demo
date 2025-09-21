@@ -1,0 +1,104 @@
+﻿
+@{
+    ViewData["Title"] = "Archive Management";
+    var symbols = ViewData["Symbols"] as List<string> ?? new List<string>(); // Получаем список символов из ViewData (заполнили в контроллере)
+}
+
+<h1>@ViewData["Title"]</h1>
+<p>Здесь вы можете скачивать, проверять и управлять историческими архивами сделок.</p>
+
+<hr />
+
+<div class="row">
+    <!-- Левая колонка: Форма для скачивания -->
+    <div class="col-md-4">
+        <h4>1. Скачать новые архивы</h4>
+        <form id="downloadForm">
+            <div class="mb-3">
+                <label for="symbolSelect" class="form-label">Символ</label>
+                <select id="symbolSelect" name="symbol" class="form-select" required>
+                    <option value="">-- Выберите символ --</option>
+                    @foreach (var symbol in symbols)
+                    {
+                        <option value="@symbol">@symbol</option>
+                    }
+                </select>
+            </div>
+            <div class="mb-3">
+                <label for="startDate" class="form-label">Начальная дата</label>
+                <input type="date" id="startDate" name="startDate" class="form-control" required />
+            </div>
+            <div class="mb-3">
+                <label for="endDate" class="form-label">Конечная дата</label>
+                <input type="date" id="endDate" name="endDate" class="form-control" required />
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <i class="bi bi-download"></i> Начать скачивание
+            </button>
+        </form>
+    </div>
+
+    <!-- Правая колонка: Лог в реальном времени -->
+    <div class="col-md-8">
+        <h4>Лог операций</h4>
+        <div id="logContainer" style="height: 300px; overflow-y: scroll; background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 10px; font-family: monospace;">
+            <!-- Сюда JavaScript будет добавлять сообщения -->
+        </div>
+    </div>
+</div>
+
+<!-- Раздел для просмотра уже скачанных файлов (пока пустой) -->
+<div class="row mt-5">
+    <div class="col-12">
+        <h4>2. Скачанные архивы</h4>
+        <div id="archiveListContainer">
+            <p class="text-muted">Здесь будет список скачанных файлов...</p>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+         // Ждем, пока вся страница (DOM) не будет загружена
+        document.addEventListener("DOMContentLoaded", function() {
+
+            const form = document.getElementById('downloadForm');
+            const logContainer = document.getElementById('logContainer');
+
+            // Функция для добавления сообщения в наш "живой" лог
+            function logMessage(message) {
+                const time = new Date().toLocaleTimeString();
+                logContainer.innerHTML = `<div>[${time}] ${message}</div>` + logContainer.innerHTML;
+            }
+
+            // Перехватываем событие отправки формы
+            form.addEventListener('submit', function(event) {
+                // Отменяем стандартное поведение (перезагрузку страницы)
+                event.preventDefault();
+
+                logMessage("Отправка запроса на сервер...");
+
+                // Собираем данные из формы
+                const formData = new FormData(form);
+
+                // Отправляем AJAX-запрос
+                fetch('/api/archive/download', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Обрабатываем успешный ответ от сервера
+                    logMessage(`<b>Сервер ответил:</b> ${data.message}`);
+                })
+                .catch(error => {
+                    // Обрабатываем ошибку сети или сервера
+                    console.error('Ошибка:', error);
+                    logMessage(`<b style="color: red;">Ошибка!</b> Не удалось отправить запрос. Подробности в консоли браузера.`);
+                });
+            });
+
+            logMessage("Страница готова. Ожидание действий...");
+        });
+    </script>
+}

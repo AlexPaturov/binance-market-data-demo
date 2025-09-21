@@ -7,6 +7,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Common\**" />
+    <Compile Remove="Services\**" />
+    <EmbeddedResource Remove="Common\**" />
+    <EmbeddedResource Remove="Services\**" />
+    <None Remove="Common\**" />
+    <None Remove="Services\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Binance.Net" Version="11.4.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
     <PackageReference Include="Skender.Stock.Indicators" Version="2.6.1" />
@@ -14,11 +23,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BinanceDataCollector.Domain\BinanceDataCollector.Domain.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Common\" />
-    <Folder Include="Services\" />
   </ItemGroup>
 
 </Project>

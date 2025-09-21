@@ -287,4 +287,11 @@ public class TradeRepository : ITradeRepository
             EndTimeMs = endTimeMs
         });
     }
+
+    public async Task<Trade?> GetLastTradeAsync()
+    {
+        using var db = Connection;
+        const string sql = @"SELECT * FROM ""Trades"" ORDER BY ""TradeTime"" DESC LIMIT 1";
+        return await db.QuerySingleOrDefaultAsync<Trade?>(sql, commandTimeout:120);
+    }
 }

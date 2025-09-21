@@ -60,18 +60,18 @@ public class HangfireJobsService : IHostedService
         );
 
         // Агрегация свечей - каждую минуту
-        _recurringJobManager.AddOrUpdate<OhlcvAggregatorWorker>(
-            "ohlcv-aggregator",
-            worker => worker.AggregateNextBatchAsync(),
-            Cron.Minutely() // Каждую минуту
-        );
+        //_recurringJobManager.AddOrUpdate<OhlcvAggregatorWorker>(
+        //    "ohlcv-aggregator",
+        //    worker => worker.AggregateNextBatchAsync(),
+        //    Cron.Minutely() // Каждую минуту
+        //);
 
         // Расчет индикаторов - каждые 2 минуты
-        _recurringJobManager.AddOrUpdate<FeatureCalculatorWorker>(
-            "feature-calculator",
-            worker => worker.CalculateFeaturesAsync(),
-            "*/2 * * * *" // Каждые 2 минуты
-        );
+        //_recurringJobManager.AddOrUpdate<FeatureCalculatorWorker>(
+        //    "feature-calculator",
+        //    worker => worker.CalculateFeaturesAsync(),
+        //    "*/2 * * * *" // Каждые 2 минуты
+        //);
 
         _logger.LogInformation("Периодические задачи зарегистрированы.");
 

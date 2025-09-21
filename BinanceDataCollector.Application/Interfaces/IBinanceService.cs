@@ -77,4 +77,10 @@ public interface IBinanceService
     /// <param name="limit">Количество записей для загрузки (макс. 1000).</param>
     /// <returns>Результат загрузки со списком сырых сделок.</returns>
     Task<FetchResult> GetHistoricalRawTradesAsync(string symbol, long fromId, CancellationToken cancellationToken, int limit = 1000);
+
+    /// <summary>
+    /// Загружает исторические свечи (Klines) и преобразует их в доменную модель Ohlcv.
+    /// </summary>
+    Task<IEnumerable<Ohlcv>> GetHistoricalKlinesAsync(string symbol, DateTime startTime, DateTime endTime, CancellationToken cancellationToken);
+
 }

@@ -90,4 +90,20 @@ public class GapProcessingTracker
     /// </summary>
     public void MarkArchiveAsCompleted(string symbol, DateOnly date) => _currentlyProcessing.TryRemove(GetArchiveKey(symbol, date), out _);
     #endregion
+
+    #region --- МЕТОДЫ для ЗАГРУЗКИ СВЕЧЕЙ ---
+    private string GetKlinesKey(string symbol, DateTime startTime) => $"klines:{symbol}:{startTime:yyyy-MM-dd-HH-mm}";
+
+    /// <summary>
+    /// Пытается пометить задачу по загрузке свечей как "в обработке".
+    /// </summary>
+    public bool TryMarkKlinesAsProcessing(string symbol, DateTime startTime) =>
+        _currentlyProcessing.TryAdd(GetKlinesKey(symbol, startTime), 1);
+
+    /// <summary>
+    /// Помечает задачу по загрузке свечей как "обработка завершена".
+    /// </summary>
+    public void MarkKlinesAsCompleted(string symbol, DateTime startTime) =>
+        _currentlyProcessing.TryRemove(GetKlinesKey(symbol, startTime), out _);
+    #endregion
 }

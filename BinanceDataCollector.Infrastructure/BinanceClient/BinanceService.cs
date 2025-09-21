@@ -310,6 +310,70 @@ public class BinanceService : IBinanceService
             return FetchResult.ErrorResult();
         }
     }
+
+    public async Task<IEnumerable<Ohlcv>> GetHistoricalKlinesAsync(string symbol, DateTime startTime, DateTime endTime, CancellationToken cancellationToken)
+    {
+        var allKlinesDomainModel = new List<Ohlcv>();
+        var currentStartTime = startTime;
+        _logger.LogInformation("[{Symbol}] Начинаем загрузку исторических свечей с {Start} по {End}", symbol, startTime, endTime);
+
+        // Цикл для пагинации, так как API отдает максимум 1000 свечей за раз
+        while (currentStartTime < endTime && !cancellationToken.IsCancellationRequested)
+        {
+            // Этот запрос делает Hangfire, он в очереди quick_audit. 
+            // Отдельный диспетчер здесь не нужен.
+
+            // Вес запроса /klines - 1
+            var result = await _restClient.SpotApi.ExchangeData.GetKlinesAsync(
+                symbol,
+                KlineInterval.OneMinute,
+                currentStartTime,
+                endTime,
+                1000, // Максимальный лимит
+                ct: cancellationToken);
+
+            if (!result.Success)
+            {
+                _logger.LogError("[{Symbol}] Ошибка при загрузке Klines: {Error}", symbol, result.Error?.Message);
+                // В реальной задаче Hangfire здесь лучше выбросить исключение, чтобы задача ушла на Retry
+                // throw new Exception($"Failed to download klines for {symbol}: {result.Error?.Message}");
+                break; // Для простоты пока прерываем цикл
+            }
+
+            if (!result.Data.Any())
+            {
+                break; // Данных в этом диапазоне больше нет, выходим из цикла
+            }
+
+            // --- КЛЮЧЕВОЙ МОМЕНТ: Маппинг из Binance.Net в нашу доменную модель ---
+            var klinesPage = result.Data.Select(klineFromApi => new Ohlcv
+            {
+                Symbol = symbol,
+                OpenTime = new DateTimeOffset(klineFromApi.OpenTime).ToUnixTimeMilliseconds(),
+                OpenPrice = klineFromApi.OpenPrice,
+                HighPrice = klineFromApi.HighPrice,
+                LowPrice = klineFromApi.LowPrice,
+                ClosePrice = klineFromApi.ClosePrice,
+                Volume = klineFromApi.Volume
+            });
+
+            allKlinesDomainModel.AddRange(klinesPage);
+
+            // Сдвигаем курсор для следующего запроса
+            // Берем OpenTime последней свечи и прибавляем 1 минуту
+            currentStartTime = result.Data.Last().OpenTime.AddMinutes(1);
+
+            _logger.LogDebug("[{Symbol}] Загружено {Count} свечей. Следующий запрос с {NextStart}", symbol, result.Data.Count(), currentStartTime);
+
+            // Вежливая пауза, чтобы не "долбить" API слишком часто
+            await Task.Delay(500, cancellationToken);
+        }
+
+        _logger.LogInformation("[{Symbol}] Загрузка исторических свечей завершена. Всего: {Count}", symbol, allKlinesDomainModel.Count);
+
+        return allKlinesDomainModel;
+    }
+
 }
 
 

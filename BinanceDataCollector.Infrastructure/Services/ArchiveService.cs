@@ -6,6 +6,7 @@ using CsvHelper.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.IO.Compression;
+using System.Threading;
 
 namespace BinanceDataCollector.Infrastructure.Services;
 
@@ -66,5 +67,20 @@ public class ArchiveService : IArchiveService
                 IsBestMatch = record.IsBestMatch ?? false
             };
         }
+    }
+
+    public async Task DownloadArchiveToStreamAsync(string symbol, DateOnly date, Stream fileStream, CancellationToken none)
+    {
+        var url = $"https://data.binance.vision/data/spot/daily/trades/{symbol}/{symbol}-trades-{date:yyyy-MM-dd}.zip";
+        _logger.LogInformation("Скачиваем архив: {Url}", url);
+
+        using var httpClient = _httpClientFactory.CreateClient("BinanceArchive");
+        using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, none);
+        response.EnsureSuccessStatusCode();
+
+        await using var responseStream = await response.Content.ReadAsStreamAsync(none);
+
+        // Копируем содержимое в переданный FileStream
+        await responseStream.CopyToAsync(fileStream, none);
     }
 }

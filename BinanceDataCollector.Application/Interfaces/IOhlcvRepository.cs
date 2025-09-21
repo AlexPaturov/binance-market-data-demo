@@ -31,4 +31,7 @@ public interface IOhlcvRepository
     Task<IEnumerable<Ohlcv>> GetWarmupKlinesAsync(string symbol, long beforeTime, int limit);
 
    
+    Task<long?> GetLastKlineOpenTimeAsync(string symbol);
+
+    Task BulkUpsertAsync(IEnumerable<Ohlcv> klines);
 }
