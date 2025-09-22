@@ -1,6 +1,7 @@
-﻿using BinanceDataCollector.Domain.Entities;
+﻿using BinanceDataCollector.Application.Archives.Models;
+using BinanceDataCollector.Domain.Entities;
 
-namespace BinanceDataCollector.Application.Interfaces;
+namespace BinanceDataCollector.Application.Archives;
 
 public interface IArchiveService
 {
@@ -18,4 +19,10 @@ public interface IArchiveService
     /// <param name="targetStream">Открытый файловый поток (FileStream), куда будут записаны данные.</param>
     /// <param name="cancellationToken">Токен для отмены операции.</param>
     Task DownloadArchiveToStreamAsync(string symbol, DateOnly date, Stream fileStream, CancellationToken none);
+
+    /// <summary>
+    /// Получает список информации о скачанных файлах архивов из файловой системы.
+    /// </summary>
+    /// <returns>Список объектов ArchivedFileInfo.</returns>
+    Task<List<ArchivedFileInfo>> GetArchivedFilesAsync();
 }

@@ -1,5 +1,7 @@
 using BinanceDataCollector.Application.Analytics;
+using BinanceDataCollector.Application.Archives;
 using BinanceDataCollector.Application.Interfaces;
+using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
@@ -37,7 +39,6 @@ public class Program
 
         try
         {
-            
             Log.Information("Запускаем приложение...");
 
             var builder = WebApplication.CreateBuilder(args);
@@ -93,14 +94,14 @@ public class Program
             #region Регистрация сервисов
             builder.Services.AddHttpClient("BinanceArchive", client =>
             {
-                client.Timeout = TimeSpan.FromMinutes(10); // Большие архивы могут качаться долго
+                client.Timeout = TimeSpan.FromMinutes(10);                                              // Большие архивы могут качаться долго
                 client.DefaultRequestHeaders.Add("User-Agent", "BinanceDataCollector/1.0");
             })
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
             {
-                MaxConnectionsPerServer = 10, // Ограничиваем подключения к Binance
+                MaxConnectionsPerServer = 10,                                                           // Ограничиваем подключения к Binance
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-                PooledConnectionLifetime = TimeSpan.FromMinutes(15), // Переиспользование соединений
+                PooledConnectionLifetime = TimeSpan.FromMinutes(15),                                    // Переиспользование соединений
                 ConnectTimeout = TimeSpan.FromSeconds(30),
                 ResponseDrainTimeout = TimeSpan.FromSeconds(10)
             });
@@ -126,9 +127,11 @@ public class Program
             builder.Services.AddTransient<FeatureCalculatorWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
 
+            builder.Services.AddTransient<ArchiveDownloaderWorker>(); // на отладке загрузки архивов
+
             // Ваши IHostedService
             builder.Services.AddHostedService<HangfireJobsService>();
-            builder.Services.AddHostedService<BinanceCollectorWorker>();
+            //builder.Services.AddHostedService<BinanceCollectorWorker>();
             #endregion
 
             Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);

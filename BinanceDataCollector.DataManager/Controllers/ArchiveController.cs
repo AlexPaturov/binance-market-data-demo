@@ -1,7 +1,9 @@
-﻿using BinanceDataCollector.Application.Interfaces;
+﻿using BinanceDataCollector.Application.Archives;
+using BinanceDataCollector.Application.Interfaces;
+using BinanceDataCollector.DataManager.Models;
 using BinanceDataCollector.Worker.Workers;
-using Microsoft.AspNetCore.Mvc;
 using Hangfire;
+using Microsoft.AspNetCore.Mvc;
 
 namespace BinanceDataCollector.DataManager.Controllers;
 
@@ -10,15 +12,18 @@ public class ArchiveController : Controller
     private readonly ITrackedSymbolRepository _symbolRepo;
     private readonly ILogger<ArchiveController> _logger;
     private readonly IBackgroundJobClient _backgroundJobClient;
+    private readonly IArchiveService _archiveService;
 
     public ArchiveController(
         ITrackedSymbolRepository symbolRepo, 
         ILogger<ArchiveController> logger,
-        IBackgroundJobClient backgroundJobClient)
+        IBackgroundJobClient backgroundJobClient,
+        IArchiveService archiveService)
     {
         _symbolRepo = symbolRepo;
         _logger = logger;
         _backgroundJobClient = backgroundJobClient;
+        _archiveService = archiveService;
     }
 
     /// <summary>
@@ -27,10 +32,17 @@ public class ArchiveController : Controller
     public async Task<IActionResult> Index()
     {
         // Получаем список символов, чтобы передать его в выпадающий список на View
-        var symbols = await _symbolRepo.GetActiveSymbolsAsync();
+        //var symbols = await _symbolRepo.GetActiveSymbolsAsync();
         // Передаем список символов во View. ViewData - это простой способ передать небольшие данные из контроллера в представление.
-        ViewData["Symbols"] = symbols.ToList();
-        return View();
+        //ViewData["Symbols"] = symbols.ToList();
+
+        var model = new ArchiveManagementViewModel
+        {
+            ActiveSymbols = (List<string>)await _symbolRepo.GetActiveSymbolsAsync(),
+            ArchivedFiles = await _archiveService.GetArchivedFilesAsync() // <-- Получаем список файлов
+        };
+
+        return View(model);
     }
 
     [HttpPost] // Реагирует на POST-запросы

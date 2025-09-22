@@ -1,12 +1,13 @@
-﻿using BinanceDataCollector.Application.Interfaces;
+﻿using BinanceDataCollector.Application.Archives;
+using BinanceDataCollector.Application.Archives.Models;
 using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Domain.Entities;
 using CsvHelper;
 using CsvHelper.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.Globalization;
 using System.IO.Compression;
-using System.Threading;
 
 namespace BinanceDataCollector.Infrastructure.Services;
 
@@ -17,14 +18,18 @@ public class ArchiveService : IArchiveService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ArchiveService> _logger;
+    private readonly string _archivesPath; 
 
     public ArchiveService(
         IHttpClientFactory httpClientFactory,
-        ILogger<ArchiveService> logger
+        ILogger<ArchiveService> logger,
+        IOptions<ArchivesSettings> options
+
     )
     {
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _archivesPath = options.Value.TradeArcihvesPath; // <-- Инициализируем путь
     }
 
     public async IAsyncEnumerable<Trade> DownloadAndParseTradesAsync(string symbol, DateOnly date, CancellationToken cancellationToken)
@@ -82,5 +87,31 @@ public class ArchiveService : IArchiveService
 
         // Копируем содержимое в переданный FileStream
         await responseStream.CopyToAsync(fileStream, none);
+    }
+
+    public Task<List<ArchivedFileInfo>> GetArchivedFilesAsync()
+    {
+        var directory = new DirectoryInfo(_archivesPath);
+        if (!directory.Exists)
+        {
+            _logger.LogWarning("Директория для архивов не найдена по пути: {Path}", _archivesPath);
+            return Task.FromResult(new List<ArchivedFileInfo>());
+        }
+
+        var files = directory.GetFiles("*.zip")
+            .Select(fileInfo => {
+                var parts = fileInfo.Name.Split('-');
+                return new ArchivedFileInfo
+                {
+                    FileName = fileInfo.Name,
+                    Symbol = parts.Length > 0 ? parts[0] : "Unknown",
+                    Date = parts.Length > 2 && DateOnly.TryParse(string.Join("-", parts.Skip(2)).Replace(".zip", ""), out var date) ? date : DateOnly.MinValue,
+                    SizeBytes = fileInfo.Length
+                };
+            })
+            .OrderByDescending(f => f.Date)
+            .ToList();
+
+        return Task.FromResult(files);
     }
 }

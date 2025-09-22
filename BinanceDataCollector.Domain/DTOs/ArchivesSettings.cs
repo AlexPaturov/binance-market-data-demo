@@ -1,4 +1,4 @@
-﻿namespace BinanceDataCollector.Worker.Common;
+﻿namespace BinanceDataCollector.Domain.DTOs;
 
 /// <summary>
 /// Настройки для работы с архиввами

@@ -1,10 +1,14 @@
+using BinanceDataCollector.Application.Archives;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Common;
+using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
+using BinanceDataCollector.Infrastructure.Services;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Serilog;
 using System.Diagnostics;
+using System.Net;
 
 namespace BinanceDataCollector.DataManager;
 
@@ -48,11 +52,25 @@ public class Program
         builder.Services.AddHangfireServer();
         #endregion
         builder.Services.AddControllersWithViews();
+        builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
+        builder.Services.AddHttpClient("BinanceArchive", client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(10);
+            client.DefaultRequestHeaders.Add("User-Agent", "BinanceDataCollector/1.0");
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+        {
+            MaxConnectionsPerServer = 10,                                                           // Ограничиваем подключения к Binance
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(15),                                    // Переиспользование соединений
+            ConnectTimeout = TimeSpan.FromSeconds(30),
+            ResponseDrainTimeout = TimeSpan.FromSeconds(10)
+        });
 
-        
         builder.Services.AddScoped<ITradeRepository, TradeRepository>();
         builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
         builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
+        builder.Services.AddScoped<IArchiveService, ArchiveService>();
         Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
         var app = builder.Build();

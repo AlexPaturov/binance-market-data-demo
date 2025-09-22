@@ -1,7 +1,8 @@
-﻿
+﻿@model ArchiveManagementViewModel
 @{
     ViewData["Title"] = "Archive Management";
-    var symbols = ViewData["Symbols"] as List<string> ?? new List<string>(); // Получаем список символов из ViewData (заполнили в контроллере)
+    //var symbols = ViewData["Symbols"] as List<string> ?? new List<string>(); // Получаем список символов из ViewData (заполнили в контроллере)
+    var symbols = Model.ActiveSymbols;
 }
 
 <h1>@ViewData["Title"]</h1>
@@ -51,9 +52,40 @@
 <div class="row mt-5">
     <div class="col-12">
         <h4>2. Скачанные архивы</h4>
+
         <div id="archiveListContainer">
-            <p class="text-muted">Здесь будет список скачанных файлов...</p>
+            @if (Model.ArchivedFiles != null && Model.ArchivedFiles.Any())
+            {
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Имя файла</th>
+                            <th>Символ</th>
+                            <th>Дата</th>
+                            <th>Размер</th>
+                            <th>Статус</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var file in Model.ArchivedFiles)
+                        {
+                            <tr>
+                                <td>@file.FileName</td>
+                                <td>@file.Symbol</td>
+                                <td>@file.Date.ToString("yyyy-MM-dd")</td>
+                                <td>@((file.SizeBytes / 1024.0).ToString("F2")) KB</td>
+                                <td>@file.Status</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p>Здесь будет список скачанных файлов...</p>
+            }
         </div>
+
     </div>
 </div>
 
