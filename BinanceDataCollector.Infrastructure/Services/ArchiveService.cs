@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Globalization;
 using System.IO.Compression;
+using System.Net;
 
 namespace BinanceDataCollector.Infrastructure.Services;
 
@@ -23,9 +24,7 @@ public class ArchiveService : IArchiveService
     public ArchiveService(
         IHttpClientFactory httpClientFactory,
         ILogger<ArchiveService> logger,
-        IOptions<ArchivesSettings> options
-
-    )
+        IOptions<ArchivesSettings> options)
     {
         _logger = logger;
         _httpClientFactory = httpClientFactory;
@@ -74,19 +73,28 @@ public class ArchiveService : IArchiveService
         }
     }
 
-    public async Task DownloadArchiveToStreamAsync(string symbol, DateOnly date, Stream fileStream, CancellationToken none)
+
+    public async Task<bool> DownloadArchiveToStreamAsync(string symbol, DateOnly date, Stream fileStream, CancellationToken none)
     {
         var url = $"https://data.binance.vision/data/spot/daily/trades/{symbol}/{symbol}-trades-{date:yyyy-MM-dd}.zip";
         _logger.LogInformation("Скачиваем архив: {Url}", url);
 
         using var httpClient = _httpClientFactory.CreateClient("BinanceArchive");
         using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, none);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            _logger.LogWarning("Архив не найден (404) по адресу: {Url}", url);
+            return false; // Возвращаем false, не бросаем исключение
+        }
+
         response.EnsureSuccessStatusCode();
 
         await using var responseStream = await response.Content.ReadAsStreamAsync(none);
 
         // Копируем содержимое в переданный FileStream
         await responseStream.CopyToAsync(fileStream, none);
+        return true;
     }
 
     public Task<List<ArchivedFileInfo>> GetArchivedFilesAsync()
@@ -113,5 +121,43 @@ public class ArchiveService : IArchiveService
             .ToList();
 
         return Task.FromResult(files);
+    }
+
+    public async IAsyncEnumerable<Trade> ParseTradesFromLocalZipAsync(string zipFilePath, string symbol, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Парсим локальный архив: {Path}", zipFilePath);
+
+        await using var zipStream = File.OpenRead(zipFilePath); // <-- Открываем локальный файл
+        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+
+        var entry = archive.Entries.FirstOrDefault();
+        if (entry == null) yield break;
+
+        await using var entryStream = entry.Open();
+        // ... (дальше вся логика с CsvReader, как в DownloadAndParseTradesAsync) ...
+    }
+
+    public async IAsyncEnumerable<Trade> ParseTradesFromCsvStreamAsync(Stream csvStream, string symbol, CancellationToken cancellationToken)
+    {
+        using var reader = new StreamReader(csvStream);
+        var config = new CsvConfiguration(CultureInfo.InvariantCulture) { HasHeaderRecord = false };
+        using var csv = new CsvReader(reader, config);
+
+        while (await csv.ReadAsync())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var record = csv.GetRecord<BinanceCsvTradeRecord>();
+            yield return new Trade
+            {
+                TradeId = record.Id,
+                Symbol = symbol,
+                Price = record.Price,
+                Quantity = record.Quantity,
+                QuoteQuantity = record.QuoteQuantity,
+                TradeTime = record.Time,
+                IsBuyerMaker = record.IsBuyerMaker,
+                IsBestMatch = record.IsBestMatch ?? false
+            };
+        }
     }
 }

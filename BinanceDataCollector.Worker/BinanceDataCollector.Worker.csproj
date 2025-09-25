@@ -23,4 +23,9 @@
 		<ProjectReference Include="..\BinanceDataCollector.Infrastructure\BinanceDataCollector.Infrastructure.csproj" />
 		<ProjectReference Include="..\BinanceDataCollector.MarketScreenService\BinanceDataCollector.MarketScreenService.csproj" />
 	</ItemGroup>
+
+	<ItemGroup>
+	  <Folder Include="Workers\Audits\" />
+	  <Folder Include="Workers\Features\" />
+	</ItemGroup>
 </Project>

@@ -6,5 +6,6 @@
 public class ArchivesSettings
 {
     public string TradeArcihvesPath { get; set; } = string.Empty;
+    public string CsvUnpackedPath { get; set; } = string.Empty;
     public string OhlcvArchivesPath { get; set; } = string.Empty;
 }

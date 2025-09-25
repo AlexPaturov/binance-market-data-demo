@@ -3,10 +3,10 @@ using BinanceDataCollector.Domain.DTOs;
 using Hangfire;
 using Microsoft.Extensions.Options;
 
-namespace BinanceDataCollector.Worker.Workers;
+namespace BinanceDataCollector.Worker.Workers.Archives;
 
 [Queue("archive_import")]               // Выполняем в низкоприоритетной очереди
-//[DisableConcurrentExecution(10 * 60)]   // Таймаут на скачивание одного файла - 10 минут
+[DisableConcurrentExecution(10 * 60)]   // Таймаут на скачивание одного файла - 10 минут
 public class ArchiveDownloaderWorker
 {
     private readonly IArchiveService _archiveService; // Предполагаем, что он уже есть

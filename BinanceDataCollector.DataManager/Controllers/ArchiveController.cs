@@ -1,7 +1,7 @@
 ﻿using BinanceDataCollector.Application.Archives;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Models;
-using BinanceDataCollector.Worker.Workers;
+using BinanceDataCollector.Worker.Workers.Archives;
 using Hangfire;
 using Microsoft.AspNetCore.Mvc;
 
@@ -71,4 +71,59 @@ public class ArchiveController : Controller
         // 3. Возвращаем успешный ответ
         return Ok(new { Message = $"Запланировано скачивание {datesToDownload.Count} архивов. Следите за логом." });
     }
+
+    [HttpPost] // Этот метод будет вызываться AJAX-запросом
+    [ValidateAntiForgeryToken] // Защита от CSRF-атак
+    public IActionResult ProcessArchives([FromBody] ProcessArchivesRequest request)
+    {
+        if (request?.FileNames == null || !request.FileNames.Any())
+        {
+            return BadRequest("Не выбраны файлы для обработки.");
+        }
+
+        foreach (var fileName in request.FileNames)
+        {
+            // Ставим задачу в очередь для КАЖДОГО выбранного файла
+            // Здесь мы вызываем ArchiveProcessingWorker, который нам еще предстоит создать
+            _backgroundJobClient.Enqueue<ArchiveUnpackerWorker>(
+                worker => worker.UnpackArchiveAsync(fileName)
+            );
+        }
+
+        // Возвращаем успешный ответ, который JavaScript сможет обработать
+        return Ok(new { Message = $"Запланирована обработка {request.FileNames.Count} архивов. Следите за логом." });
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public IActionResult DeleteArchives([FromBody] DeleteArchivesRequest request)
+    {
+        if (request?.FileNames == null || !request.FileNames.Any())
+        {
+            return BadRequest("Не выбраны файлы для удаления.");
+        }
+
+        foreach (var fileName in request.FileNames)
+        {
+            // Ставим задачу в очередь для нового воркера ArchiveDeletionWorker
+            _backgroundJobClient.Enqueue<ArchiveDeletionWorker>(
+                worker => worker.DeleteFileAsync(fileName)
+            );
+        }
+
+        return Ok(new { Message = $"Запланировано удаление {request.FileNames.Count} архивов." });
+    }
+
+
+}
+
+// Простой класс для приема данных от AJAX-запроса
+public class ProcessArchivesRequest
+{
+    public List<string> FileNames { get; set; }
+}
+
+public class DeleteArchivesRequest
+{
+    public List<string> FileNames { get; set; }
 }

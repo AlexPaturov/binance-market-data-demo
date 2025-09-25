@@ -3,6 +3,7 @@ using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Worker.Common;
 using Hangfire.Client;
 using Hangfire;
+using BinanceDataCollector.Worker.Workers.Archives;
 
 namespace BinanceDataCollector.Worker.Workers;
 
@@ -160,7 +161,7 @@ public class HistoricalAuditorWorker
             if (_tracker.TryMarkArchiveAsProcessing(symbol, date))
             {
                 _logger.LogWarning("[{Symbol}] Планируем загрузку архива за {Date} для закрытия дыры.", symbol, date);
-                _backgroundJobClient.Enqueue<ArchiveImportWorker>(
+                _backgroundJobClient.Enqueue<OnlineArchiveImportWorker>(
                     worker => worker.ImportArchiveAsync(symbol, date, JobCancellationToken.Null)
                 );
             }

@@ -59,8 +59,6 @@ public  class AnalysisRepository : IAnalysisRepository
         return await db.QueryAsync<CvdResult>(sql, new { Symbol = symbol, StartTimeMs = startTimeMs, EndTimeMs = endTimeMs });
     }
 
-
-
     /// <summary>
     ///  Получает статистику по качеству данных (статусам блоков аудита)
     ///  для указанного символа и временного диапазона.
@@ -85,7 +83,6 @@ public  class AnalysisRepository : IAnalysisRepository
         return await db.QueryAsync<DataQualityStat>(sql, parameters);
     }
 
-
     public async Task<List<DataGap>> FindGapsInWindowAsync(string symbol, long startTradeId, long endTradeId)
     {
         using var db = Connection;
@@ -100,5 +97,4 @@ public  class AnalysisRepository : IAnalysisRepository
 
         return gaps.AsList();
     }
-
 }

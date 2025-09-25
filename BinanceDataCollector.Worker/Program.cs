@@ -8,6 +8,7 @@ using BinanceDataCollector.Infrastructure.Services;
 using BinanceDataCollector.MarketScreenService;
 using BinanceDataCollector.Worker.Common;
 using BinanceDataCollector.Worker.Workers;
+using BinanceDataCollector.Worker.Workers.Archives;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Serilog;
@@ -122,7 +123,7 @@ public class Program
             builder.Services.AddTransient<QuickAuditorWorker>();
             builder.Services.AddTransient<FillGapWorker>();
             builder.Services.AddTransient<IArchiveService, ArchiveService>();
-            builder.Services.AddTransient<ArchiveImportWorker>();
+            builder.Services.AddTransient<OnlineArchiveImportWorker>();
             builder.Services.AddTransient<OhlcvAggregatorWorker>();
             builder.Services.AddTransient<FeatureCalculatorWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
