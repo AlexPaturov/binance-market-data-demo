@@ -1,4 +1,4 @@
-﻿using BinanceDataCollector.Application.Archives;
+﻿using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Models;
 using BinanceDataCollector.Worker.Workers.Archives;
@@ -31,11 +31,6 @@ public class ArchiveController : Controller
     /// </summary>
     public async Task<IActionResult> Index()
     {
-        // Получаем список символов, чтобы передать его в выпадающий список на View
-        //var symbols = await _symbolRepo.GetActiveSymbolsAsync();
-        // Передаем список символов во View. ViewData - это простой способ передать небольшие данные из контроллера в представление.
-        //ViewData["Symbols"] = symbols.ToList();
-
         var model = new ArchiveManagementViewModel
         {
             ActiveSymbols = (List<string>)await _symbolRepo.GetActiveSymbolsAsync(),
@@ -117,7 +112,7 @@ public class ArchiveController : Controller
 
 }
 
-// Простой класс для приема данных от AJAX-запроса
+#region Классы для приема данных от AJAX-запроса
 public class ProcessArchivesRequest
 {
     public List<string> FileNames { get; set; }
@@ -127,3 +122,4 @@ public class DeleteArchivesRequest
 {
     public List<string> FileNames { get; set; }
 }
+#endregion
