@@ -1,11 +1,10 @@
-﻿using CsvHelper.Configuration.Attributes;
+﻿using BinanceDataCollector.Infrastructure.Persistence.Csv.Converters;
+using CsvHelper.Configuration.Attributes;
 
-namespace BinanceDataCollector.Domain.DTOs;
+namespace BinanceDataCollector.Infrastructure.Persistence.Csv;
 
 /// <summary>
-/// Представляет одну строку из CSV-файла с сырыми сделками от Binance.
-/// Порядок свойств и атрибуты [Index] должны ТОЧНО соответствовать
-/// структуре CSV-файла.
+/// Техническая модель для чтения CSV файлов Binance.
 /// </summary>
 public class BinanceCsvTradeRecord
 {
@@ -16,6 +15,7 @@ public class BinanceCsvTradeRecord
     /// Колонка 0: Уникальный ID сделки.
     /// </summary>
     [Index(0)]
+    [TypeConverter(typeof(SafeLongConverter))]
     public long Id { get; set; }
 
     /// <summary>
@@ -26,7 +26,6 @@ public class BinanceCsvTradeRecord
 
     /// <summary>
     /// Колонка 2: Объем в базовой валюте (например, BTC для BTCUSDT).
-    /// ВАЖНО: В документации Binance это 'qty', в API - 'baseQuantity'.
     /// </summary>
     [Index(2)]
     public decimal Quantity { get; set; }
@@ -39,8 +38,10 @@ public class BinanceCsvTradeRecord
 
     /// <summary>
     /// Колонка 4: Unix Timestamp в миллисекундах (UTC).
+    /// ВНИМАНИЕ: Если значение больше 13 цифр, возможно это микросекунды или наносекунды.
     /// </summary>
     [Index(4)]
+    [TypeConverter(typeof(SafeLongConverter))]
     public long Time { get; set; }
 
     /// <summary>
@@ -51,9 +52,8 @@ public class BinanceCsvTradeRecord
 
     /// <summary>
     /// Колонка 6: Была ли сделка по лучшей цене.
-    /// В старых архивах этого поля может не быть, CsvHelper обработает это.
     /// </summary>
     [Index(6)]
-    [Optional] // Делаем поле необязательным
+    [Optional]
     public bool? IsBestMatch { get; set; }
 }

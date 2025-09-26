@@ -146,7 +146,6 @@ public class HistoricalAuditorWorker
         var startTrade = await _tradeRepo.GetTradeByIdAsync(gap.GapStart, symbol);
         var endTrade = await _tradeRepo.GetTradeByIdAsync(gap.GapEnd, symbol);
 
-        // Почему появляется мусор? Откуда он берется? Влияет ли это на целостность данных? !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         if (startTrade?.TradeTime <= 0 || endTrade?.TradeTime <= 0)
         {
             _logger.LogWarning("[{Symbol}] Не удалось найти крайние сделки для дыры {gap}. Планирование отменено.", symbol, gap);

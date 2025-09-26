@@ -1,4 +1,5 @@
-﻿using BinanceDataCollector.Application.Archives;
+﻿using BinanceDataCollector.Application.Archives.Interfaces;
+using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Entities;
 using Hangfire;

@@ -1,4 +1,5 @@
-﻿using BinanceDataCollector.Application.Archives;
+﻿using BinanceDataCollector.Application.Archives.Interfaces;
+using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Domain.Entities;
@@ -69,7 +70,8 @@ public class OnlineArchiveImportWorker
     [DisableConcurrentExecution(timeoutInSeconds: 60 * 60)]
     public async Task ImportFromLocalFileAsync(string fileName, IJobCancellationToken cancellationToken)
     {
-        var (symbol, date) = ParseSymbolAndDateFromFileName(fileName); // Нужен метод парсинга имени
+        // var (symbol, date) = ParseSymbolAndDateFromFileName(fileName); // old version
+        var (symbol, date) = ArchiveFileNameParser.Parse(fileName);
         var filePath = Path.Combine(_options.Value.TradeArcihvesPath, fileName);
 
         try

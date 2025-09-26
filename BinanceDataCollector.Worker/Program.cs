@@ -1,5 +1,5 @@
 using BinanceDataCollector.Application.Analytics;
-using BinanceDataCollector.Application.Archives;
+using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Infrastructure.BinanceClient;

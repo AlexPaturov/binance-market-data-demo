@@ -1,4 +1,4 @@
-using BinanceDataCollector.Application.Archives;
+using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Common;
 using BinanceDataCollector.Domain.DTOs;

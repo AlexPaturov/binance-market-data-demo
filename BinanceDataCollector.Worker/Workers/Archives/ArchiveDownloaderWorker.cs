@@ -1,4 +1,4 @@
-﻿using BinanceDataCollector.Application.Archives;
+﻿using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Domain.DTOs;
 using Hangfire;
 using Microsoft.Extensions.Options;

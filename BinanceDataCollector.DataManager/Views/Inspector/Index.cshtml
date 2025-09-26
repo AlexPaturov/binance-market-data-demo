@@ -1,0 +1,122 @@
+﻿@model ArchiveInspectorViewModel
+
+@{
+    ViewData["Title"] = "Инспектор Архивов";
+}
+
+<h1>@ViewData["Title"]</h1>
+<p>Здесь вы можете детально просмотреть содержимое скачанных архивов.</p>
+
+<div class="row">
+    <!-- ТАБЛИЦА №1: Список архивов -->
+    <div class="col-md-4">
+        <h4>1. Выберите архив для анализа</h4>
+        <div class="table-container-scrollable" style="height: 600px;">
+            <table class="table table-sm table-hover">
+                <tbody>
+                    @foreach (var file in Model.ArchivedFiles)
+                    {
+                        // Подсвечиваем выбранный архив
+                        <tr class="@(file.FileName == Model.SelectedArchiveName ? "table-primary" : "")">
+                            <td>
+                                <!-- Ссылка, которая вызывает метод Inspect в контроллере -->
+                                <a href="@Url.Action("Inspect", "Inspector", new { fileName = file.FileName })">
+                                    @file.FileName
+                                </a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ТАБЛИЦА №2: Содержимое архива -->
+    <div class="col-md-8">
+        <h4>2. Содержимое архива: @(Model.SelectedArchiveName ?? "не выбран")</h4>
+
+        @if (Model.TradesInArchive.Any())
+        {
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="validate-dates-checkbox">
+                <label class="form-check-label" for="validate-dates-checkbox">
+                    Проверить соответствие дат (ожидаемая дата: <strong>@Model.ExpectedDate.ToString("yyyy-MM-dd")</strong>)
+                </label>
+            </div>
+
+            <div class="table-container-scrollable" style="height: 550px;">
+                <table id="trades-table" class="table table-sm table-bordered">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Цена</th>
+                            <th>Кол-во</th>
+                            <th>Время сделки (UTC)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var trade in Model.TradesInArchive)
+                        {
+                            <tr data-tradetime="@trade.TradeTime">
+                                <td>@trade.TradeId</td>
+                                <td>@trade.Price</td>
+                                <td>@trade.Quantity</td>
+                                <td>@DateTimeOffset.FromUnixTimeMilliseconds(trade.TradeTime).ToString("yyyy-MM-dd HH:mm:ss.fff")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (Model.SelectedArchiveName != null)
+        {
+            <div class="alert alert-warning">Архив пуст или не удалось его прочитать.</div>
+        }
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function () {
+            const tradesTable = $('#trades-table tbody');
+            const validateCheckbox = $('#validate-dates-checkbox');
+
+            // Получаем ожидаемую дату из имени файла (нужно улучшить парсинг)
+            const expectedDateStr = '@Model.ExpectedDate.ToString("yyyy-MM-dd")';
+
+            validateCheckbox.change(function () {
+                if (this.checked) {
+                    let firstErrorRow = null;
+
+                    tradesTable.find('tr').each(function () {
+                        const row = $(this);
+                        const tradeTimeMs = parseInt(row.data('tradetime'));
+                        const tradeDate = new Date(tradeTimeMs);
+
+                        // Форматируем дату из сделки в YYYY-MM-DD
+                        const tradeDateStr = tradeDate.toISOString().split('T')[0];
+
+                        // Сравниваем с ожидаемой датой
+                        if (tradeDateStr !== expectedDateStr) {
+                            row.addClass('table-danger'); // Подсвечиваем строку красным
+                            if (!firstErrorRow) {
+                                firstErrorRow = row;
+                            }
+                        } else {
+                            row.removeClass('table-danger');
+                        }
+                    });
+
+                    // Фокусируемся на первой ошибочной строке
+                    if (firstErrorRow) {
+                        firstErrorRow[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+
+                } else {
+                    // Если чекбокс снят - убираем всю подсветку
+                    tradesTable.find('tr').removeClass('table-danger');
+                }
+            });
+        });
+    </script>
+}

@@ -1,7 +1,10 @@
-﻿using BinanceDataCollector.Application.Archives;
+﻿using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Archives.Models;
+using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Domain.Entities;
+using BinanceDataCollector.Infrastructure.Persistence.Csv;
+using BinanceDataCollector.Infrastructure.Persistence.Csv.Mappers;
 using CsvHelper;
 using CsvHelper.Configuration;
 using Microsoft.Extensions.Logging;
@@ -50,29 +53,24 @@ public class ArchiveService : IArchiveService
         using var reader = new StreamReader(entryStream, leaveOpen: false);
         var config = new CsvConfiguration(CultureInfo.InvariantCulture)
         {
-            HasHeaderRecord = false
+            HasHeaderRecord = false,
+            DetectDelimiter = false,        // Отключаем автоматическое определение типов - все читаем как строки
+            Delimiter = ",",                // Указываем разделитель явно 
+            TrimOptions = TrimOptions.Trim, // Можно отключить trim для избежания потери ведущих нулей
+            MissingFieldFound = null,       // Настройки для работы с большими числами
+            HeaderValidated = null,
+            BadDataFound = null
         };
         using var csv = new CsvReader(reader, config);
 
         while (await csv.ReadAsync())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var record = csv.GetRecord<BinanceCsvTradeRecord>();
-
-            yield return new Trade
-            {
-                TradeId = record.Id,
-                Symbol = symbol,
-                Price = record.Price,
-                Quantity = record.Quantity,
-                QuoteQuantity = record.QuoteQuantity,
-                TradeTime = record.Time,
-                IsBuyerMaker = record.IsBuyerMaker,
-                IsBestMatch = record.IsBestMatch ?? false
-            };
+            var csvRecord = csv.GetRecord<BinanceCsvTradeRecord>();
+            var trade = TradeMapper.ToDomainEntity(csvRecord, symbol);
+            yield return trade;
         }
     }
-
 
     public async Task<bool> DownloadArchiveToStreamAsync(string symbol, DateOnly date, Stream fileStream, CancellationToken none)
     {
@@ -89,11 +87,8 @@ public class ArchiveService : IArchiveService
         }
 
         response.EnsureSuccessStatusCode();
-
         await using var responseStream = await response.Content.ReadAsStreamAsync(none);
-
-        // Копируем содержимое в переданный FileStream
-        await responseStream.CopyToAsync(fileStream, none);
+        await responseStream.CopyToAsync(fileStream, none); // Копируем содержимое в переданный FileStream
         return true;
     }
 
@@ -108,12 +103,12 @@ public class ArchiveService : IArchiveService
 
         var files = directory.GetFiles("*.zip")
             .Select(fileInfo => {
-                var parts = fileInfo.Name.Split('-');
+                var (symbol, date) = ArchiveFileNameParser.Parse(fileInfo.Name);
                 return new ArchivedFileInfo
                 {
                     FileName = fileInfo.Name,
-                    Symbol = parts.Length > 0 ? parts[0] : "Unknown",
-                    Date = parts.Length > 2 && DateOnly.TryParse(string.Join("-", parts.Skip(2)).Replace(".zip", ""), out var date) ? date : DateOnly.MinValue,
+                    Symbol = symbol,
+                    Date = date,
                     SizeBytes = fileInfo.Length
                 };
             })
@@ -134,30 +129,76 @@ public class ArchiveService : IArchiveService
         if (entry == null) yield break;
 
         await using var entryStream = entry.Open();
-        // ... (дальше вся логика с CsvReader, как в DownloadAndParseTradesAsync) ...
-    }
-
-    public async IAsyncEnumerable<Trade> ParseTradesFromCsvStreamAsync(Stream csvStream, string symbol, CancellationToken cancellationToken)
-    {
-        using var reader = new StreamReader(csvStream);
-        var config = new CsvConfiguration(CultureInfo.InvariantCulture) { HasHeaderRecord = false };
+        using var reader = new StreamReader(entryStream, leaveOpen: false);
+        var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+        {
+            HasHeaderRecord = false,
+            DetectDelimiter = false,        // Отключаем автоматическое определение типов - все читаем как строки
+            Delimiter = ",",                // Указываем разделитель явно 
+            TrimOptions = TrimOptions.Trim, // Можно отключить trim для избежания потери ведущих нулей
+            MissingFieldFound = null,       // Настройки для работы с большими числами
+            HeaderValidated = null,
+            BadDataFound = null
+        };
         using var csv = new CsvReader(reader, config);
 
         while (await csv.ReadAsync())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var record = csv.GetRecord<BinanceCsvTradeRecord>();
-            yield return new Trade
-            {
-                TradeId = record.Id,
-                Symbol = symbol,
-                Price = record.Price,
-                Quantity = record.Quantity,
-                QuoteQuantity = record.QuoteQuantity,
-                TradeTime = record.Time,
-                IsBuyerMaker = record.IsBuyerMaker,
-                IsBestMatch = record.IsBestMatch ?? false
-            };
+            var csvRecord = csv.GetRecord<BinanceCsvTradeRecord>();
+            var trade = TradeMapper.ToDomainEntity(csvRecord, symbol);
+            yield return trade;
         }
+    }
+
+    public async IAsyncEnumerable<Trade> ParseTradesFromCsvStreamAsync(Stream csvStream, string symbol, CancellationToken cancellationToken)
+    {
+        using var reader = new StreamReader(csvStream);
+        var config = new CsvConfiguration(CultureInfo.InvariantCulture) 
+        {
+            HasHeaderRecord = false,
+            DetectDelimiter = false,        // Отключаем автоматическое определение типов - все читаем как строки
+            Delimiter = ",",                // Указываем разделитель явно 
+            TrimOptions = TrimOptions.Trim, // Можно отключить trim для избежания потери ведущих нулей
+            MissingFieldFound = null,       // Настройки для работы с большими числами
+            HeaderValidated = null,
+            BadDataFound = null
+        };
+        using var csv = new CsvReader(reader, config);
+
+        while (await csv.ReadAsync())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var csvRecord = csv.GetRecord<BinanceCsvTradeRecord>();
+            var trade = TradeMapper.ToDomainEntity(csvRecord, symbol);
+            yield return trade;
+        }
+    }
+
+    public async Task<List<Trade>> InspectArchiveContentAsync(string zipFileName)
+    {
+        var filePath = Path.Combine(_archivesPath, zipFileName);
+        if (!File.Exists(filePath))
+        {
+            _logger.LogWarning("Архив {FileName} не найден для инспекции.", zipFileName);
+            return new List<Trade>();
+        }
+
+        var trades = new List<Trade>();
+        var (symbol, date) = ArchiveFileNameParser.Parse(zipFileName);
+
+        await using var zipStream = File.OpenRead(filePath);
+        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+        var entry = archive.Entries.FirstOrDefault();
+
+        if (entry == null) return trades;
+
+        await using var entryStream = entry.Open();
+        await foreach (var trade in ParseTradesFromCsvStreamAsync(entryStream, symbol, CancellationToken.None))
+        {
+            trades.Add(trade);
+        }
+
+        return trades;
     }
 }
