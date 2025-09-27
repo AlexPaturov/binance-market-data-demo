@@ -14,10 +14,11 @@
     <!-- Левая колонка: Форма для скачивания -->
     <div class="col-md-4">
         <h4>1. Скачать новые архивы</h4>
-        <form id="downloadForm">
+        <form id="download-form">
+            @Html.AntiForgeryToken()
             <div class="mb-3">
-                <label for="symbolSelect" class="form-label">Символ</label>
-                <select id="symbolSelect" name="symbol" class="form-select" required>
+                <label for="symbol-select" class="form-label">Символ</label>
+                <select id="symbol-select" name="symbol" class="form-select" required>
                     <option value="">-- Выберите символ --</option>
                     @foreach (var symbol in symbols)
                     {
@@ -25,15 +26,21 @@
                     }
                 </select>
             </div>
-            <div class="mb-3">
-                <label for="startDate" class="form-label">Начальная дата</label>
-                <input type="date" id="startDate" name="startDate" class="form-control" required />
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="download-all-checkbox">
+                <label class="form-check-label" for="download-all-checkbox">
+                    <strong>Скачать для всех активных символов (@Model.ActiveSymbols.Count)</strong>
+                </label>
             </div>
             <div class="mb-3">
-                <label for="endDate" class="form-label">Конечная дата</label>
-                <input type="date" id="endDate" name="endDate" class="form-control" required />
+                <label for="start-date-input" class="form-label">Начальная дата</label>
+                <input type="date" id="start-date-input" name="start-date-input" class="form-control" required />
             </div>
-            <button type="submit" class="btn btn-primary">
+            <div class="mb-3">
+                <label for="end-date-input" class="form-label">Конечная дата</label>
+                <input type="date" id="end-date-input" name="end-date-input" class="form-control" required />
+            </div>
+            <button type="button" id="btn-download" class="btn btn-primary">
                 <i class="bi bi-download"></i> Начать скачивание
             </button>
         </form>
@@ -106,128 +113,127 @@
 
 @section Scripts {
     <script>
-         // Ждем, пока вся страница (DOM) не будет загружена
-        document.addEventListener("DOMContentLoaded", function() {
+            $(document).ready(function () {
+            // --- ОБЪЯВЛЯЕМ ПЕРЕМЕННЫЕ ДЛЯ ВСЕГО СКРИПТА В ОДНОМ МЕСТЕ ---
+            const logContainer = $('#logContainer');
+            const token = $('input[name="__RequestVerificationToken"]').val();
+            const downloadAllCheckbox = $('#download-all-checkbox');
+            const symbolSelect = $('#symbol-select');
 
-            const form = document.getElementById('downloadForm');
-            const logContainer = document.getElementById('logContainer');
-
-            // Функция для добавления сообщения в наш "живой" лог
+            // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
             function logMessage(message) {
                 const time = new Date().toLocaleTimeString();
-                logContainer.innerHTML = `<div>[${time}] ${message}</div>` + logContainer.innerHTML;
+                logContainer.prepend(`<div>[${time}] ${message}</div>`);
             }
 
-            // Перехватываем событие отправки формы
-            form.addEventListener('submit', function(event) {
-                // Отменяем стандартное поведение (перезагрузку страницы)
-                event.preventDefault();
+            function syncSelectState() {
+                if (downloadAllCheckbox.is(':checked')) {
+                    symbolSelect.prop('disabled', true).prop('required', false).val('');
+                } else {
+                    symbolSelect.prop('disabled', false).prop('required', true);
+                }
+            }
 
-                logMessage("Отправка запроса на сервер...");
+            // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
 
-                // Собираем данные из формы
-                const formData = new FormData(form);
+            // 1. Для чекбокса "Скачать для всех"
+            downloadAllCheckbox.change(syncSelectState);
 
-                // Отправляем AJAX-запрос
-                fetch('/api/archive/download', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    // Обрабатываем успешный ответ от сервера
-                    logMessage(`<b>Сервер ответил:</b> ${data.message}`);
-                })
-                .catch(error => {
-                    // Обрабатываем ошибку сети или сервера
-                    console.error('Ошибка:', error);
-                    logMessage(`<b style="color: red;">Ошибка!</b> Не удалось отправить запрос. Подробности в консоли браузера.`);
-                });
-            });
+            // 2. Для кнопки "Начать скачивание"
+            $('#btn-download').click(function () {
+                const startDate = $('#start-date-input').val();
+                const endDate = $('#end-date-input').val();
 
-            logMessage("Страница готова. Ожидание действий...");
-        });
-
-        $(document).ready(function () {
-            // Логика для чекбокса "Выбрать все"
-            $('#select-all-checkbox').click(function () {
-                $('.file-checkbox').prop('checked', this.checked);
-            });
-
-            // Обработчик клика на кнопку "Проверить и распаковать"
-            $('#btn-process').click(function () {
-                var selectedFiles = [];
-                $('.file-checkbox:checked').each(function () {
-                    selectedFiles.push($(this).val());
-                });
-
-                if (selectedFiles.length === 0) {
-                    alert('Пожалуйста, выберите хотя бы один файл.');
+                if (!downloadAllCheckbox.is(':checked') && (!symbolSelect.val() || symbolSelect.val() === "")) {
+                    alert('Пожалуйста, выберите символ или отметьте "Скачать для всех".');
+                    return;
+                }
+                if (!startDate || !endDate) {
+                    alert('Пожалуйста, укажите диапазон дат.');
+                    return;
+                }
+                if (new Date(startDate) > new Date(endDate)) {
+                    alert('Начальная дата не может быть позже конечной.');
                     return;
                 }
 
-                // Получаем токен защиты
-                var token = $('input[name="__RequestVerificationToken"]').val();
+                logMessage("Отправка запроса на скачивание...");
+                const requestData = {
+                    symbol: symbolSelect.val(),
+                    downloadAll: downloadAllCheckbox.is(':checked'),
+                    startDate: startDate,
+                    endDate: endDate
+                };
 
-                // Отправляем AJAX-запрос на сервер
                 $.ajax({
-                    url: '@Url.Action("ProcessArchives", "Archive")',
-                    type: 'POST',
-                    contentType: 'application/json',
-                    headers: {
-                        'RequestVerificationToken': token
-                    },
-                    data: JSON.stringify({ fileNames: selectedFiles }),
-                    success: function (response) {
-                        // Здесь можно обновить лог операций на странице
-                        alert(response.message);
-                        // Можно добавить обновление страницы через 5 сек для наглядности
-                        setTimeout(function(){ location.reload(); }, 5000);
-                    },
-                    error: function (xhr) {
-                        alert('Произошла ошибка: ' + xhr.responseText);
+                    url: '@Url.Action("DownloadArchives", "Archive")',
+                    type: 'POST', contentType: 'application/json',
+                    headers: { 'RequestVerificationToken': token },
+                    data: JSON.stringify(requestData),
+                    success: (response) => logMessage(`<b>Сервер ответил:</b> ${response.message}`),
+                    error: (xhr) => {
+                        console.error('Ошибка:', xhr);
+                        logMessage(`<b style="color: red;">Ошибка!</b> ${xhr.responseText}`);
                     }
                 });
             });
 
-         // --- НОВЫЙ ОБРАБОТЧИК ДЛЯ КНОПКИ "УДАЛИТЬ" ---
-        $('#btn-delete').click(function () {
-            var selectedFiles = [];
-            $('.file-checkbox:checked').each(function () {
-                selectedFiles.push($(this).val());
+            // 3. Для таблицы скачанных архивов
+            $('#select-all-checkbox').click(function () {
+                $('#archiveListContainer .file-checkbox').prop('checked', this.checked);
             });
 
-            if (selectedFiles.length === 0) {
-                alert('Пожалуйста, выберите хотя бы один файл.');
-                return;
-            }
-
-            // Запрашиваем подтверждение у пользователя
-            if (!confirm('Вы уверены, что хотите удалить ' + selectedFiles.length + ' выбранных файлов? Это действие необратимо!')) {
-                return;
-            }
-
-            var token = $('input[name="__RequestVerificationToken"]').val();
-
-            // Отправляем AJAX-запрос на новый эндпоинт
-            $.ajax({
-                url: '@Url.Action("DeleteArchives", "Archive")', // <-- Новый URL
-                type: 'POST',
-                contentType: 'application/json',
-                headers: {
-                    'RequestVerificationToken': token
-                },
-                data: JSON.stringify({ fileNames: selectedFiles }),
-                success: function (response) {
-                    alert(response.message);
-                    // Обновляем страницу, чтобы увидеть изменения в списке
-                    setTimeout(function(){ location.reload(); }, 2000);
-                },
-                error: function (xhr) {
-                    alert('Произошла ошибка: ' + xhr.responseText);
+            $('#btn-process').click(function () {
+                const selectedFiles = $('#archiveListContainer .file-checkbox:checked').map(function() { return $(this).val(); }).get();
+                if (selectedFiles.length === 0) {
+                    alert('Пожалуйста, выберите хотя бы один файл для обработки.');
+                    return;
                 }
+                logMessage(`Отправка запроса на обработку ${selectedFiles.length} файлов...`);
+                $.ajax({
+                    url: '@Url.Action("ProcessArchives", "Archive")', type: 'POST', contentType: 'application/json',
+                    headers: { 'RequestVerificationToken': token }, data: JSON.stringify({ fileNames: selectedFiles }),
+                    success: (response) => {
+                        logMessage(`<b>Сервер ответил:</b> ${response.message}`);
+                        alert(response.message);
+                        setTimeout(() => location.reload(), 3000);
+                    },
+                    error: (xhr) => {
+                        logMessage(`<b style="color: red;">Ошибка!</b> ${xhr.responseText}`);
+                        alert(`Произошла ошибка: ${xhr.responseText}`);
+                    }
+                });
             });
+
+            $('#btn-delete').click(function () {
+                const selectedFiles = $('#archiveListContainer .file-checkbox:checked').map(function() { return $(this).val(); }).get();
+                if (selectedFiles.length === 0) {
+                    alert('Пожалуйста, выберите хотя бы один файл для удаления.');
+                    return;
+                }
+                if (!confirm(`Вы уверены, что хотите удалить ${selectedFiles.length} выбранных файлов?`)) {
+                    return;
+                }
+                logMessage(`Отправка запроса на удаление ${selectedFiles.length} файлов...`);
+                $.ajax({
+                    url: '@Url.Action("DeleteArchives", "Archive")', type: 'POST', contentType: 'application/json',
+                    headers: { 'RequestVerificationToken': token }, data: JSON.stringify({ fileNames: selectedFiles }),
+                    success: (response) => {
+                        logMessage(`<b>Сервер ответил:</b> ${response.message}`);
+                        alert(response.message);
+                        setTimeout(() => location.reload(), 3000);
+                    },
+                    error: (xhr) => {
+                        logMessage(`<b style="color: red;">Ошибка!</b> ${xhr.responseText}`);
+                        alert(`Произошла ошибка: ${xhr.responseText}`);
+                    }
+                });
+            });
+
+            // --- ЗАПУСК ПРИ ЗАГРУЗКЕ ---
+            syncSelectState();
+            logMessage("Страница готова. Ожидание действий...");
         });
-        });
+
     </script>
 }
