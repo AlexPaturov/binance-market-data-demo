@@ -41,6 +41,7 @@ public class CsvImportWorker
     /// <summary>
     /// Импортирует данные из одного CSV-файла в базу данных.
     /// </summary>
+    [AutomaticRetry(Attempts = 3)]
     public async Task ImportFromCsvAsync(string csvFilePath, IJobCancellationToken cancellationToken)
     {
         _logger.LogInformation("Начинаю импорт из CSV-файла: {FileName}", Path.GetFileName(csvFilePath));
