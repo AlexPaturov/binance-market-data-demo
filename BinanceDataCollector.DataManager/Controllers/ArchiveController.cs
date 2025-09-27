@@ -40,35 +40,61 @@ public class ArchiveController : Controller
         return View(model);
     }
 
-    [HttpPost] // Реагирует на POST-запросы
-    [Route("api/archive/download")] // Устанавливаем ему понятный URL
-    public IActionResult StartDownload([FromForm] string symbol, [FromForm] DateTime startDate, [FromForm] DateTime endDate)
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> DownloadArchives([FromBody] DownloadArchivesRequest request)
     {
         _logger.LogInformation("Получен запрос на скачивание архивов для {Symbol} с {Start} по {End}",
-            symbol, startDate.ToShortDateString(), endDate.ToShortDateString());
+            request.Symbol, request.StartDate.ToShortDateString(), request.EndDate.ToShortDateString());
 
         // 1. Генерируем список дат в диапазоне
         var datesToDownload = new List<DateOnly>();
-        for (var date = startDate; date <= endDate; date = date.AddDays(1))
+        for (var date = request.StartDate; date <= request.EndDate; date = date.AddDays(1))
         {
-            datesToDownload.Add(DateOnly.FromDateTime(date));
+            datesToDownload.Add(date);
         }
 
-        // 2. Ставим задачи в очередь Hangfire
-        foreach (var date in datesToDownload)
+        if (!datesToDownload.Any())
         {
-            _logger.LogDebug("Ставим в очередь задачу на скачивание для {Symbol} за {Date}", symbol, date);
-            _backgroundJobClient.Enqueue<ArchiveDownloaderWorker>(
-                worker => worker.DownloadArchiveAsync(symbol, date)
-             );
+            return BadRequest("Некорректный диапазон дат.");
         }
 
-        // 3. Возвращаем успешный ответ
-        return Ok(new { Message = $"Запланировано скачивание {datesToDownload.Count} архивов. Следите за логом." });
+        List<string> symbolsToProcess;
+
+        if (request.DownloadAll)
+        {
+            // Если стоит флаг "скачать для всех", получаем список всех активных символов
+            symbolsToProcess = await _symbolRepo.GetActiveSymbolsAsync() as List<string>;
+
+        }
+        else if (!string.IsNullOrWhiteSpace(request.Symbol))
+        {
+            // Иначе, берем один символ из запроса
+            symbolsToProcess = new List<string> { request.Symbol };
+        }
+        else
+        {
+            return BadRequest("Не выбран символ или опция 'Скачать для всех'.");
+        }
+
+
+        int totalJobs = 0;
+        foreach (var symbol in symbolsToProcess)
+        {
+            foreach (var date in datesToDownload)
+            {
+                _backgroundJobClient.Enqueue<ArchiveDownloaderWorker>(
+                    worker => worker.DownloadArchiveAsync(symbol, date)
+                );
+                totalJobs++;
+            }
+        }
+
+        return Ok(new { Message = $"Запланировано скачивание {totalJobs} архивов. Следите за логом." });
     }
 
-    [HttpPost] // Этот метод будет вызываться AJAX-запросом
-    [ValidateAntiForgeryToken] // Защита от CSRF-атак
+    [HttpPost]
+    [ValidateAntiForgeryToken]
     public IActionResult ProcessArchives([FromBody] ProcessArchivesRequest request)
     {
         if (request?.FileNames == null || !request.FileNames.Any())
