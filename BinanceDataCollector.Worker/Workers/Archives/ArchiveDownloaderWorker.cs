@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 namespace BinanceDataCollector.Worker.Workers.Archives;
 
 [Queue("archive_import")]               // Выполняем в низкоприоритетной очереди
-[DisableConcurrentExecution(10 * 60)]   // Таймаут на скачивание одного файла - 10 минут
+//[DisableConcurrentExecution(10 * 60)]   // Таймаут на скачивание одного файла - 10 минут
 public class ArchiveDownloaderWorker
 {
     private readonly IArchiveService _archiveService; // Предполагаем, что он уже есть
@@ -34,30 +34,78 @@ public class ArchiveDownloaderWorker
     /// </summary>
     public async Task DownloadArchiveAsync(string symbol, DateOnly date)
     {
+        var fileName = $"{symbol}-trades-{date:yyyy-MM-dd}.zip";
+        var filePath = Path.Combine(_downloadPath, fileName);
+        FileStream? fileStream = null;
+
         try
         {
-            // Убеждаемся, что директория существует
-            Directory.CreateDirectory(_downloadPath);
-
-            var fileName = $"{symbol}-trades-{date:yyyy-MM-dd}.zip";
-            var filePath = Path.Combine(_downloadPath, fileName);
-
             if (File.Exists(filePath))
             {
-                _logger.LogInformation("Архив {FileName} уже существует. Скачивание пропущено.", fileName);
-                return;
+                var fileInfo = new FileInfo(filePath);
+                if (fileInfo.Length > 0)
+                {
+                    _logger.LogInformation("Архив {FileName} уже существует и не пустой. Скачивание пропущено.", fileName);
+                    return;
+                }
+                _logger.LogWarning("Найден пустой файл-артефакт {FileName}. Попытка перезаписать.", fileName);
             }
 
-            // В IArchiveService нужен новый метод, который возвращает Stream
-            using var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
-            await _archiveService.DownloadArchiveToStreamAsync(symbol, date, fileStream, CancellationToken.None);
+            Directory.CreateDirectory(_downloadPath);
+            fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
 
-            _logger.LogInformation("Архив {FileName} успешно скачан и сохранен.", fileName);
+            bool success = await _archiveService.DownloadArchiveToStreamAsync(symbol, date, fileStream, CancellationToken.None);
+
+            // --- ВАЖНО: Закрываем поток ДО проверки размера ---
+            // Это гарантирует, что все буферы сброшены на диск и размер файла финальный.
+            await fileStream.DisposeAsync();
+            fileStream = null; // Обнуляем, чтобы finally его снова не закрыл.
+
+            if (success)
+            {
+                // --- НОВАЯ ПРОВЕРКА НА РАЗМЕР ---
+                var downloadedFileInfo = new FileInfo(filePath);
+                if (downloadedFileInfo.Length == 0)
+                {
+                    _logger.LogWarning("Скачанный архив {FileName} оказался пустым. Удаляем.", fileName);
+                    downloadedFileInfo.Delete();
+                }
+                else
+                {
+                    _logger.LogInformation("Архив {FileName} успешно скачан и сохранен ({Size} KB).", fileName, (downloadedFileInfo.Length / 1024.0).ToString("F2"));
+                }
+                // ------------------------------------
+            }
+            else
+            {
+                // Если !success (была ошибка 404), то файл, созданный FileStream,
+                // остался пустым. Удалим его.
+                _logger.LogDebug("Удаляем пустой файл-артефакт {FileName} после неудачного скачивания (404).", fileName);
+                if (File.Exists(filePath))
+                {
+                    File.Delete(filePath);
+                }
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка при скачивании архива для {Symbol} за {Date}", symbol, date);
-            throw; // Перевыбрасываем, чтобы Hangfire пометил задачу как Failed
+            _logger.LogError(ex, "Критическая ошибка при скачивании архива для {Symbol} за {Date}", symbol, date);
+
+            // Очистка: удаляем потенциально недокачанный или пустой файл
+            if (File.Exists(filePath))
+            {
+                try { File.Delete(filePath); } catch { /* Игнорируем ошибки очистки */ }
+            }
+
+            throw;
+        }
+        finally
+        {
+            // Если fileStream не был обнулен, закрываем его
+            if (fileStream != null)
+            {
+                await fileStream.DisposeAsync();
+            }
         }
     }
 }
