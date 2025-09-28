@@ -20,7 +20,6 @@ public class SafeLongConverter : DefaultTypeConverter
 
         if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long result))
         {
-            Console.WriteLine($"converted -> {result}");
             return result;
         }
 

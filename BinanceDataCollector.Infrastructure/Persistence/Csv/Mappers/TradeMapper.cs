@@ -1,4 +1,5 @@
 ﻿using BinanceDataCollector.Domain.Entities;
+using System.Diagnostics;
 
 namespace BinanceDataCollector.Infrastructure.Persistence.Csv.Mappers;
 
@@ -6,6 +7,7 @@ public class TradeMapper
 {
     public static Trade ToDomainEntity(BinanceCsvTradeRecord csvRecord, string symbol)
     {
+        //Console.WriteLine($"ToDomainEntity -> {DateTimeOffset.FromUnixTimeMilliseconds(NormalizeTimestamp(csvRecord.Time)).ToString("yyyy-MM-dd HH:mm:ss.fff")}");
         return new Trade
         {
             TradeId = csvRecord.Id,

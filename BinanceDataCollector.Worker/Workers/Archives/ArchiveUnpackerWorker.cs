@@ -75,7 +75,9 @@ public class ArchiveUnpackerWorker
             }
 
             // Ставим задачу на импорт
-            _backgroundJobClient.Enqueue<CsvImportWorker>(worker => worker.ImportFromCsvAsync(csvFile, JobCancellationToken.Null));
+            _backgroundJobClient.Enqueue<CsvImportWorker>(
+                worker => worker.ImportFromCsvAsync(csvFile, JobCancellationToken.Null)
+            );
             _logger.LogInformation("Задача на импорт файла {CsvFile} поставлена в очередь.", Path.GetFileName(csvFile));
 
             // 4. (Опционально) Удаление ZIP-файла после успешной распаковки
