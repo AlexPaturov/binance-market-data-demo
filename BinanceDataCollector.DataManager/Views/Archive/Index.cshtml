@@ -119,6 +119,10 @@
             const token = $('input[name="__RequestVerificationToken"]').val();
             const downloadAllCheckbox = $('#download-all-checkbox');
             const symbolSelect = $('#symbol-select');
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl("/archiveStatusHub")
+                .configureLogging(signalR.LogLevel.Information)
+                .build();
 
             // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
             function logMessage(message) {
@@ -133,6 +137,25 @@
                     symbolSelect.prop('disabled', false).prop('required', true);
                 }
             }
+
+            // --- НАСТРОЙКА И ЗАПУСК SIGNALR ---
+            connection.on("ReceiveStatusUpdate", (message) => {
+                logMessage(message);
+            });
+
+            async function startSignalR() {
+                try {
+                    await connection.start();
+                    logMessage("<b>SignalR:</b> Соединение установлено.");
+                    await connection.invoke("SubscribeToStatusUpdates");
+                } catch (err) {
+                    console.error(err);
+                    setTimeout(startSignalR, 5000);
+                }
+            };
+
+            connection.onclose(startSignalR);
+            startSignalR(); // Запускаем соединение
 
             // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
 
@@ -185,14 +208,27 @@
 
             $('#btn-process').click(function () {
                 const selectedFiles = $('#archiveListContainer .file-checkbox:checked').map(function() { return $(this).val(); }).get();
+                const token = $('input[name="__RequestVerificationToken"]').val();
                 if (selectedFiles.length === 0) {
                     alert('Пожалуйста, выберите хотя бы один файл для обработки.');
                     return;
                 }
+                const connectionId = connection.connectionId;
+                if (!connectionId) {
+                    alert("Соединение с сервером (SignalR) не установлено. Пожалуйста, подождите.");
+                    return;
+                }
                 logMessage(`Отправка запроса на обработку ${selectedFiles.length} файлов...`);
+                const requestData = {
+                    fileNames: selectedFiles,
+                    connectionId: connectionId // <-- ОТПРАВЛЯЕМ ID
+                };
                 $.ajax({
-                    url: '@Url.Action("ProcessArchives", "Archive")', type: 'POST', contentType: 'application/json',
-                    headers: { 'RequestVerificationToken': token }, data: JSON.stringify({ fileNames: selectedFiles }),
+                    url: '@Url.Action("ProcessArchives", "Archive")', 
+                    type: 'POST', 
+                    contentType: 'application/json',
+                    headers: { 'RequestVerificationToken': token },
+                    data: JSON.stringify(requestData),
                     success: (response) => {
                         logMessage(`<b>Сервер ответил:</b> ${response.message}`);
                         alert(response.message);

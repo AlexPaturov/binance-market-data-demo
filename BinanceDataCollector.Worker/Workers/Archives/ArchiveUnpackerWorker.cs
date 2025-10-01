@@ -1,8 +1,10 @@
-﻿using BinanceDataCollector.Domain.DTOs;
+﻿using BinanceDataCollector.Application.Interfaces;
+using BinanceDataCollector.Domain.DTOs;
 using Hangfire;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
 using System.IO.Compression;
+using static Hangfire.Storage.JobStorageFeatures;
 
 namespace BinanceDataCollector.Worker.Workers.Archives;
 
@@ -17,16 +19,19 @@ public class ArchiveUnpackerWorker
 {
     private readonly ILogger<ArchiveUnpackerWorker> _logger;
     private readonly IBackgroundJobClient _backgroundJobClient;
+    private readonly IStatusNotifier _notifier;
     private readonly string _downloadPath;
     private readonly string _destinationPath;
 
     public ArchiveUnpackerWorker(
         ILogger<ArchiveUnpackerWorker> logger,
         IOptions<ArchivesSettings> options,
-        IBackgroundJobClient backgroundJobClient)
+        IBackgroundJobClient backgroundJobClient,
+        IStatusNotifier notifier)
     {
         _logger = logger;
         _backgroundJobClient = backgroundJobClient;
+        _notifier = notifier;
         _downloadPath = options.Value.TradeArcihvesPath;
         _destinationPath = options.Value.CsvUnpackedPath;
     }
@@ -34,19 +39,20 @@ public class ArchiveUnpackerWorker
     /// <summary>
     /// Проверяет, распаковывает архив и ставит задачу на импорт.
     /// </summary>
-    public Task UnpackArchiveAsync(string zipFileName)
+    public async Task UnpackArchiveAsync(string zipFileName, string connectionId)
     {
         var zipFilePath = Path.Combine(_downloadPath, zipFileName);
         var destinationDirectory = Path.Combine(_destinationPath, Path.GetFileNameWithoutExtension(zipFileName));
 
         _logger.LogInformation("Начинаю распаковку архива: {FileName}", zipFileName);
+        await _notifier.SendStatusUpdateAsync(connectionId, $"Начинаю распаковку {zipFileName}...");
 
         try
         {
             if (!File.Exists(zipFilePath))
             {
                 _logger.LogWarning("ZIP-файл {FileName} не найден для распаковки.", zipFileName);
-                return Task.CompletedTask;
+                return;
             }
 
             // 1. Проверка целостности
@@ -58,6 +64,7 @@ public class ArchiveUnpackerWorker
                 }
             }
             _logger.LogDebug("Проверка целостности для {FileName} пройдена.", zipFileName);
+            await _notifier.SendStatusUpdateAsync(connectionId, $"Проверка {zipFileName} пройдена.");
 
             // 2. Распаковка (с перезаписью, если папка уже существует)
             if (Directory.Exists(destinationDirectory))
@@ -67,6 +74,7 @@ public class ArchiveUnpackerWorker
             }
             ZipFile.ExtractToDirectory(zipFilePath, destinationDirectory);
             _logger.LogInformation("Архив {FileName} успешно распакован в {Directory}.", zipFileName, destinationDirectory);
+            await _notifier.SendStatusUpdateAsync(connectionId, $"Распаковка {zipFileName} завершена.");
 
             // 3. Запуск следующего этапа - импорта
             var csvFile = Directory.GetFiles(destinationDirectory, "*.csv").FirstOrDefault();
@@ -80,6 +88,7 @@ public class ArchiveUnpackerWorker
                 worker => worker.ImportFromCsvAsync(csvFile, JobCancellationToken.Null)
             );
             _logger.LogInformation("Задача на импорт файла {CsvFile} поставлена в очередь.", Path.GetFileName(csvFile));
+            await _notifier.SendStatusUpdateAsync(connectionId, $"Задача на импорт файла поставлена в очередь.");
 
             // 4. (Опционально) Удаление ZIP-файла после успешной распаковки
             File.Delete(zipFilePath);
@@ -89,11 +98,12 @@ public class ArchiveUnpackerWorker
         catch (Exception ex)
         {
             _logger.LogError(ex, "Ошибка при распаковке архива {FileName}", zipFileName);
+            await _notifier.SendStatusUpdateAsync(connectionId, $"<b style='color:red;'>ОШИБКА</b> при обработке {zipFileName}: {ex.Message}");
             // Перевыбрасываем, чтобы Hangfire пометил задачу как Failed
             throw;
         }
 
-        return Task.CompletedTask;
+        return;
     }
 
 }

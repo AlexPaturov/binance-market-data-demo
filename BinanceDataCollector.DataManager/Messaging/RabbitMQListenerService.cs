@@ -1,9 +1,11 @@
 ﻿
 using BinanceDataCollector.DataManager.Hubs;
+using BinanceDataCollector.Domain.Events;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using System.Text.Json;
 
 namespace BinanceDataCollector.DataManager.Messaging;
 
@@ -30,20 +32,29 @@ public class RabbitMQListenerService : BackgroundService
         var factory = new ConnectionFactory()
         {
             HostName = _configuration["RabbitMQ:HostName"],
+            Port = Int32.Parse(_configuration["RabbitMQ:Port"]),
             UserName = _configuration["RabbitMQ:UserName"],
-            Password = _configuration["RabbitMQ:Password"]
+            Password = _configuration["RabbitMQ:Password"],
+            AutomaticRecoveryEnabled = true, // Автоматическое восстановление
+            NetworkRecoveryInterval = TimeSpan.FromSeconds(10)
         };
 
         try
         {
             using var connection = await factory.CreateConnectionAsync(stoppingToken);
-            using var channel = await connection.CreateChannelAsync(stoppingToken);
+            using var channel = await connection.CreateChannelAsync(options: null, stoppingToken);
 
             await channel.ExchangeDeclareAsync(exchange: "status_updates_exchange", type: ExchangeType.Fanout, cancellationToken: stoppingToken);
 
-            // Создаем временную, не-эксклюзивную, авто-удаляемую очередь.
-            // Имя будет сгенерировано RabbitMQ.
-            var queueName = (await channel.QueueDeclareAsync(queue: "", durable: false, exclusive: false, autoDelete: true, arguments: null, cancellationToken: stoppingToken)).QueueName;
+            // Создаем временную, не-эксклюзивную, авто-удаляемую очередь. Имя будет сгенерировано RabbitMQ.
+            var queueName = (await channel.QueueDeclareAsync(
+                queue: "", 
+                durable: false, 
+                exclusive: false, 
+                autoDelete: true, 
+                arguments: null, 
+                cancellationToken: stoppingToken)
+                ).QueueName;
 
             _logger.LogInformation("Создана временная очередь: {QueueName}", queueName);
 
@@ -54,7 +65,7 @@ public class RabbitMQListenerService : BackgroundService
 
             var consumer = new AsyncEventingBasicConsumer(channel);
 
-            consumer.Received += async (model, ea) => {
+            consumer.ReceivedAsync += async (model, ea) => {
                 var body = ea.Body.ToArray();
                 try
                 {
@@ -76,7 +87,11 @@ public class RabbitMQListenerService : BackgroundService
                 }
             };
 
-            await channel.BasicConsumeAsync(queue: queueName, autoAck: true, consumer: consumer, cancellationToken: stoppingToken);
+            await channel.BasicConsumeAsync(
+                queue: queueName, 
+                autoAck: true, 
+                consumer: consumer, 
+                cancellationToken: stoppingToken);
 
             // Держим сервис "живым", пока не придет команда на остановку
             while (!stoppingToken.IsCancellationRequested)
@@ -86,7 +101,7 @@ public class RabbitMQListenerService : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            // Это нормальное исключение при остановке сервиса. Игнорируем.
+            _logger.LogInformation("Это нормальное исключение при остановке сервиса. Игнорируем.");
         }
         catch (Exception ex)
         {

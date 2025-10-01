@@ -107,7 +107,7 @@ public class ArchiveController : Controller
             // Ставим задачу в очередь для КАЖДОГО выбранного файла
             // Здесь мы вызываем ArchiveProcessingWorker, который нам еще предстоит создать
             _backgroundJobClient.Enqueue<ArchiveUnpackerWorker>(
-                worker => worker.UnpackArchiveAsync(fileName)
+                worker => worker.UnpackArchiveAsync(fileName, request.ConnectionId)
             );
         }
 
@@ -142,6 +142,7 @@ public class ArchiveController : Controller
 public class ProcessArchivesRequest
 {
     public List<string> FileNames { get; set; }
+    public string ConnectionId { get; set; }
 }
 
 public class DeleteArchivesRequest

@@ -53,6 +53,7 @@ public class Program
         builder.Services.AddHangfireServer();
         #endregion
         builder.Services.AddControllersWithViews();
+        builder.Services.AddSignalR();
         builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
         builder.Services.AddHttpClient("BinanceArchive", client =>
         {
