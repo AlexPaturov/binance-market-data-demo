@@ -1,5 +1,6 @@
 ﻿using BinanceDataCollector.Domain.DTOs;
 using Hangfire;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
 using System.IO.Compression;
 

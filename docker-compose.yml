@@ -29,13 +29,25 @@ services:
     restart: always
     depends_on:
       - db
-      - seq # <-- Добавляем зависимость от Seq
+      - seq # <-- Зависимость от Seq
     ports:
       - "7001:7001" # Пробрасываем порт 7001 хост-машины на порт 7001 контейнера
     environment:
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=bindatacoll;Password=dt_hfgd_yyyd
       - ConnectionStrings__HangfireConnection=Host=db;Port=5432;Database=market_analytics_jobs;Username=bindatacoll;Password=dt_hfgd_yyyd
       - SEQ_URL=http://seq
-volumes:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"   # Порт для подключения клиентов
+      - "15672:15672" # Порт для веб-интерфейса управления
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq/
+    environment:
+      - RABBITMQ_DEFAULT_USER=user
+      - RABBITMQ_DEFAULT_PASS=password
+volumes:     # <-- Определяем тома
   postgres_data:
-  seq_data: # <-- Определяем том для данных Seq  
+  seq_data:   
+  rabbitmq_data:

@@ -3,6 +3,7 @@ using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Infrastructure.BinanceClient;
+using BinanceDataCollector.Infrastructure.Messaging;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
 using BinanceDataCollector.MarketScreenService;
@@ -149,8 +150,15 @@ public class Program
             builder.Services.AddSingleton<GapProcessingTracker>();
 
             builder.Services.AddTransient<ArchiveDownloaderWorker>(); // на отладке загрузки архивов
+            builder.Services.AddSingleton<IStatusNotifier>(sp =>
+            {
+                var configuration = sp.GetRequiredService<IConfiguration>();
+                // Асинхронно создаем и ждем, пока экземпляр будет готов.
+                // .GetAwaiter().GetResult() - это способ синхронно дождаться async метода в синхронном коде.
+                return RabbitMQStatusNotifier.CreateAsync(configuration).GetAwaiter().GetResult();
+            });
 
-            // Ваши IHostedService
+            // IHostedService
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
             #endregion

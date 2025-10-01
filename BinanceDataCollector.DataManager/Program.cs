@@ -1,6 +1,7 @@
 using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Common;
+using BinanceDataCollector.DataManager.Hubs;
 using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
@@ -87,14 +88,14 @@ public class Program
 
         app.UseAuthorization();
 
-        // Включаем Hangfire Dashboard
         app.MapHangfireDashboard("/hangfire", new DashboardOptions {Authorization = new[] { new AllowAllConnectionsFilter() }});
+        app.MapHub<ArchiveStatusHub>("/archiveStatusHub");
         app.MapDefaultControllerRoute();
-
+        #region logging
         Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-
-        Log.Information("Запуск хоста (app.Run)...");
         startupStopwatch.Stop();
+        Log.Information("Запуск хоста (app.Run)...");
+        #endregion
         app.Run();
     }
 }
