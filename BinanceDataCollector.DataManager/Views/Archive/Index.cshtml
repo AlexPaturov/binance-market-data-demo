@@ -146,8 +146,10 @@
             async function startSignalR() {
                 try {
                     await connection.start();
+                    console.log("SignalR Connected with connectionId: " + connection.connectionId);
                     logMessage("<b>SignalR:</b> Соединение установлено.");
-                    await connection.invoke("SubscribeToStatusUpdates");
+
+                    //await connection.invoke("SubscribeToStatusUpdates");
                 } catch (err) {
                     console.error(err);
                     setTimeout(startSignalR, 5000);
@@ -166,6 +168,8 @@
             $('#btn-download').click(function () {
                 const startDate = $('#start-date-input').val();
                 const endDate = $('#end-date-input').val();
+                const requestId = crypto.randomUUID();          // Генерируем новый уникальный ID для этой операции
+                const connectionId = connection.connectionId;   // Получаем ID текущего SignalR-соединения
 
                 if (!downloadAllCheckbox.is(':checked') && (!symbolSelect.val() || symbolSelect.val() === "")) {
                     alert('Пожалуйста, выберите символ или отметьте "Скачать для всех".');
@@ -179,13 +183,19 @@
                     alert('Начальная дата не может быть позже конечной.');
                     return;
                 }
+                if (!connectionId) { // Проверяем, что SignalR-соединение уже установлено
+                    alert("Соединение с сервером для получения статусов еще не установлено. Пожалуйста, подождите несколько секунд и попробуйте снова.");
+                    return;
+                }
 
                 logMessage("Отправка запроса на скачивание...");
                 const requestData = {
                     symbol: symbolSelect.val(),
                     downloadAll: downloadAllCheckbox.is(':checked'),
                     startDate: startDate,
-                    endDate: endDate
+                    endDate: endDate,
+                    requestId: requestId,
+                    connectionId: connectionId
                 };
 
                 $.ajax({

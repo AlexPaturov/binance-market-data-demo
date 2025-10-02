@@ -47,6 +47,7 @@ public class Program
             Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
             builder.WebHost.UseUrls("http://*:7001");
+            #region Logging preferences
             builder.Logging.ClearProviders();
             builder.Logging.AddSerilog(new LoggerConfiguration()
                 .ReadFrom.Configuration(builder.Configuration)
@@ -56,17 +57,8 @@ public class Program
                 .Enrich.With<EnrichWithSourceClass>()
                 .Enrich.WithCaller()
                 .CreateLogger());
-
-            #region Настройка Hangfire
-            //builder.Services.AddHangfire(config => config
-            //    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-            //    .UseSimpleAssemblyNameTypeSerializer()
-            //    .UseRecommendedSerializerSettings()
-            //    .UsePostgreSqlStorage(options => {
-            //        options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("HangfireConnection"));
-            //    }));
-
-            // -- new variant
+            #endregion
+            #region Hangfire preferences
             builder.Services.AddHangfire(config => config
              .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
              .UseSimpleAssemblyNameTypeSerializer()

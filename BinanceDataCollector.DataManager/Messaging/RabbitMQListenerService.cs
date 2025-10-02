@@ -2,7 +2,6 @@
 using BinanceDataCollector.DataManager.Hubs;
 using BinanceDataCollector.Domain.Events;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System.Text.Json;
@@ -73,8 +72,8 @@ public class RabbitMQListenerService : BackgroundService
                     if (statusEvent?.ConnectionId != null)
                     {
                         _logger.LogDebug("Получено сообщение для ConnectionId {ConnectionId}", statusEvent.ConnectionId);
-                        await _hubContext.Clients.Group(statusEvent.ConnectionId)
-                            .SendAsync("ReceiveStatusUpdate", statusEvent.Message, stoppingToken);
+                        // await _hubContext.Clients.Group(statusEvent.ConnectionId).SendAsync("ReceiveStatusUpdate", statusEvent.Message, stoppingToken);
+                        await _hubContext.Clients.All.SendAsync("ReceiveStatusUpdate", $"[BROADCAST] {statusEvent.Message}");
                     }
                 }
                 catch (JsonException jsonEx)

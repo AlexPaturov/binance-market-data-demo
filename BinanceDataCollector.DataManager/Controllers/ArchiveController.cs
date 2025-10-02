@@ -84,7 +84,7 @@ public class ArchiveController : Controller
             foreach (var date in datesToDownload)
             {
                 _backgroundJobClient.Enqueue<ArchiveDownloaderWorker>(
-                    worker => worker.DownloadArchiveAsync(symbol, date)
+                    worker => worker.DownloadArchiveAsync(request.RequestId, request.ConnectionId, symbol, date)
                 );
                 totalJobs++;
             }

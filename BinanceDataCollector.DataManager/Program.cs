@@ -2,6 +2,7 @@ using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Common;
 using BinanceDataCollector.DataManager.Hubs;
+using BinanceDataCollector.DataManager.Messaging;
 using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
@@ -73,6 +74,7 @@ public class Program
         builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
         builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
         builder.Services.AddScoped<IArchiveService, ArchiveService>();
+        builder.Services.AddHostedService<RabbitMQListenerService>();
         Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
         var app = builder.Build();

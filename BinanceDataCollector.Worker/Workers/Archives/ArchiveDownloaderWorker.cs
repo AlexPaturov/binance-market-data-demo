@@ -1,7 +1,10 @@
 ﻿using BinanceDataCollector.Application.Archives.Interfaces;
+using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.DTOs;
 using Hangfire;
 using Microsoft.Extensions.Options;
+using Serilog.Context;
+using static Hangfire.Storage.JobStorageFeatures;
 
 namespace BinanceDataCollector.Worker.Workers.Archives;
 
@@ -14,6 +17,7 @@ public class ArchiveDownloaderWorker
 #pragma warning disable S1450 // Private fields only used as local variables in methods should become local variables
     private readonly IOptions<ArchivesSettings> _options;
 #pragma warning restore S1450 // Private fields only used as local variables in methods should become local variables
+    private readonly IStatusNotifier _notifier;
 
     // Путь, куда будем сохранять архивы. Можно вынести в appsettings.json
     private readonly string _downloadPath;
@@ -21,90 +25,101 @@ public class ArchiveDownloaderWorker
     public ArchiveDownloaderWorker(
         IArchiveService archiveService, 
         ILogger<ArchiveDownloaderWorker> logger,
-        IOptions<ArchivesSettings> options)
+        IOptions<ArchivesSettings> options,
+        IStatusNotifier notifier)
     {
         _archiveService = archiveService;
         _logger = logger;
         _options = options;
         _downloadPath = _options.Value.TradeArcihvesPath;
+        _notifier = notifier;
     }
 
     /// <summary>
     /// Скачивает ОДИН архив и сохраняет его на диск.
     /// </summary>
-    public async Task DownloadArchiveAsync(string symbol, DateOnly date)
+    public async Task DownloadArchiveAsync(Guid requestId, string connectionId, string symbol, DateOnly date)
     {
         var fileName = $"{symbol}-trades-{date:yyyy-MM-dd}.zip";
         var filePath = Path.Combine(_downloadPath, fileName);
         FileStream? fileStream = null;
-
-        try
+        
+        using (LogContext.PushProperty("RequestId", requestId)) // Используем requestId для ЛОГИРОВАНИЯ
         {
-            if (File.Exists(filePath))
+            try
             {
-                var fileInfo = new FileInfo(filePath);
-                if (fileInfo.Length > 0)
+                if (File.Exists(filePath))
                 {
-                    _logger.LogInformation("Архив {FileName} уже существует и не пустой. Скачивание пропущено.", fileName);
-                    return;
+                    var fileInfo = new FileInfo(filePath);
+                    if (fileInfo.Length > 0)
+                    {
+                        _logger.LogInformation("Архив {FileName} уже существует и не пустой. Скачивание пропущено.", fileName);
+                        await _notifier.SendStatusUpdateAsync(connectionId, $"Архив {fileName} уже существует и не пустой. Скачивание пропущено.");
+                        return;
+                    }
+                    _logger.LogWarning("Найден пустой файл-артефакт {FileName}. Попытка перезаписать.", fileName);
+                    await _notifier.SendStatusUpdateAsync(connectionId, $"Найден пустой файл-артефакт {fileName}. Попытка перезаписать.");
                 }
-                _logger.LogWarning("Найден пустой файл-артефакт {FileName}. Попытка перезаписать.", fileName);
-            }
 
-            Directory.CreateDirectory(_downloadPath);
-            fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
+                Directory.CreateDirectory(_downloadPath);
+                fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
 
-            bool success = await _archiveService.DownloadArchiveToStreamAsync(symbol, date, fileStream, CancellationToken.None);
+                bool success = await _archiveService.DownloadArchiveToStreamAsync(symbol, date, fileStream, CancellationToken.None);
 
-            // --- ВАЖНО: Закрываем поток ДО проверки размера ---
-            // Это гарантирует, что все буферы сброшены на диск и размер файла финальный.
-            await fileStream.DisposeAsync();
-            fileStream = null; // Обнуляем, чтобы finally его снова не закрыл.
+                // --- ВАЖНО: Закрываем поток ДО проверки размера ---
+                // Это гарантирует, что все буферы сброшены на диск и размер файла финальный.
+                await fileStream.DisposeAsync();
+                fileStream = null; // Обнуляем, чтобы finally его снова не закрыл.
 
-            if (success)
-            {
-                // --- НОВАЯ ПРОВЕРКА НА РАЗМЕР ---
-                var downloadedFileInfo = new FileInfo(filePath);
-                if (downloadedFileInfo.Length == 0)
+                if (success)
                 {
-                    _logger.LogWarning("Скачанный архив {FileName} оказался пустым. Удаляем.", fileName);
-                    downloadedFileInfo.Delete();
+                    // --- НОВАЯ ПРОВЕРКА НА РАЗМЕР ---
+                    var downloadedFileInfo = new FileInfo(filePath);
+                    if (downloadedFileInfo.Length == 0)
+                    {
+                        _logger.LogWarning("Скачанный архив {FileName} оказался пустым. Удаляем.", fileName);
+                        await _notifier.SendStatusUpdateAsync(connectionId, $"Скачанный архив {fileName} оказался пустым. Удаляем.");
+                        downloadedFileInfo.Delete();
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Архив {FileName} успешно скачан и сохранен ({Size} KB).", fileName, (downloadedFileInfo.Length / 1024.0).ToString("F2"));
+                        await _notifier.SendStatusUpdateAsync(connectionId, $"Архив {fileName} успешно скачан и сохранен ({(downloadedFileInfo.Length / 1024.0).ToString("F2")} KB).");
+                    }
+                    // ------------------------------------
                 }
                 else
                 {
-                    _logger.LogInformation("Архив {FileName} успешно скачан и сохранен ({Size} KB).", fileName, (downloadedFileInfo.Length / 1024.0).ToString("F2"));
+                    // Если !success (была ошибка 404), то файл, созданный FileStream,
+                    // остался пустым. Удалим его.
+                    _logger.LogDebug("Удаляем пустой файл-артефакт {FileName} после неудачного скачивания (404).", fileName);
+                    await _notifier.SendStatusUpdateAsync(connectionId, $"Удаляем пустой файл-артефакт {fileName} после неудачного скачивания (404).");
+                    if (File.Exists(filePath))
+                    {
+                        File.Delete(filePath);
+                    }
                 }
-                // ------------------------------------
             }
-            else
+            catch (Exception ex)
             {
-                // Если !success (была ошибка 404), то файл, созданный FileStream,
-                // остался пустым. Удалим его.
-                _logger.LogDebug("Удаляем пустой файл-артефакт {FileName} после неудачного скачивания (404).", fileName);
+                _logger.LogError(ex, "Критическая ошибка при скачивании архива для {Symbol} за {Date}", symbol, date);
+                await _notifier.SendStatusUpdateAsync(connectionId, $"Удаляем пустой файл-артефакт {fileName} после неудачного скачивания (404).");
+
+                // Очистка: удаляем потенциально недокачанный или пустой файл
                 if (File.Exists(filePath))
                 {
-                    File.Delete(filePath);
+                    try { File.Delete(filePath); } catch { /* Игнорируем ошибки очистки */ }
                 }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Критическая ошибка при скачивании архива для {Symbol} за {Date}", symbol, date);
 
-            // Очистка: удаляем потенциально недокачанный или пустой файл
-            if (File.Exists(filePath))
-            {
-                try { File.Delete(filePath); } catch { /* Игнорируем ошибки очистки */ }
+                throw;
             }
-
-            throw;
-        }
-        finally
-        {
-            // Если fileStream не был обнулен, закрываем его
-            if (fileStream != null)
+            finally
             {
-                await fileStream.DisposeAsync();
+                // Если fileStream не был обнулен, закрываем его
+                if (fileStream != null)
+                {
+                    await fileStream.DisposeAsync();
+                }
             }
         }
     }
