@@ -35,7 +35,7 @@ screen -r vacuum_session
 # 1. ”станавливаем пароль в переменную окружени€
 $env:PGPASSWORD="dt_hfgd_yyyd"
 pg_dump -U bindatacoll -h localhost -p 5432 --schema-only --schema=public -d market_analytics -f "D:\pg_script\market_analytics_dev.sql"
-pg_dump -U bindatacoll -h localhost -p 5432 --schema-only --schema=public -d market_analytics_jobs_dev -f "D:\pg_script\market_analytics_jobs_dev.sql"
+pg_dump -U bindatacoll -h localhost -p 5432 --schema-only --schema=hangfire -d market_analytics_jobs_dev -f "D:\pg_script\market_analytics_jobs_dev.sql"
 ## ------------- выгрузка схемы базы данных окончание -------------------------
 
 ## ----------------- полна€ очистка базы перед загрузкой новых данных начало ---------------------------------------------------------------------------
