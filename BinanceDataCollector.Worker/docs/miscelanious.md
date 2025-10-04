@@ -34,7 +34,8 @@ screen -r vacuum_session
 ## ------------- выгрузка схемы базы данных начало ----------------------------
 # 1. Устанавливаем пароль в переменную окружения
 $env:PGPASSWORD="dt_hfgd_yyyd"
-pg_dump -U bindatacoll -h localhost -p 5432 --schema-only --schema=public -d market_analytics -f "D:\pg_script\schema.sql"
+pg_dump -U bindatacoll -h localhost -p 5432 --schema-only --schema=public -d market_analytics -f "D:\pg_script\market_analytics_dev.sql"
+pg_dump -U bindatacoll -h localhost -p 5432 --schema-only --schema=public -d market_analytics_jobs_dev -f "D:\pg_script\market_analytics_jobs_dev.sql"
 ## ------------- выгрузка схемы базы данных окончание -------------------------
 
 ## ----------------- полная очистка базы перед загрузкой новых данных начало ---------------------------------------------------------------------------
