@@ -1,4 +1,4 @@
-﻿using BinanceDataCollector.Application.Archives.Interfaces;
+using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.DataManager.Models;
 using Microsoft.AspNetCore.Mvc;

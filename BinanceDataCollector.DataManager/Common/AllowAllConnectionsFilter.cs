@@ -1,4 +1,4 @@
-﻿using Hangfire.Annotations;
+using Hangfire.Annotations;
 using Hangfire.Dashboard;
 
 namespace BinanceDataCollector.DataManager.Common;

@@ -1,24 +1,24 @@
-# TODO изменить в тестах получение имени сервера для seq
-# TODO сделать автозапуск тестов при деплое на прод
-# TODO проследить ошибки на проде с  29-08-2025  07:02:00
-# TODO 29-08-2025 - добавление onChain индикаторов 
-# TODO на проде выполнить новый скрипт для sp_aggregate_trades_to_ohlcv() в папке watermark
-# TODO на проде выполнить новый скрипт для sp_process_features() в папке watermark
+# TODO РёР·РјРµРЅРёС‚СЊ РІ С‚РµСЃС‚Р°С… РїРѕР»СѓС‡РµРЅРёРµ РёРјРµРЅРё СЃРµСЂРІРµСЂР° РґР»СЏ seq
+# TODO СЃРґРµР»Р°С‚СЊ Р°РІС‚РѕР·Р°РїСѓСЃРє С‚РµСЃС‚РѕРІ РїСЂРё РґРµРїР»РѕРµ РЅР° РїСЂРѕРґ
+# TODO РїСЂРѕСЃР»РµРґРёС‚СЊ РѕС€РёР±РєРё РЅР° РїСЂРѕРґРµ СЃ  29-08-2025  07:02:00
+# TODO 29-08-2025 - РґРѕР±Р°РІР»РµРЅРёРµ onChain РёРЅРґРёРєР°С‚РѕСЂРѕРІ 
+# TODO РЅР° РїСЂРѕРґРµ РІС‹РїРѕР»РЅРёС‚СЊ РЅРѕРІС‹Р№ СЃРєСЂРёРїС‚ РґР»СЏ sp_aggregate_trades_to_ohlcv() РІ РїР°РїРєРµ watermark
+# TODO РЅР° РїСЂРѕРґРµ РІС‹РїРѕР»РЅРёС‚СЊ РЅРѕРІС‹Р№ СЃРєСЂРёРїС‚ РґР»СЏ sp_process_features() РІ РїР°РїРєРµ watermark
 # TODO 30-08-2025
-# TODO ? на проде выполнить новый скрипт для sp_claim_new_ohlcv_for_features в папке watermark
-# TODO + на проде выполнить скрипт с новой версией public.sp_aggregate_trades_to_ohlcv();
-# TODO + на проде выполнить sp_find_trade_gaps
-# TODO + на проде выполнить скрипт с новой версией public.sp_process_features();
-# TODO Включаем OhlcvAggregatorWorker на dev - 
+# TODO ? РЅР° РїСЂРѕРґРµ РІС‹РїРѕР»РЅРёС‚СЊ РЅРѕРІС‹Р№ СЃРєСЂРёРїС‚ РґР»СЏ sp_claim_new_ohlcv_for_features РІ РїР°РїРєРµ watermark
+# TODO + РЅР° РїСЂРѕРґРµ РІС‹РїРѕР»РЅРёС‚СЊ СЃРєСЂРёРїС‚ СЃ РЅРѕРІРѕР№ РІРµСЂСЃРёРµР№ public.sp_aggregate_trades_to_ohlcv();
+# TODO + РЅР° РїСЂРѕРґРµ РІС‹РїРѕР»РЅРёС‚СЊ sp_find_trade_gaps
+# TODO + РЅР° РїСЂРѕРґРµ РІС‹РїРѕР»РЅРёС‚СЊ СЃРєСЂРёРїС‚ СЃ РЅРѕРІРѕР№ РІРµСЂСЃРёРµР№ public.sp_process_features();
+# TODO Р’РєР»СЋС‡Р°РµРј OhlcvAggregatorWorker РЅР° dev - 
 # TODO wsl --shutdown
 # TODO - 
-# TODO 17-09-2025 проверка целостности 
-# TODO 18-09-2025 добавил в TradeRepository на метод GetTradeIdsInWindowAsync логирование времени выполнения - падает по таймауту
-# TODO 18-09-2025 OhlcvAggregatorWorker.AggregateNextBatchAsync - куча задач в очереди
-# TODO LISTAUSDT-trades-2025-09-14.zip - битый архив
+# TODO 17-09-2025 РїСЂРѕРІРµСЂРєР° С†РµР»РѕСЃС‚РЅРѕСЃС‚Рё 
+# TODO 18-09-2025 РґРѕР±Р°РІРёР» РІ TradeRepository РЅР° РјРµС‚РѕРґ GetTradeIdsInWindowAsync Р»РѕРіРёСЂРѕРІР°РЅРёРµ РІСЂРµРјРµРЅРё РІС‹РїРѕР»РЅРµРЅРёСЏ - РїР°РґР°РµС‚ РїРѕ С‚Р°Р№РјР°СѓС‚Сѓ
+# TODO 18-09-2025 OhlcvAggregatorWorker.AggregateNextBatchAsync - РєСѓС‡Р° Р·Р°РґР°С‡ РІ РѕС‡РµСЂРµРґРё
+# TODO LISTAUSDT-trades-2025-09-14.zip - Р±РёС‚С‹Р№ Р°СЂС…РёРІ
 # TODO 
-# TODO 28-09-2025 - подключаю RabbitMQ
-# TODO После docker-compose up -d у тебя по адресу http://localhost:15672 (логин/пароль: user/password) появится админка RabbitMQ
+# TODO 28-09-2025 - РїРѕРґРєР»СЋС‡Р°СЋ RabbitMQ
+# TODO РџРѕСЃР»Рµ docker-compose up -d Сѓ С‚РµР±СЏ РїРѕ Р°РґСЂРµСЃСѓ http://localhost:15672 (Р»РѕРіРёРЅ/РїР°СЂРѕР»СЊ: user/password) РїРѕСЏРІРёС‚СЃСЏ Р°РґРјРёРЅРєР° RabbitMQ
 # TODO
 # TODO
 # TODO

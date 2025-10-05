@@ -1,4 +1,4 @@
-﻿using BinanceDataCollector.Application.Archives.Interfaces;
+using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Models;
 using BinanceDataCollector.Worker.Workers.Archives;

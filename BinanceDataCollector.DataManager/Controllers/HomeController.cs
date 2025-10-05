@@ -12,7 +12,7 @@ namespace BinanceDataCollector.DataManager.Controllers
         private readonly ILogger<HomeController> _logger;
         private readonly ITrackedSymbolRepository _symbolRepo;
         private readonly ITradeRepository _tradeRepo;
-        private readonly IMonitoringApi _hangfireApi; // API для доступа к данным Hangfire
+        private readonly IMonitoringApi _hangfireApi; // API РґР»СЏ РґРѕСЃС‚СѓРїР° Рє РґР°РЅРЅС‹Рј Hangfire
 
         public HomeController(
             ILogger<HomeController> logger,
@@ -22,31 +22,31 @@ namespace BinanceDataCollector.DataManager.Controllers
             _logger = logger;
             _symbolRepo = symbolRepo;
             _tradeRepo = tradeRepo;
-            _hangfireApi = JobStorage.Current.GetMonitoringApi(); // Получаем доступ к "внутренностям" Hangfire
+            _hangfireApi = JobStorage.Current.GetMonitoringApi(); // РџРѕР»СѓС‡Р°РµРј РґРѕСЃС‚СѓРї Рє "РІРЅСѓС‚СЂРµРЅРЅРѕСЃС‚СЏРј" Hangfire
         }
 
         public async Task<IActionResult> Index()
         {
-            var viewModel = new HomeViewModel();                                    // 1. Создаем пустую ViewModel
+            var viewModel = new HomeViewModel();                                    // 1. РЎРѕР·РґР°РµРј РїСѓСЃС‚СѓСЋ ViewModel
             var stopwatch = new Stopwatch();
-            _logger.LogInformation("Начало обработки запроса Index...");
+            _logger.LogInformation("РќР°С‡Р°Р»Рѕ РѕР±СЂР°Р±РѕС‚РєРё Р·Р°РїСЂРѕСЃР° Index...");
            
             try
             {
-                                               // 2. Наполняем ее данными
+                                               // 2. РќР°РїРѕР»РЅСЏРµРј РµРµ РґР°РЅРЅС‹РјРё
                 stopwatch.Start();
-                var activeSymbols = await _symbolRepo.GetActiveSymbolsAsync();      // Получаем количество активных символов
+                var activeSymbols = await _symbolRepo.GetActiveSymbolsAsync();      // РџРѕР»СѓС‡Р°РµРј РєРѕР»РёС‡РµСЃС‚РІРѕ Р°РєС‚РёРІРЅС‹С… СЃРёРјРІРѕР»РѕРІ
                 viewModel.TrackedSymbolsCount = activeSymbols.Count();
                 stopwatch.Stop();
-                _logger.LogInformation("-> GetActiveSymbolsAsync выполнен за {Elapsed} мс.", stopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("-> GetActiveSymbolsAsync РІС‹РїРѕР»РЅРµРЅ Р·Р° {Elapsed} РјСЃ.", stopwatch.ElapsedMilliseconds);
 
                 stopwatch.Restart();
-                viewModel.LastTrade = await _tradeRepo.GetLastTradeAsync();         // Получаем последнюю сделку (для любого символа)
+                viewModel.LastTrade = await _tradeRepo.GetLastTradeAsync();         // РџРѕР»СѓС‡Р°РµРј РїРѕСЃР»РµРґРЅСЋСЋ СЃРґРµР»РєСѓ (РґР»СЏ Р»СЋР±РѕРіРѕ СЃРёРјРІРѕР»Р°)
                 stopwatch.Stop();
-                _logger.LogInformation("-> GetLastTradeAsync выполнен за {Elapsed} мс.", stopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("-> GetLastTradeAsync РІС‹РїРѕР»РЅРµРЅ Р·Р° {Elapsed} РјСЃ.", stopwatch.ElapsedMilliseconds);
 
                 stopwatch.Restart();
-                viewModel.HangfireServers = _hangfireApi.Servers()                  // Получаем информацию о серверах Hangfire
+                viewModel.HangfireServers = _hangfireApi.Servers()                  // РџРѕР»СѓС‡Р°РµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ СЃРµСЂРІРµСЂР°С… Hangfire
                     .Select(s => new ServerDto
                     {
                         Name = s.Name,
@@ -56,18 +56,18 @@ namespace BinanceDataCollector.DataManager.Controllers
                     })
                     .ToList();
                 stopwatch.Stop();
-                _logger.LogInformation("-> HangfireApi.Servers выполнен за {Elapsed} мс.", stopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("-> HangfireApi.Servers РІС‹РїРѕР»РЅРµРЅ Р·Р° {Elapsed} РјСЃ.", stopwatch.ElapsedMilliseconds);
 
                 viewModel.SystemStatus = "Online";
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при загрузке данных для главной страницы.");
+                _logger.LogError(ex, "РћС€РёР±РєР° РїСЂРё Р·Р°РіСЂСѓР·РєРµ РґР°РЅРЅС‹С… РґР»СЏ РіР»Р°РІРЅРѕР№ СЃС‚СЂР°РЅРёС†С‹.");
                 viewModel.SystemStatus = $"Error: {ex.Message}";
             }
 
-            _logger.LogInformation("Завершение обработки запроса Index.");
-            return View(viewModel);                                                  // 3. Передаем готовую ViewModel в представление
+            _logger.LogInformation("Р—Р°РІРµСЂС€РµРЅРёРµ РѕР±СЂР°Р±РѕС‚РєРё Р·Р°РїСЂРѕСЃР° Index.");
+            return View(viewModel);                                                  // 3. РџРµСЂРµРґР°РµРј РіРѕС‚РѕРІСѓСЋ ViewModel РІ РїСЂРµРґСЃС‚Р°РІР»РµРЅРёРµ
         }
     }
 }
