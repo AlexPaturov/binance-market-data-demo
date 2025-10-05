@@ -1,25 +1,26 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+	<PropertyGroup>
+		<CodePage>65001</CodePage>
+		<TargetFramework>net8.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
 
-  <ItemGroup>
-    <Compile Remove="Services\**" />
-    <EmbeddedResource Remove="Services\**" />
-    <None Remove="Services\**" />
-  </ItemGroup>
+	<ItemGroup>
+		<Compile Remove="Services\**" />
+		<EmbeddedResource Remove="Services\**" />
+		<None Remove="Services\**" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Binance.Net" Version="11.4.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
-    <PackageReference Include="Skender.Stock.Indicators" Version="2.6.1" />
-  </ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Binance.Net" Version="11.4.0" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
+		<PackageReference Include="Skender.Stock.Indicators" Version="2.6.1" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\BinanceDataCollector.Domain\BinanceDataCollector.Domain.csproj" />
-  </ItemGroup>
+	<ItemGroup>
+		<ProjectReference Include="..\BinanceDataCollector.Domain\BinanceDataCollector.Domain.csproj" />
+	</ItemGroup>
 
 </Project>

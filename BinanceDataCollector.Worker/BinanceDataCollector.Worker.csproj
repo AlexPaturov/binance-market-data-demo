@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
 	<PropertyGroup>
+		<CodePage>65001</CodePage>
 		<TargetFramework>net8.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
@@ -25,7 +26,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Folder Include="Workers\Audits\" />
-	  <Folder Include="Workers\Features\" />
+		<Folder Include="Workers\Audits\" />
+		<Folder Include="Workers\Features\" />
 	</ItemGroup>
 </Project>
