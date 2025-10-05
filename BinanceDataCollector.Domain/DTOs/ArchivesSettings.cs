@@ -5,7 +5,39 @@
 /// </summary>
 public class ArchivesSettings
 {
-    public string TradeArcihvesPath { get; set; } = string.Empty;
-    public string CsvUnpackedPath { get; set; } = string.Empty;
-    public string OhlcvArchivesPath { get; set; } = string.Empty;
+    // ------------------------------------------
+    // на удаление
+    public string TradeArcihvesPath { get; set; } = string.Empty;                   
+    
+    // на удаление
+    public string CsvUnpackedPath { get; set; } = string.Empty;                     
+    
+    // на удаление
+    public string OhlcvArchivesPath { get; set; } = string.Empty;                   
+    // ------------------------------------------
+    
+    /// <summary>
+    /// Имя корневой директории приложения в папке с данными (LocalApplicationData).
+    /// </summary>
+    public string RootDirectoryName { get; set; } = "BinanceDataCollector";
+    
+    /// <summary>
+    /// Относительный путь для скачанных архивов сделок.
+    /// </summary>
+    public string TradeArchivesRelativePath { get; set; } = "Trades/Downloaded";
+    
+    /// <summary>
+    /// Относительный путь для скачанных архивов сделок.
+    /// </summary>
+    public string TradeUnpackedRelativePath { get; set; } = "Trades/Unpacked";
+    
+    /// <summary>
+    /// Относительный путь для скачанных архивов сделок.
+    /// </summary>
+    public string OhlcvArchivesRelativePath { get; set; } = "Ohlcv/Downloaded";
+    
+    /// <summary>
+    /// Относительный путь для скачанных архивов сделок.
+    /// </summary>
+    public string OhlcvUnpackedRelativePath { get; set; } = "Ohlcv/Unpacked";
 }
