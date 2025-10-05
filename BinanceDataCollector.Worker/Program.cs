@@ -1,4 +1,4 @@
-using BinanceDataCollector.Application.Analytics;
+п»їusing BinanceDataCollector.Application.Analytics;
 using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.DTOs;
@@ -25,7 +25,7 @@ public class Program
     {
         var startupStopwatch = Stopwatch.StartNew();
 
-        #region Минимальный "загрузочный" логгер - записать в консоль ошибку, если .Build() упадет.
+        #region РњРёРЅРёРјР°Р»СЊРЅС‹Р№ "Р·Р°РіСЂСѓР·РѕС‡РЅС‹Р№" Р»РѕРіРіРµСЂ - Р·Р°РїРёСЃР°С‚СЊ РІ РєРѕРЅСЃРѕР»СЊ РѕС€РёР±РєСѓ, РµСЃР»Рё .Build() СѓРїР°РґРµС‚.
         var configuration = new ConfigurationBuilder()
            .SetBasePath(Directory.GetCurrentDirectory())
            .AddJsonFile("appsettings.json")
@@ -37,14 +37,14 @@ public class Program
         .WriteTo.Console()
         .CreateBootstrapLogger();
         #endregion
-        Log.Information("Serilog настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+        Log.Information("Serilog РЅР°СЃС‚СЂРѕРµРЅ Р·Р° {Elapsed} РјСЃ.", startupStopwatch.ElapsedMilliseconds);
 
         try
         {
-            Log.Information("Запускаем приложение...");
+            Log.Information("Р—Р°РїСѓСЃРєР°РµРј РїСЂРёР»РѕР¶РµРЅРёРµ...");
 
             var builder = WebApplication.CreateBuilder(args);
-            Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+            Log.Information("WebApplicationBuilder СЃРѕР·РґР°РЅ Р·Р° {Elapsed} РјСЃ.", startupStopwatch.ElapsedMilliseconds);
 
             builder.WebHost.UseUrls("http://*:7001");
             #region Logging preferences
@@ -68,54 +68,54 @@ public class Program
                      builder.Configuration.GetConnectionString("HangfireConnection"));
              }, new PostgreSqlStorageOptions
              {
-                 QueuePollInterval = TimeSpan.FromSeconds(15),                  // Как часто проверять очередь
-                 InvisibilityTimeout = TimeSpan.FromHours(4),                   // Увеличиваем до 4 часов
-                 UseNativeDatabaseTransactions = true,                          // Использовать нативные транзакции
-                 PrepareSchemaIfNecessary = true,                               // Автоматически создавать схему
-                 SchemaName = "hangfire",                                       // Название схемы (опционально)
-                 JobExpirationCheckInterval = TimeSpan.FromHours(1),            // Проверка истекших заданий
-                 CountersAggregateInterval = TimeSpan.FromMinutes(5),           // Агрегация счетчиков
-                 TransactionSynchronisationTimeout = TimeSpan.FromMinutes(5)    // Таймаут синхронизации
+                 QueuePollInterval = TimeSpan.FromSeconds(15),                  // РљР°Рє С‡Р°СЃС‚Рѕ РїСЂРѕРІРµСЂСЏС‚СЊ РѕС‡РµСЂРµРґСЊ
+                 InvisibilityTimeout = TimeSpan.FromHours(4),                   // РЈРІРµР»РёС‡РёРІР°РµРј РґРѕ 4 С‡Р°СЃРѕРІ
+                 UseNativeDatabaseTransactions = true,                          // РСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РЅР°С‚РёРІРЅС‹Рµ С‚СЂР°РЅР·Р°РєС†РёРё
+                 PrepareSchemaIfNecessary = true,                               // РђРІС‚РѕРјР°С‚РёС‡РµСЃРєРё СЃРѕР·РґР°РІР°С‚СЊ СЃС…РµРјСѓ
+                 SchemaName = "hangfire",                                       // РќР°Р·РІР°РЅРёРµ СЃС…РµРјС‹ (РѕРїС†РёРѕРЅР°Р»СЊРЅРѕ)
+                 JobExpirationCheckInterval = TimeSpan.FromHours(1),            // РџСЂРѕРІРµСЂРєР° РёСЃС‚РµРєС€РёС… Р·Р°РґР°РЅРёР№
+                 CountersAggregateInterval = TimeSpan.FromMinutes(5),           // РђРіСЂРµРіР°С†РёСЏ СЃС‡РµС‚С‡РёРєРѕРІ
+                 TransactionSynchronisationTimeout = TimeSpan.FromMinutes(5)    // РўР°Р№РјР°СѓС‚ СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё
              }));
 
 
-            // --- Сервер для быстрых, приоритетных задач ---
+            // --- РЎРµСЂРІРµСЂ РґР»СЏ Р±С‹СЃС‚СЂС‹С…, РїСЂРёРѕСЂРёС‚РµС‚РЅС‹С… Р·Р°РґР°С‡ ---
             builder.Services.AddHangfireServer(options =>
             {
                 options.ServerName = "PriorityServer";
-                options.Queues = new[] { "realtime", "quick_audit"}; // Слушает ТОЛЬКО эти очереди
+                options.Queues = new[] { "realtime", "quick_audit"}; // РЎР»СѓС€Р°РµС‚ РўРћР›Р¬РљРћ СЌС‚Рё РѕС‡РµСЂРµРґРё
                
                 options.WorkerCount = 
                 (Debugger.IsAttached || builder.Environment.IsDevelopment()) 
-                    ? Math.Max(4, Environment.ProcessorCount)  // на деве 8 ядер у маширы
-                    : Math.Max(2, Environment.ProcessorCount);  // на проде 4 ядра
+                    ? Math.Max(4, Environment.ProcessorCount)  // РЅР° РґРµРІРµ 8 СЏРґРµСЂ Сѓ РјР°С€РёСЂС‹
+                    : Math.Max(2, Environment.ProcessorCount);  // РЅР° РїСЂРѕРґРµ 4 СЏРґСЂР°
             });
 
-            // --- Сервер для тяжелых, фоновых задач ---
+            // --- РЎРµСЂРІРµСЂ РґР»СЏ С‚СЏР¶РµР»С‹С…, С„РѕРЅРѕРІС‹С… Р·Р°РґР°С‡ ---
             builder.Services.AddHangfireServer(options =>
             {
                 options.ServerName = "BackgroundServer";
-                options.Queues = new[] { "historical_audit", "archive_import", "default" }; // Слушает ТОЛЬКО эти
+                options.Queues = new[] { "historical_audit", "archive_import", "default" }; // РЎР»СѓС€Р°РµС‚ РўРћР›Р¬РљРћ СЌС‚Рё
                 options.WorkerCount =
                 (Debugger.IsAttached || builder.Environment.IsDevelopment()) 
                     ? Environment.ProcessorCount * 4 
-                    : Environment.ProcessorCount * 2; // Выделяем ему ядра процессора
+                    : Environment.ProcessorCount * 2; // Р’С‹РґРµР»СЏРµРј РµРјСѓ СЏРґСЂР° РїСЂРѕС†РµСЃСЃРѕСЂР°
             });
             #endregion
-            Log.Information("Hangfire запущен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+            Log.Information("Hangfire Р·Р°РїСѓС‰РµРЅ Р·Р° {Elapsed} РјСЃ.", startupStopwatch.ElapsedMilliseconds);
 
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
-            #region Регистрация сервисов
+            #region Р РµРіРёСЃС‚СЂР°С†РёСЏ СЃРµСЂРІРёСЃРѕРІ
             builder.Services.AddHttpClient("BinanceArchive", client =>
             {
-                client.Timeout = TimeSpan.FromMinutes(10);                                              // Большие архивы могут качаться долго
+                client.Timeout = TimeSpan.FromMinutes(10);                                              // Р‘РѕР»СЊС€РёРµ Р°СЂС…РёРІС‹ РјРѕРіСѓС‚ РєР°С‡Р°С‚СЊСЃСЏ РґРѕР»РіРѕ
                 client.DefaultRequestHeaders.Add("User-Agent", "BinanceDataCollector/1.0");
             })
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
             {
-                MaxConnectionsPerServer = 10,                                                           // Ограничиваем подключения к Binance
+                MaxConnectionsPerServer = 10,                                                           // РћРіСЂР°РЅРёС‡РёРІР°РµРј РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє Binance
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-                PooledConnectionLifetime = TimeSpan.FromMinutes(15),                                    // Переиспользование соединений
+                PooledConnectionLifetime = TimeSpan.FromMinutes(15),                                    // РџРµСЂРµРёСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ СЃРѕРµРґРёРЅРµРЅРёР№
                 ConnectTimeout = TimeSpan.FromSeconds(30),
                 ResponseDrainTimeout = TimeSpan.FromSeconds(10)
             });
@@ -141,12 +141,12 @@ public class Program
             builder.Services.AddTransient<FeatureCalculatorWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
 
-            builder.Services.AddTransient<ArchiveDownloaderWorker>(); // на отладке загрузки архивов
+            builder.Services.AddTransient<ArchiveDownloaderWorker>(); // РЅР° РѕС‚Р»Р°РґРєРµ Р·Р°РіСЂСѓР·РєРё Р°СЂС…РёРІРѕРІ
             builder.Services.AddSingleton<IStatusNotifier>(sp =>
             {
                 var configuration = sp.GetRequiredService<IConfiguration>();
-                // Асинхронно создаем и ждем, пока экземпляр будет готов.
-                // .GetAwaiter().GetResult() - это способ синхронно дождаться async метода в синхронном коде.
+                // РђСЃРёРЅС…СЂРѕРЅРЅРѕ СЃРѕР·РґР°РµРј Рё Р¶РґРµРј, РїРѕРєР° СЌРєР·РµРјРїР»СЏСЂ Р±СѓРґРµС‚ РіРѕС‚РѕРІ.
+                // .GetAwaiter().GetResult() - СЌС‚Рѕ СЃРїРѕСЃРѕР± СЃРёРЅС…СЂРѕРЅРЅРѕ РґРѕР¶РґР°С‚СЊСЃСЏ async РјРµС‚РѕРґР° РІ СЃРёРЅС…СЂРѕРЅРЅРѕРј РєРѕРґРµ.
                 return RabbitMQStatusNotifier.CreateAsync(configuration).GetAwaiter().GetResult();
             });
 
@@ -155,29 +155,29 @@ public class Program
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
             #endregion
 
-            Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+            Log.Information("Р’СЃРµ СЃРµСЂРІРёСЃС‹ Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°РЅС‹ Р·Р° {Elapsed} РјСЃ.", startupStopwatch.ElapsedMilliseconds);
 
             var app = builder.Build();
-            Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+            Log.Information("РџСЂРёР»РѕР¶РµРЅРёРµ СЃРѕР±СЂР°РЅРѕ (Build) Р·Р° {Elapsed} РјСЃ.", startupStopwatch.ElapsedMilliseconds);
             
-            // --- 5. Настройка веб-пайплайна (Middleware) ---
-            // Включаем Hangfire Dashboard
+            // --- 5. РќР°СЃС‚СЂРѕР№РєР° РІРµР±-РїР°Р№РїР»Р°Р№РЅР° (Middleware) ---
+            // Р’РєР»СЋС‡Р°РµРј Hangfire Dashboard
             app.UseHangfireDashboard("/hangfire", new DashboardOptions
             {
                 Authorization = new[] { new HangfireAuthorizationFilter() }
             });
 
-            // Добавляем простой эндпоинт для проверки, что веб-сервер жив
+            // Р”РѕР±Р°РІР»СЏРµРј РїСЂРѕСЃС‚РѕР№ СЌРЅРґРїРѕРёРЅС‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё, С‡С‚Рѕ РІРµР±-СЃРµСЂРІРµСЂ Р¶РёРІ
             app.MapGet("/", () => "BinanceDataCollector is running.");
-            Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+            Log.Information("Р’РµР±-РїР°Р№РїР»Р°Р№РЅ РЅР°СЃС‚СЂРѕРµРЅ Р·Р° {Elapsed} РјСЃ.", startupStopwatch.ElapsedMilliseconds);
 
-            Log.Information("Запуск хоста (app.Run)...");
+            Log.Information("Р—Р°РїСѓСЃРє С…РѕСЃС‚Р° (app.Run)...");
             startupStopwatch.Stop();
             app.Run();
         }
         catch (Exception ex)
         {
-            Log.Fatal(ex, "Хост завершился с непредвиденной ошибкой");
+            Log.Fatal(ex, "РҐРѕСЃС‚ Р·Р°РІРµСЂС€РёР»СЃСЏ СЃ РЅРµРїСЂРµРґРІРёРґРµРЅРЅРѕР№ РѕС€РёР±РєРѕР№");
             // TODO write to file
         }
         finally
