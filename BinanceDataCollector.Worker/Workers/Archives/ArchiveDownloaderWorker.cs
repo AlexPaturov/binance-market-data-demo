@@ -1,10 +1,7 @@
 ﻿using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
-using BinanceDataCollector.Domain.DTOs;
 using Hangfire;
-using Microsoft.Extensions.Options;
 using Serilog.Context;
-using static Hangfire.Storage.JobStorageFeatures;
 
 namespace BinanceDataCollector.Worker.Workers.Archives;
 
@@ -14,9 +11,6 @@ public class ArchiveDownloaderWorker
 {
     private readonly IArchiveService _archiveService; // Предполагаем, что он уже есть
     private readonly ILogger<ArchiveDownloaderWorker> _logger;
-#pragma warning disable S1450 // Private fields only used as local variables in methods should become local variables
-    private readonly IOptions<ArchivesSettings> _options;
-#pragma warning restore S1450 // Private fields only used as local variables in methods should become local variables
     private readonly IStatusNotifier _notifier;
 
     // Путь, куда будем сохранять архивы. Можно вынести в appsettings.json
@@ -25,13 +19,12 @@ public class ArchiveDownloaderWorker
     public ArchiveDownloaderWorker(
         IArchiveService archiveService, 
         ILogger<ArchiveDownloaderWorker> logger,
-        IOptions<ArchivesSettings> options,
-        IStatusNotifier notifier)
+        IStatusNotifier notifier,
+        IPathProvider pathProvider)
     {
         _archiveService = archiveService;
         _logger = logger;
-        _options = options;
-        _downloadPath = _options.Value.TradeArcihvesPath;
+        _downloadPath = pathProvider.GetTradeArchivesPath(); 
         _notifier = notifier;
     }
 
@@ -41,6 +34,7 @@ public class ArchiveDownloaderWorker
     public async Task DownloadArchiveAsync(Guid requestId, string connectionId, string symbol, DateOnly date)
     {
         var fileName = $"{symbol}-trades-{date:yyyy-MM-dd}.zip";
+        Directory.CreateDirectory(_downloadPath); // создаём директорию
         var filePath = Path.Combine(_downloadPath, fileName);
         FileStream? fileStream = null;
         

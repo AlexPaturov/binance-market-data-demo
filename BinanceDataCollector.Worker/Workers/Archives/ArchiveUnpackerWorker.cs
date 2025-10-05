@@ -1,10 +1,7 @@
-﻿using BinanceDataCollector.Application.Interfaces;
-using BinanceDataCollector.Domain.DTOs;
+﻿using System.IO.Compression;
+using BinanceDataCollector.Application.Archives.Interfaces;
+using BinanceDataCollector.Application.Interfaces;
 using Hangfire;
-using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Options;
-using System.IO.Compression;
-using static Hangfire.Storage.JobStorageFeatures;
 
 namespace BinanceDataCollector.Worker.Workers.Archives;
 
@@ -25,15 +22,15 @@ public class ArchiveUnpackerWorker
 
     public ArchiveUnpackerWorker(
         ILogger<ArchiveUnpackerWorker> logger,
-        IOptions<ArchivesSettings> options,
+        IPathProvider pathProvider,
         IBackgroundJobClient backgroundJobClient,
         IStatusNotifier notifier)
     {
         _logger = logger;
         _backgroundJobClient = backgroundJobClient;
         _notifier = notifier;
-        _downloadPath = options.Value.TradeArcihvesPath;
-        _destinationPath = options.Value.CsvUnpackedPath;
+        _downloadPath = pathProvider.GetTradeArchivesPath();
+        _destinationPath = pathProvider.GetTradeUnpackedPath();
     }
 
     /// <summary>

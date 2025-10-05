@@ -78,7 +78,6 @@ public class Program
                  TransactionSynchronisationTimeout = TimeSpan.FromMinutes(5)    // Таймаут синхронизации
              }));
 
-
             // --- Сервер для быстрых, приоритетных задач ---
             builder.Services.AddHangfireServer(options =>
             {
@@ -120,6 +119,7 @@ public class Program
                 ResponseDrainTimeout = TimeSpan.FromSeconds(10)
             });
 
+            builder.Services.AddSingleton<IPathProvider, PathProvider>(); 
             builder.Services.AddScoped<IBinanceService, BinanceService>();
             builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
             builder.Services.AddScoped<ITradeRepository, TradeRepository>();
@@ -140,7 +140,6 @@ public class Program
             builder.Services.AddTransient<OhlcvAggregatorWorker>();
             builder.Services.AddTransient<FeatureCalculatorWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
-
             builder.Services.AddTransient<ArchiveDownloaderWorker>(); // на отладке загрузки архивов
             builder.Services.AddSingleton<IStatusNotifier>(sp =>
             {

@@ -27,11 +27,11 @@ public class ArchiveService : IArchiveService
     public ArchiveService(
         IHttpClientFactory httpClientFactory,
         ILogger<ArchiveService> logger,
-        IOptions<ArchivesSettings> options)
+        IPathProvider pathProvider)
     {
         _logger = logger;
         _httpClientFactory = httpClientFactory;
-        _archivesPath = options.Value.TradeArcihvesPath; // <-- Инициализируем путь
+        _archivesPath = pathProvider.GetTradeArchivesPath(); // <-- Инициализируем путь
     }
 
     public async IAsyncEnumerable<Trade> DownloadAndParseTradesAsync(string symbol, DateOnly date, CancellationToken cancellationToken)

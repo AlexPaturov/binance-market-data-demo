@@ -1,6 +1,5 @@
-﻿using BinanceDataCollector.Domain.DTOs;
+﻿using BinanceDataCollector.Application.Archives.Interfaces;
 using Hangfire;
-using Microsoft.Extensions.Options;
 
 namespace BinanceDataCollector.Worker.Workers.Archives;
 
@@ -10,10 +9,10 @@ public class ArchiveDeletionWorker
     private readonly ILogger<ArchiveDeletionWorker> _logger;
     private readonly string _archivesPath;
 
-    public ArchiveDeletionWorker(ILogger<ArchiveDeletionWorker> logger, IOptions<ArchivesSettings> options)
+    public ArchiveDeletionWorker(ILogger<ArchiveDeletionWorker> logger, IPathProvider pathProvider)
     {
         _logger = logger;
-        _archivesPath = options.Value.TradeArcihvesPath;
+        _archivesPath = pathProvider.GetTradeArchivesPath();
     }
 
     // Hangfire будет вызывать этот метод
