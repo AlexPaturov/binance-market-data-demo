@@ -1,13 +1,22 @@
 ﻿{
-  "$schema": "http://json.schemastore.org/launchsettings.json",
   "profiles": {
+    "http": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false, 
+      "applicationUrl": "http://localhost:7001",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_UTF8_CONSOLE": "true"
+      }
+    },
     "BinanceDataCollector.Worker": {
       "commandName": "Project",
       "dotnetRunMessages": true,
-        "environmentVariables": {
-          "DOTNET_ENVIRONMENT": "Development"
-        //   "DOTNET_ENVIRONMENT": "Production"
-        }
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_UTF8_CONSOLE": "true"
+      }
     }
   }
 }
