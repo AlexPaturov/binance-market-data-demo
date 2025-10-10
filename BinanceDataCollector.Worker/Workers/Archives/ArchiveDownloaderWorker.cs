@@ -102,7 +102,15 @@ public class ArchiveDownloaderWorker
                 // Очистка: удаляем потенциально недокачанный или пустой файл
                 if (File.Exists(filePath))
                 {
-                    try { File.Delete(filePath); } catch { /* Игнорируем ошибки очистки */ }
+                    try
+                    {
+                        await fileStream.DisposeAsync();
+                        File.Delete(filePath);
+                    }
+                    catch (Exception cleanupEx)
+                    {
+                        _logger.LogWarning(cleanupEx, "Не удалось удалить артефактный файл {FileName}", fileName);
+                    }
                 }
 
                 throw;
