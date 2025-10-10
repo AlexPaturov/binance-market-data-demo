@@ -29,12 +29,12 @@ public class HangfireJobsService : IHostedService
         _recurringJobManager.RemoveIfExists("update-symbols-history");
 
         // Вместо статического RecurringJob используем IRecurringJobManager из DI
-        //_recurringJobManager.AddOrUpdate<SymbolUpdateWorker>(
-        //    "update-symbols",
-        //    worker => worker.ScanMarketAndUpdateSymbolsAsync(),
-        //    Cron.Daily(), // Запускать раз в день
-        //    new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        //);
+        _recurringJobManager.AddOrUpdate<SymbolUpdateWorker>(
+            "update-symbols",
+            worker => worker.ScanMarketAndUpdateSymbolsAsync(),
+            Cron.Daily(), // Запускать раз в день
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
+        );
 
         // "historical-audit": Запускать ОДИН РАЗ В ДЕНЬ в 00:00 по киевскому времени (примерно 22:00 UTC)
         //_recurringJobManager.AddOrUpdate<HistoricalAuditorWorker>(
