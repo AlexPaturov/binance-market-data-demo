@@ -1,62 +1,82 @@
 @model ArchiveManagementViewModel
 @{
     ViewData["Title"] = "Archive Management";
-    //var symbols = ViewData["Symbols"] as List<string> ?? new List<string>(); // Получаем список символов из ViewData (заполнили в контроллере)
     var symbols = Model.ActiveSymbols;
 }
-
-<h1>@ViewData["Title"]</h1>
-<p>Здесь вы можете скачивать, проверять и управлять историческими архивами сделок.</p>
-
-<hr />
 
 <div class="row">
     <!-- Левая колонка: Форма для скачивания -->
     <div class="col-md-4">
-        <h4>1. Скачать новые архивы</h4>
         <form id="download-form">
             @Html.AntiForgeryToken()
-            <div class="mb-3">
-                <label for="symbol-select" class="form-label">Символ</label>
-                <select id="symbol-select" name="symbol" class="form-select" required>
-                    <option value="">-- Выберите символ --</option>
-                    @foreach (var symbol in symbols)
-                    {
-                        <option value="@symbol">@symbol</option>
-                    }
-                </select>
+            <div class="card shadow-sm border-0 mb-1" style="border-radius: 12px; overflow: hidden;">
+                <div class="list-group list-group-flush">
+                    <div class="list-group-item border-0 p-3">
+                        <div class="d-flex align-items-end gap-3 flex-wrap flex-md-nowrap">
+                            <div class="flex-fill" style="min-width: 200px;">
+                                <label for="symbol-select" class="form-label fw-semibold mb-2 small text-secondary">Символ</label>
+                                <select id="symbol-select" name="symbol" class="form-control form-control-sm border-0 bg-light" style="border-radius: 8px; padding: 8px 12px;" required>
+                                    <option value="">-- Выберите символ --</option>
+                                    @foreach (var symbol in symbols)
+                                    {
+                                        <option value="@symbol">@symbol</option>
+                                    }
+                                </select>
+                            </div>
+                
+                            <div class="form-check d-flex align-items-center mb-0 flex-shrink-0">
+                                <input class="form-check-input me-2" type="checkbox" id="download-all-checkbox" style="border-radius: 6px;">
+                                <label class="form-check-label mb-0 small" for="download-all-checkbox" style="white-space: nowrap;">
+                                    <strong>Скачать для всех активных символов (@Model.ActiveSymbols.Count)</strong>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="form-check mb-3">
-                <input class="form-check-input" type="checkbox" id="download-all-checkbox">
-                <label class="form-check-label" for="download-all-checkbox">
-                    <strong>Скачать для всех активных символов (@Model.ActiveSymbols.Count)</strong>
-                </label>
+            
+            <div class="card shadow-sm border-0 mb-1" style="border-radius: 12px; overflow: hidden;">
+                <div class="list-group list-group-flush">
+                    <div class="list-group-item border-0 p-3">
+                        <div class="d-flex gap-3 flex-wrap flex-md-nowrap">
+                            <div class="flex-fill">
+                                <label for="start-date-input" class="form-label fw-semibold mb-2 small text-secondary">Начальная дата</label>
+                                <input type="date" id="start-date-input" name="start-date-input" class="form-control form-control-sm border-0 bg-light" style="border-radius: 8px; padding: 8px 12px;" required />
+                            </div>
+                            <div class="flex-fill">
+                                <label for="end-date-input" class="form-label fw-semibold mb-2 small text-secondary">Конечная дата</label>
+                                <input type="date" id="end-date-input" name="end-date-input" class="form-control form-control-sm border-0 bg-light" style="border-radius: 8px; padding: 8px 12px;" required />
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="mb-3">
-                <label for="start-date-input" class="form-label">Начальная дата</label>
-                <input type="date" id="start-date-input" name="start-date-input" class="form-control" required />
+            
+            <div class="card shadow-sm border-0 mb-1" style="border-radius: 12px; overflow: hidden;">
+                <div class="list-group list-group-flush">
+                    <div class="list-group-item border-0 p-3">
+                        <button type="button" id="btn-download" class="btn w-100 border-0 fw-semibold text-white" style="border-radius: 10px; padding: 12px; background-color: #007AFF;">
+                            <i class="bi bi-download me-2"></i>Начать скачивание новых архивов
+                        </button>
+                    </div>
+                </div>
             </div>
-            <div class="mb-3">
-                <label for="end-date-input" class="form-label">Конечная дата</label>
-                <input type="date" id="end-date-input" name="end-date-input" class="form-control" required />
-            </div>
-            <button type="button" id="btn-download" class="btn btn-primary">
-                <i class="bi bi-download"></i> Начать скачивание
-            </button>
         </form>
     </div>
 
     <!-- Правая колонка: Лог в реальном времени -->
     <div class="col-md-8">
-        <h4>Лог операций</h4>
-        <div id="logContainer" style="height: 300px; overflow-y: scroll; background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 10px; font-family: monospace;">
-            <!-- Сюда JavaScript будет добавлять сообщения -->
+        <label class="form-label fw-semibold mb-2 small text-secondary">Лог операций</label>
+        <div class="card shadow-sm border-0" style="border-radius: 12px; overflow: hidden;">
+            <div id="logContainer" style="height: 300px; overflow-y: auto; background-color: #f5f5f7; padding: 12px; font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 13px; line-height: 1.5; color: #1d1d1f;">
+                <!-- Сюда JavaScript будет добавлять сообщения -->
+            </div>
         </div>
     </div>
 </div>
 
 <!-- Раздел для просмотра уже скачанных файлов (пока пустой) -->
-<div class="row mt-5">
+<div class="row mt-1">
     <div class="col-12">
         <h4>2. Скачанные архивы</h4>
 
