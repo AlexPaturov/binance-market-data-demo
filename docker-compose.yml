@@ -7,11 +7,24 @@ services:
       - POSTGRES_USER=bindatacoll
       - POSTGRES_PASSWORD=dt_hfgd_yyyd
       - POSTGRES_DB=market_analytics
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres-config/custom.conf:/etc/postgresql/postgresql.conf # <-- конфигурация параметров работы postgresql
+    ports:
+      - "5433:5432"
+  pgbouncer:
+    image: pgbouncer/pgbouncer
+    container_name: binance_pgbouncer
+    restart: always
+    depends_on:
+      - db # Запускаться только после базы
+    ports:
+      - "6432:5432" # А вот он ВЫСТАВЛЯЕТ порт 5432 наружу
+    volumes:
+      - ./pgbouncer-config/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini
+      - ./pgbouncer-config/userlist.txt:/etc/pgbouncer/userlist.txt
+    #command: pgbouncer /etc/pgbouncer/pgbouncer.ini
+    environment:
+      - DB_HOST=db
   seq:
     image: datalust/seq:latest # Официальный образ Seq
     container_name: binance_seq

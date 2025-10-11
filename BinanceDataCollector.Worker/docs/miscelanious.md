@@ -99,7 +99,20 @@ rabbitmqctl add_user myuser mypassword
 rabbitmqctl set_user_tags myuser administrator
 rabbitmqctl set_permissions -p / myuser ".*" ".*" ".*"
 
-
-
-
 ## ---------------- RabbitMQ окончание -------------------------------------------------------------------------------------------------------------------
+
+## Посмотреть кто держит процесс ОС
+sudo lsof -i :5432
+
+sudo chown -R $USER:$USER ~/etc/pgbouncer/
+- права на папку для текущего пользователя
+
+-- delete the folder
+sudo rm -rf /etc/pgbouncer
+
+
+### Docker commands
+1. docker ps -a   -- to show which containers was run
+2. 
+
+
