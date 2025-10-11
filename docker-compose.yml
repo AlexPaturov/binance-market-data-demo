@@ -19,12 +19,15 @@ services:
       - db # Запускаться только после базы
     ports:
       - "6432:5432" # А вот он ВЫСТАВЛЯЕТ порт 5432 наружу
-    volumes:
-      - ./pgbouncer-config/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini
-      - ./pgbouncer-config/userlist.txt:/etc/pgbouncer/userlist.txt
-    #command: pgbouncer /etc/pgbouncer/pgbouncer.ini
     environment:
-      - DB_HOST=db
+      - DATABASES_HOST=db
+      - DATABASES_PORT=5432
+      - DATABASES_USER=bindatacoll
+      - DATABASES_PASS=dt_hfgd_yyyd # Твой пароль
+      - DATABASES_DB=market_analytics,market_analytics_jobs
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=1000
+      - DEFAULT_POOL_SIZE=100
   seq:
     image: datalust/seq:latest # Официальный образ Seq
     container_name: binance_seq

@@ -38,6 +38,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		Dockerfile = Dockerfile
 		docker-compose.override.yml = docker-compose.override.yml
 		docker-compose.prod.yml = docker-compose.prod.yml
+		pgbouncer.ini = pgbouncer.ini
+		userlist.txt = userlist.txt
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Worker.Tests", "BinanceDataCollector.Worker.Tests\BinanceDataCollector.Worker.Tests.csproj", "{5ECA3E1D-4FC6-4156-8DFA-3C152F8DD2D6}"
@@ -50,12 +52,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "sql", "sql", "{7091B7D6-BB6
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.DataManager", "BinanceDataCollector.DataManager\BinanceDataCollector.DataManager.csproj", "{3F6FB4C7-3181-47D0-B8CD-0F21C2697A52}"
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "pgbouncer-config", "pgbouncer-config", "{7DCA9E23-AF30-4DE4-BB37-2D5F1CC117F8}"
-	ProjectSection(SolutionItems) = preProject
-		postgres-config\custom.conf\pgbouncer.ini = postgres-config\custom.conf\pgbouncer.ini
-		postgres-config\custom.conf\userlist.txt = postgres-config\custom.conf\userlist.txt
-	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -124,7 +120,6 @@ Global
 		{5ECA3E1D-4FC6-4156-8DFA-3C152F8DD2D6} = {64BE44B7-373D-4026-8E3B-17AF9CA5828B}
 		{7091B7D6-BB6B-495E-98D5-C7E656785C9F} = {0A6BF69E-117B-479F-9EC1-235F09AA1527}
 		{3F6FB4C7-3181-47D0-B8CD-0F21C2697A52} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
-		{7DCA9E23-AF30-4DE4-BB37-2D5F1CC117F8} = {8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {5BE9D6D3-502D-41E9-BA00-ADFBA653AF71}
