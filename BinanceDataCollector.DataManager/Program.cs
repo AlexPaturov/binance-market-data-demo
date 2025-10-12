@@ -47,7 +47,6 @@ public class Program
             .Enrich.FromLogContext());
 
         #region Настройка Hangfire
-
         builder.Services.AddHangfire(config => config
             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
             .UseSimpleAssemblyNameTypeSerializer()
@@ -58,7 +57,6 @@ public class Program
                     builder.Configuration.GetConnectionString("HangfireConnection"));
             }));
         builder.Services.AddHangfireServer();
-
         #endregion
 
         builder.Services.AddControllersWithViews();
