@@ -42,7 +42,6 @@ public class Program
         try
         {
             Log.Information("Запускаем приложение...");
-
             var builder = WebApplication.CreateBuilder(args);
             Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
@@ -120,6 +119,13 @@ public class Program
             });
 
             builder.Services.AddSingleton<IPathProvider, PathProvider>(); 
+            builder.Services.AddSingleton<IStatusNotifier>(sp =>
+            {
+                var configuration = sp.GetRequiredService<IConfiguration>();
+                // Асинхронно создаем и ждем, пока экземпляр будет готов.
+                // .GetAwaiter().GetResult() - это способ синхронно дождаться async метода в синхронном коде.
+                return RabbitMQStatusNotifier.CreateAsync(configuration).GetAwaiter().GetResult();
+            });
             builder.Services.AddScoped<IBinanceService, BinanceService>();
             builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
             builder.Services.AddScoped<ITradeRepository, TradeRepository>();
@@ -141,15 +147,6 @@ public class Program
             builder.Services.AddTransient<FeatureCalculatorWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
             builder.Services.AddTransient<ArchiveDownloaderWorker>(); // на отладке загрузки архивов
-            builder.Services.AddSingleton<IStatusNotifier>(sp =>
-            {
-                var configuration = sp.GetRequiredService<IConfiguration>();
-                // Асинхронно создаем и ждем, пока экземпляр будет готов.
-                // .GetAwaiter().GetResult() - это способ синхронно дождаться async метода в синхронном коде.
-                return RabbitMQStatusNotifier.CreateAsync(configuration).GetAwaiter().GetResult();
-            });
-
-            // IHostedService
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
             #endregion
