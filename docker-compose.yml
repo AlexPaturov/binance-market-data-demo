@@ -7,27 +7,36 @@ services:
       - POSTGRES_USER=bindatacoll
       - POSTGRES_PASSWORD=dt_hfgd_yyyd
       - POSTGRES_DB=market_analytics
+      - POSTGRES_INITDB_ARGS=--auth-host=md5
+      - POSTGRES_HOST_AUTH_METHOD=md5 
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     ports:
       - "5433:5432"
+    command:
+      - "postgres"
+      - "-c"
+      - "password_encryption=md5"
   pgbouncer:
-    image: pgbouncer/pgbouncer
+    image: edoburu/pgbouncer
     container_name: binance_pgbouncer
     restart: always
     depends_on:
-      - db # Запускаться только после базы
+      - db
     ports:
-      - "6432:5432" # А вот он ВЫСТАВЛЯЕТ порт 5432 наружу
+      - "6432:5432"
     environment:
-      - DATABASES_HOST=db
-      - DATABASES_PORT=5432
-      - DATABASES_USER=bindatacoll
-      - DATABASES_PASS=dt_hfgd_yyyd # Твой пароль
-      - DATABASES_DB=market_analytics,market_analytics_jobs
+      - DB_USER=bindatacoll
+      - DB_PASSWORD=dt_hfgd_yyyd
+      - DB_HOST=db
+      - DB_PORT=5432
       - POOL_MODE=transaction
       - MAX_CLIENT_CONN=1000
       - DEFAULT_POOL_SIZE=100
+      - MIN_POOL_SIZE=10
+      - RESERVE_POOL_SIZE=10
+      - AUTH_TYPE=md5
   seq:
     image: datalust/seq:latest # Официальный образ Seq
     container_name: binance_seq
