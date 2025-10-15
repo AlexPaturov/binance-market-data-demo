@@ -82,6 +82,7 @@ public class Program
         builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
         builder.Services.AddScoped<IArchiveService, ArchiveService>();
         builder.Services.AddHostedService<RabbitMQListenerService>();
+        builder.Services.AddScoped<IDatabaseMonitoringService, DatabaseMonitoringService>();
         Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
         var app = builder.Build();

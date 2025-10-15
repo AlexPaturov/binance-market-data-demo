@@ -1,4 +1,5 @@
-﻿using BinanceDataCollector.Domain.Entities;
+﻿using BinanceDataCollector.Application.ViewModels;
+using BinanceDataCollector.Domain.Entities;
 
 namespace BinanceDataCollector.DataManager.Models;
 
@@ -23,6 +24,16 @@ public class HomeViewModel
     /// Информация о серверах Hangfire (чтобы видеть, что они работают).
     /// </summary>
     public List<ServerDto> HangfireServers { get; set; } = new();
+
+    /// <summary>
+    /// Содержит полную информацию о состоянии основной базы данных.
+    /// </summary>
+    public DatabaseDetailsViewModel MainDbDetails { get; set; }
+
+    /// <summary>
+    /// Содержит полную информацию о состоянии базы данных Hangfire.
+    /// </summary>
+    public DatabaseDetailsViewModel HangfireDbDetails { get; set; }
 }
 
 // Вспомогательный класс для отображения данных о серверах Hangfire
