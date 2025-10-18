@@ -35,8 +35,10 @@
     <div class="col-md-8">
         <h4>2. Содержимое архива: @(Model.SelectedArchiveName ?? "не выбран")</h4>
 
-        @if (Model.TradesInArchive.Any())
+        @if (Model.InspectedContent?.Trades.Any() == true)
         {
+            var content = Model.InspectedContent; // для удобства
+            
             <div class="form-check mb-2">
                 <input class="form-check-input" type="checkbox" id="validate-dates-checkbox">
                 <label class="form-check-label" for="validate-dates-checkbox">
@@ -47,25 +49,51 @@
             <div class="table-container-scrollable" style="height: 550px;">
                 <table id="trades-table" class="table table-sm table-bordered">
                     <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Цена</th>
-                            <th>Кол-во</th>
-                            <th>Время сделки (UTC)</th>
-                        </tr>
+                    <tr>
+                        <th>ID</th>
+                        <th>Цена</th>
+                        <th>Кол-во</th>
+                        <th>Время сделки (UTC)</th>
+                    </tr>
                     </thead>
                     <tbody>
-                        @foreach (var trade in Model.TradesInArchive)
-                        {
-                            <tr data-tradetime="@trade.TradeTime">
-                                <td>@trade.TradeId</td>
-                                <td>@trade.Price</td>
-                                <td>@trade.Quantity</td>
-                                <td>@DateTimeOffset.FromUnixTimeMilliseconds(trade.TradeTime).ToString("yyyy-MM-dd HH:mm:ss.fff")</td>
-                            </tr>
-                        }
+                    @foreach (var trade in content.Trades)
+                    {
+                        <tr data-tradetime="@trade.TradeTime">
+                            <td>@trade.TradeId</td>
+                            <td>@trade.Price</td>
+                            <td>@trade.Quantity</td>
+                            <td>@DateTimeOffset.FromUnixTimeMilliseconds(trade.TradeTime).ToString("yyyy-MM-dd HH:mm:ss.fff")</td>
+                        </tr>
+                    }
                     </tbody>
                 </table>
+            </div>
+            
+            <!-- БЛОК ПАГИНАЦИИ -->
+            <div class="d-flex justify-content-between align-items-center mt-2">
+                <small class="text-muted">
+                    Showing @(((content.PageNumber - 1) * content.PageSize) + 1)
+                    to @(Math.Min(content.PageNumber * content.PageSize, content.TotalCount))
+                    of @content.TotalCount entries
+                </small>
+
+                <nav>
+                    <ul class="pagination pagination-sm">
+                        <!-- Кнопка "Назад" -->
+                        <li class="page-item @(content.PageNumber == 1 ? "disabled" : "")">
+                            <a class="page-link" href="@Url.Action("Inspect", new { fileName = Model.SelectedArchiveName, p = content.PageNumber - 1 })">&laquo;</a>
+                        </li>
+
+                        <!-- Номера страниц (упрощенно) -->
+                        <li class="page-item active"><a class="page-link" href="#">@content.PageNumber</a></li>
+
+                        <!-- Кнопка "Вперед" -->
+                        <li class="page-item @(content.PageNumber >= content.TotalPages ? "disabled" : "")">
+                            <a class="page-link" href="@Url.Action("Inspect", new { fileName = Model.SelectedArchiveName, p = content.PageNumber + 1 })">&raquo;</a>
+                        </li>
+                    </ul>
+                </nav>
             </div>
         }
         else if (Model.SelectedArchiveName != null)

@@ -11,6 +11,7 @@ using Hangfire.PostgreSql;
 using Serilog;
 using System.Diagnostics;
 using System.Net;
+using BinanceDataCollector.DataManager.Middleware;
 
 namespace BinanceDataCollector.DataManager;
 
@@ -87,7 +88,7 @@ public class Program
 
         var app = builder.Build();
         Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-
+        app.UseMiddleware<MemoryUsageLoggingMiddleware>();
         if (!app.Environment.IsDevelopment())
         {
             app.UseExceptionHandler("/Home/Error");

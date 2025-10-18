@@ -12,7 +12,7 @@ public class ArchiveInspectorViewModel
     public string? SelectedArchiveName { get; set; }
 
     // Содержимое выбранного архива для нижней таблицы
-    public List<Trade> TradesInArchive { get; set; } = new();
+    public InspectArchiveContentResult? InspectedContent { get; set; }
 
     public DateOnly ExpectedDate { get; set; }
 }

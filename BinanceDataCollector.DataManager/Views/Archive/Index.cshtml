@@ -6,6 +6,7 @@
 
 <div class="row">
     <!-- Левая колонка: Форма для скачивания -->
+    <h4>1. Выберите архив для анализа</h4>
     <div class="col-md-4">
         <form id="download-form">
             @Html.AntiForgeryToken()
@@ -89,7 +90,6 @@
                     <button type="button" id="btn-process" class="btn btn-primary">Проверить и распаковать</button>
                     <button type="button" id="btn-delete" class="btn btn-danger">Удалить выбранные</button>
                 </div>
-
 
                 <div class="table-container-scrollable" id="archiveListContainer">
 

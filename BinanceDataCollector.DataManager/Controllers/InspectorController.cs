@@ -8,6 +8,7 @@ namespace BinanceDataCollector.DataManager.Controllers;
 public class InspectorController : Controller
 {
     private readonly IArchiveService _archiveService;
+    private const int PageSize = 100; // Определяем размер страницы
 
     public InspectorController(IArchiveService archiveService)
     {
@@ -25,7 +26,7 @@ public class InspectorController : Controller
     }
 
     // GET: /Inspector/Inspect?fileName=...
-    public async Task<IActionResult> Inspect(string fileName)
+    public async Task<IActionResult> Inspect(string fileName, int p = 1)
     {
         var (symbol, date) = ArchiveFileNameParser.Parse(fileName);
 
@@ -33,7 +34,7 @@ public class InspectorController : Controller
         {
             ArchivedFiles = await _archiveService.GetArchivedFilesAsync(),
             SelectedArchiveName = fileName,
-            TradesInArchive = await _archiveService.InspectArchiveContentAsync(fileName),
+            InspectedContent = await _archiveService.InspectArchiveContentAsync(fileName, p, PageSize),
             ExpectedDate = date
         };
         return View("Index", model); // Переиспользуем тот же View

@@ -22,6 +22,7 @@ public class ArchiveService : IArchiveService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ArchiveService> _logger;
+    private readonly IPathProvider _pathProvider;
     private readonly string _archivesPath; 
 
     public ArchiveService(
@@ -32,6 +33,7 @@ public class ArchiveService : IArchiveService
         _logger = logger;
         _httpClientFactory = httpClientFactory;
         _archivesPath = pathProvider.GetTradeArchivesPath(); // <-- Инициализируем путь
+        _pathProvider =  pathProvider;
     }
 
     public async IAsyncEnumerable<Trade> DownloadAndParseTradesAsync(string symbol, DateOnly date, CancellationToken cancellationToken)
@@ -175,30 +177,43 @@ public class ArchiveService : IArchiveService
         }
     }
 
-    public async Task<List<Trade>> InspectArchiveContentAsync(string zipFileName)
+    public async Task<InspectArchiveContentResult> InspectArchiveContentAsync(string zipFileName, int pageNumber, int pageSize)
     {
-        var filePath = Path.Combine(_archivesPath, zipFileName);
-        if (!File.Exists(filePath))
+        var result = new InspectArchiveContentResult
         {
-            _logger.LogWarning("Архив {FileName} не найден для инспекции.", zipFileName);
-            return new List<Trade>();
-        }
+            PageNumber = pageNumber,
+            PageSize = pageSize
+        };
 
-        var trades = new List<Trade>();
+        var filePath = Path.Combine(_pathProvider.GetTradeArchivesPath(), zipFileName) ; // Предполагаем, что PathProvider умеет строить путь
+        if (!File.Exists(filePath)) return result;
+
         var (symbol, date) = ArchiveFileNameParser.Parse(zipFileName);
+    
+        var tradesOnPage = new List<Trade>();
+        int currentIndex = 0;
+        int startIndex = (pageNumber - 1) * pageSize;
+        int endIndex = startIndex + pageSize;
 
         await using var zipStream = File.OpenRead(filePath);
         using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
         var entry = archive.Entries.FirstOrDefault();
-
-        if (entry == null) return trades;
+        if (entry == null) return result;
 
         await using var entryStream = entry.Open();
         await foreach (var trade in ParseTradesFromCsvStreamAsync(entryStream, symbol, CancellationToken.None))
         {
-            trades.Add(trade);
+            // Сохраняем в список только те записи, которые попадают на нашу страницу
+            if (currentIndex >= startIndex && currentIndex < endIndex)
+            {
+                tradesOnPage.Add(trade);
+            }
+            currentIndex++;
         }
 
-        return trades;
+        result.Trades = tradesOnPage;
+        result.TotalCount = currentIndex;
+    
+        return result;
     }
 }

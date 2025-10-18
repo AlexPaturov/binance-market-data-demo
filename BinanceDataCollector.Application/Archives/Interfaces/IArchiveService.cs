@@ -40,7 +40,9 @@ public interface IArchiveService
     /// <summary>
     /// Распаковывает локальный ZIP-архив в памяти и возвращает его содержимое.
     /// </summary>
-    /// <param name="zipFileName">Имя файла в папке архивов.</param>
+    /// <param name="zipFileName"></param>
+    /// <param name="pageNumber"></param>
+    /// <param name="pageSize"></param>
     /// <returns>Список объектов Trade.</returns>
-    Task<List<Trade>> InspectArchiveContentAsync(string zipFileName);
+    Task<InspectArchiveContentResult> InspectArchiveContentAsync(string zipFileName, int pageNumber, int pageSize);
 }

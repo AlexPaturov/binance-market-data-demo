@@ -111,8 +111,57 @@ sudo chown -R $USER:$USER ~/etc/pgbouncer/
 sudo rm -rf /etc/pgbouncer
 
 
-### Docker commands
+### ------------------ Docker commands
 1. docker ps -a   -- to show which containers was run
-2. 
+2. docker logs binance_pgbouncer -- Проверить логи
+3. docker logs binance_postgres -- Проверить логи
+
+# -------------------- Найти PID Worker
+pidof BinanceDataCollector.DataManager
+
+# установить
+dotnet tool install -g dotnet-gcdump
+
+# Сделать первый снимок
+dotnet-gcdump collect -p 384732 -o dumpDM_1.gcdump
+dotnet-dump collect -p 384732 -o worker-dump.dmp
+
+# Подождать 30-60 секунд (пока память растет)
+
+# Сделать второй снимок
+dotnet-gcdump collect -p <PID> -o snapshot2.gcdump
+
+# Открыть дамп для анализа
+dotnet-dump analyze worker-dump.dmp
+
+dumpheap -type System.Byte[]
+
+# 3. Найти КТО ДЕРЖИТ ссылку (ЭТО ПОКАЖЕТ МЕТОД!)
+gcroot <адрес_объекта>
+gcroot  7f36b8f2d7c8
+
+gcroot <АДРЕС>
+
+# 2. Открыть в heapview
+dotnet-heapview dumpDM_1.gcdump
+
+# ----------------------------- firewall begin ---------------------------------------------
+# Для PgBouncer
+sudo ufw allow 6432/tcp
+
+# Для прямого доступа к PostgreSQL (наш "черный ход")
+sudo ufw allow 5433/tcp
+
+# Для RabbitMQ (клиентский порт)
+sudo ufw allow 5672/tcp
+
+# Для админки RabbitMQ
+sudo ufw allow 15672/tcp
+
+# Для админки Seq (уже есть, но повторить не вредно)
+sudo ufw allow 5341/tcp
+# ----------------------------- firewall end -----------------------------------------------
+
+
 
 
