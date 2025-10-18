@@ -44,7 +44,7 @@ services:
     environment:
       - ACCEPT_EULA=Y # Обязательно для принятия лицензионного соглашения
       - SEQ_FIRSTRUN_ADMIN_USERNAME=lex
-      - SEQ_FIRSTRUN_ADMINPASSWORD=seq_lex132&
+      - SEQ_FIRSTRUN_ADMINPASSWORD=lex
     ports:
       - "5341:80"     # Веб-интерфейс будет доступен на порту 5341
       - "5342:5341"   # Порт для приема логов (опционально, если нужно снаружи)
