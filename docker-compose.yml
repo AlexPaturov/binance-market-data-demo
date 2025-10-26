@@ -18,6 +18,11 @@ services:
       - "postgres"
       - "-c"
       - "password_encryption=md5"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U bindatacoll -d market_analytics" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
   pgbouncer:
     image: edoburu/pgbouncer
     container_name: binance_pgbouncer
@@ -43,7 +48,7 @@ services:
     restart: always
     environment:
       - ACCEPT_EULA=Y # Обязательно для принятия лицензионного соглашения
-      - SEQ_FIRSTRUN_ADMIN_USERNAME=lex
+      - SEQ_FIRSTRUN_ADMINUSERNAME=lex
       - SEQ_FIRSTRUN_ADMINPASSWORD=lex
     ports:
       - "5341:80"     # Веб-интерфейс будет доступен на порту 5341
