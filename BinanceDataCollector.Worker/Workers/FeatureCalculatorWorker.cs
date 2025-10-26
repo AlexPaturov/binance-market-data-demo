@@ -13,16 +13,27 @@ namespace BinanceDataCollector.Worker.Workers;
 public class FeatureCalculatorWorker
 {
     private readonly ILogger<FeatureCalculatorWorker> _logger;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly IOhlcvRepository  _ohlcvRepository;
+    private readonly IFeatureRepository  _featureRepository;
+    private readonly IIndicatorService  _indicatorService;
+    private readonly IAnalysisRepository  _analysisRepository;
 
     // Конфигурация воркера
     private const int BatchSize = 100;      // Сколько свечей обрабатывать за один цикл
     private const int WarmupPeriod = 2016000; // 200 недель - максимальный период для наших MA
 
-    public FeatureCalculatorWorker(ILogger<FeatureCalculatorWorker> logger, IServiceProvider serviceProvider)
+    public FeatureCalculatorWorker(
+        ILogger<FeatureCalculatorWorker> logger, 
+        IOhlcvRepository ohlcvRepository,
+        IFeatureRepository  featureRepository, 
+        IIndicatorService  indicatorService, 
+        IAnalysisRepository  analysisRepository)
     {
         _logger = logger;
-        _serviceProvider = serviceProvider;
+        _ohlcvRepository = ohlcvRepository;
+        _featureRepository = featureRepository;
+        _indicatorService = indicatorService;
+        _analysisRepository = analysisRepository;
     }
 
     [Queue("default")] // Тоже задача среднего приоритета
@@ -33,16 +44,8 @@ public class FeatureCalculatorWorker
         {
             try
             {
-                _logger.LogInformation("--- Начинаем плановый расчет признаков ---");
-                using var scope = _serviceProvider.CreateScope();
-
-                var ohlcvRepo = scope.ServiceProvider.GetRequiredService<IOhlcvRepository>();
-                var featureRepo = scope.ServiceProvider.GetRequiredService<IFeatureRepository>();
-                var indicatorService = scope.ServiceProvider.GetRequiredService<IIndicatorService>();
-                var analysisRepo = scope.ServiceProvider.GetRequiredService<IAnalysisRepository>();
-
                 // 1. "Резервируем" и получаем новую порцию работы (свечи со статусом 'new')
-                var newKlinesToProcess = (await ohlcvRepo.ClaimNewKlinesForProcessingAsync(BatchSize)).ToList();
+                var newKlinesToProcess = (await _ohlcvRepository.ClaimNewKlinesForProcessingAsync(BatchSize)).ToList();
 
                 if (!newKlinesToProcess.Any())
                 {
@@ -63,16 +66,16 @@ public class FeatureCalculatorWorker
                     {
                         // 2. Подгружаем "хвост" истории для "прогрева" индикаторов
                         var firstNewTime = newKlinesForSymbol.Min(k => k.OpenTime);
-                        var historyKlines = await ohlcvRepo.GetWarmupKlinesAsync(symbol, firstNewTime, WarmupPeriod);
+                        var historyKlines = await _ohlcvRepository.GetWarmupKlinesAsync(symbol, firstNewTime, WarmupPeriod);
                         var allKlines = historyKlines.Concat(newKlinesForSymbol).OrderBy(k => k.OpenTime);
 
                         // 3. Рассчитываем индикаторы на основе свечей
-                        var features = indicatorService.CalculateAll(symbol, allKlines).ToList();
+                        var features = _indicatorService.CalculateAll(symbol, allKlines).ToList();
 
                         // 4. Обогащаем данные индикатором CVD, который считается по тикам
                         var cvdStartTime = DateTimeOffset.FromUnixTimeMilliseconds(firstNewTime).DateTime;
                         var cvdEndTime = DateTimeOffset.FromUnixTimeMilliseconds(newKlinesForSymbol.Max(k => k.OpenTime)).DateTime.AddMinutes(1);
-                        var cvdData = (await analysisRepo.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime)).ToList();
+                        var cvdData = (await _analysisRepository.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime)).ToList();
 
                         foreach (var feature in features)
                         {
@@ -84,7 +87,7 @@ public class FeatureCalculatorWorker
                         var featuresToSave = features.Where(f => f.OpenTime >= firstNewTime).ToList();
                         if (featuresToSave.Any())
                         {
-                            await featureRepo.UpsertFeaturesAsync(featuresToSave);
+                            await _featureRepository.UpsertFeaturesAsync(featuresToSave);
                         }
                     }
                     catch (Exception ex)
@@ -96,7 +99,7 @@ public class FeatureCalculatorWorker
 
                 // 6. Помечаем нашу порцию работы как полностью выполненную
                 var processedTimes = newKlinesToProcess.Select(k => k.OpenTime).Distinct();
-                await ohlcvRepo.MarkKlinesAsProcessedAsync(processedTimes);
+                await _ohlcvRepository.MarkKlinesAsProcessedAsync(processedTimes);
 
                 _logger.LogInformation("Успешно обработано {Count} свечей.", newKlinesToProcess.Count);
             }
@@ -111,15 +114,9 @@ public class FeatureCalculatorWorker
     public async Task DoWorkAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("--- Начинаем плановый расчет признаков ---");
-        using var scope = _serviceProvider.CreateScope();
-
-        var ohlcvRepo = scope.ServiceProvider.GetRequiredService<IOhlcvRepository>();
-        var featureRepo = scope.ServiceProvider.GetRequiredService<IFeatureRepository>();
-        var indicatorService = scope.ServiceProvider.GetRequiredService<IIndicatorService>();
-        var analysisRepo = scope.ServiceProvider.GetRequiredService<IAnalysisRepository>();
 
         // 1. "Резервируем" и получаем новую порцию работы (свечи со статусом 'new')
-        var newKlinesToProcess = (await ohlcvRepo.ClaimNewKlinesForProcessingAsync(BatchSize)).ToList();
+        var newKlinesToProcess = (await _ohlcvRepository.ClaimNewKlinesForProcessingAsync(BatchSize)).ToList();
 
         if (!newKlinesToProcess.Any())
         {
@@ -142,16 +139,16 @@ public class FeatureCalculatorWorker
             {
                 // 2. Подгружаем "хвост" истории для "прогрева" индикаторов
                 var firstNewTime = newKlinesForSymbol.Min(k => k.OpenTime);
-                var historyKlines = await ohlcvRepo.GetWarmupKlinesAsync(symbol, firstNewTime, WarmupPeriod);
+                var historyKlines = await _ohlcvRepository.GetWarmupKlinesAsync(symbol, firstNewTime, WarmupPeriod);
                 var allKlines = historyKlines.Concat(newKlinesForSymbol).OrderBy(k => k.OpenTime);
 
                 // 3. Рассчитываем индикаторы на основе свечей
-                var features = indicatorService.CalculateAll(symbol, allKlines).ToList();
+                var features = _indicatorService.CalculateAll(symbol, allKlines).ToList();
 
                 // 4. Обогащаем данные индикатором CVD, который считается по тикам
                 var cvdStartTime = DateTimeOffset.FromUnixTimeMilliseconds(firstNewTime).DateTime;
                 var cvdEndTime = DateTimeOffset.FromUnixTimeMilliseconds(newKlinesForSymbol.Max(k => k.OpenTime)).DateTime.AddMinutes(1);
-                var cvdData = (await analysisRepo.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime)).ToList();
+                var cvdData = (await _analysisRepository.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime)).ToList();
 
                 foreach (var feature in features)
                 {
@@ -163,7 +160,7 @@ public class FeatureCalculatorWorker
                 var featuresToSave = features.Where(f => f.OpenTime >= firstNewTime).ToList();
                 if (featuresToSave.Any())
                 {
-                    await featureRepo.UpsertFeaturesAsync(featuresToSave);
+                    await _featureRepository.UpsertFeaturesAsync(featuresToSave);
                 }
             }
             catch (Exception ex)
@@ -175,7 +172,7 @@ public class FeatureCalculatorWorker
 
         // 6. Помечаем нашу порцию работы как полностью выполненную
         var processedTimes = newKlinesToProcess.Select(k => k.OpenTime).Distinct();
-        await ohlcvRepo.MarkKlinesAsProcessedAsync(processedTimes);
+        await _ohlcvRepository.MarkKlinesAsProcessedAsync(processedTimes);
 
         _logger.LogInformation("Успешно обработано {Count} свечей.", newKlinesToProcess.Count);
     }

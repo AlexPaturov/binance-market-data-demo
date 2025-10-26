@@ -146,7 +146,7 @@ public class Program
             builder.Services.AddTransient<OhlcvAggregatorWorker>();
             builder.Services.AddTransient<FeatureCalculatorWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
-            builder.Services.AddTransient<ArchiveDownloaderWorker>(); // на отладке загрузки архивов
+            builder.Services.AddTransient<ArchiveDownloaderWorker>(); 
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
             #endregion

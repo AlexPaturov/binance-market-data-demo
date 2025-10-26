@@ -11,17 +11,20 @@ namespace BinanceDataCollector.Worker.Workers;
 public class SymbolUpdateWorker
 {
     private readonly ILogger<SymbolUpdateWorker> _logger;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly MarketScreener _marketScreener;
+    private readonly ITrackedSymbolRepository  _trackedSymbolRepository;
     private int _topN = 40;                         // TODO забирать из конфигурации
     private decimal _minQuoteVolumeInMillion = 10m; // TODO забирать из конфигурации
 
     public SymbolUpdateWorker(
         ILogger<SymbolUpdateWorker> logger, 
-        IServiceProvider serviceProvider
+        MarketScreener  marketScreener,
+        ITrackedSymbolRepository  trackedSymbolRepository
     )
     {
         _logger = logger;
-        _serviceProvider = serviceProvider;
+        _marketScreener  = marketScreener;
+        _trackedSymbolRepository = trackedSymbolRepository;
     }
 
     [Queue("realtime")]
@@ -29,32 +32,30 @@ public class SymbolUpdateWorker
     {
         _logger.LogInformation("--- Начинаем плановое сканирование рынка ---");
 
-        using (var scope = _serviceProvider.CreateScope())
+        try
         {
-            try
-            {
-                var screener = scope.ServiceProvider.GetRequiredService<MarketScreener>();
-                var symbolRepo = scope.ServiceProvider.GetRequiredService<ITrackedSymbolRepository>();
-                var topPairs = await screener.FindTopPairsAsync(topN: _topN, minQuoteVolumeInMillion: _minQuoteVolumeInMillion); // 1. Получаем свежий ТОП пар с Binance
+            var topPairs =
+                await _marketScreener.FindTopPairsAsync(topN: _topN,
+                    minQuoteVolumeInMillion: _minQuoteVolumeInMillion); // 1. Получаем свежий ТОП пар с Binance
 
-                if (topPairs.Any())
-                {
-                    var symbolsToTrack = topPairs.Select(p => p.Symbol);
-                    _logger.LogInformation("Найдено {Count} активных пар. Обновляем базу данных...", symbolsToTrack.Count());
-                    await symbolRepo.UpdateSymbolListAsync(symbolsToTrack);  // Сохраняем полученный список
-
-                    _logger.LogInformation("База данных отслеживаемых символов успешно обновлена.");
-                }
-                else
-                {
-                    _logger.LogWarning("Сканер не вернул ни одной пары. Обновление БД пропущено.");
-                }
-            }
-            catch (Exception ex)
+            if (topPairs.Any())
             {
-                _logger.LogError(ex, "Произошла критическая ошибка во время сканирования рынка.");
-                throw;
+                var symbolsToTrack = topPairs.Select(p => p.Symbol);
+                _logger.LogInformation("Найдено {Count} активных пар. Обновляем базу данных...",
+                    symbolsToTrack.Count());
+                await _trackedSymbolRepository.UpdateSymbolListAsync(symbolsToTrack); // Сохраняем полученный список
+
+                _logger.LogInformation("База данных отслеживаемых символов успешно обновлена.");
             }
+            else
+            {
+                _logger.LogWarning("Сканер не вернул ни одной пары. Обновление БД пропущено.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Произошла критическая ошибка во время сканирования рынка.");
+            throw;
         }
 
         _logger.LogInformation("--- Плановое сканирование рынка успешно завершено ---");

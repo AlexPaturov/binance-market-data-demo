@@ -13,7 +13,9 @@ namespace BinanceDataCollector.Worker.Workers;
 public class BinanceCollectorWorker : BackgroundService
 {
     private readonly ILogger<BinanceCollectorWorker> _logger;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly ITrackedSymbolRepository  _trackedSymbolRepository;
+    private readonly IBinanceService  _binanceService;
+    private readonly ITradeRepository  _tradeRepository;
     private readonly double _collectorStartDelayMinutes = 5; // задержк запуска проверки
     private readonly double _mainWhileRestartDelaySeconds = 10; // задержка перезапуска главного цикла
 
@@ -23,10 +25,14 @@ public class BinanceCollectorWorker : BackgroundService
 
     public BinanceCollectorWorker(
         ILogger<BinanceCollectorWorker> logger,
-        IServiceProvider serviceProvider)
+        ITrackedSymbolRepository  trackedSymbolRepository, 
+        IBinanceService  binanceService, 
+        ITradeRepository tradeRepository)
     {
         _logger = logger;
-        _serviceProvider = serviceProvider;
+        _trackedSymbolRepository = trackedSymbolRepository;
+        _binanceService = binanceService;
+        _tradeRepository = tradeRepository;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -41,11 +47,7 @@ public class BinanceCollectorWorker : BackgroundService
         {
             try
             {
-                using var scope = _serviceProvider.CreateScope();
-                var symbolRepo = scope.ServiceProvider.GetRequiredService<ITrackedSymbolRepository>();
-                var binanceService = scope.ServiceProvider.GetRequiredService<IBinanceService>();
-
-                var symbolsToTrack = (await symbolRepo.GetActiveSymbolsAsync()).ToList();
+                var symbolsToTrack = (await _trackedSymbolRepository.GetActiveSymbolsAsync()).ToList();
                 if (!symbolsToTrack.Any())
                 {
                     _logger.LogWarning("Нет активных символов для отслеживания. Повторная проверка через 5 минут.");
@@ -56,7 +58,7 @@ public class BinanceCollectorWorker : BackgroundService
                 _logger.LogInformation("Начинаем подписку на {Count} потоков сделок...", symbolsToTrack.Count);
 
                 // Подписываемся на ВСЕ потоки ОДНИМ вызовом
-                await binanceService.SubscribeToMultipleTradesAsync(symbolsToTrack,
+                await _binanceService.SubscribeToMultipleTradesAsync(symbolsToTrack,
                     (trade) => // Единый обработчик для всех сделок
                     {
                         // Просто кладем сделку в потокобезопасную очередь
@@ -109,11 +111,8 @@ public class BinanceCollectorWorker : BackgroundService
                 {
                     try
                     {
-                        using var scope = _serviceProvider.CreateScope();
-                        var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
-
                         _logger.LogInformation("Сохраняем {Count} сделок в базу данных...", buffer.Count);
-                        await tradeRepo.BulkInsertAsync(buffer);
+                        await _tradeRepository.BulkInsertAsync(buffer);
                     }
                     catch (Exception ex)
                     {
@@ -149,9 +148,7 @@ public class BinanceCollectorWorker : BackgroundService
         if (!buffer.Any()) return;
         try
         {
-            using var scope = _serviceProvider.CreateScope();
-            var tradeRepo = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
-            await tradeRepo.BulkInsertAsync(buffer);
+            await _tradeRepository.BulkInsertAsync(buffer);
             _logger.LogInformation("Последняя пачка из {Count} сделок успешно сохранена.", buffer.Count);
         }
         catch (Exception ex)
