@@ -1,9 +1,8 @@
 ﻿using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Events;
 using Microsoft.Extensions.Configuration;
-using RabbitMQ.Client; // <--- Главный using
+using RabbitMQ.Client;
 using System.Text.Json;
-
 
 namespace BinanceDataCollector.Infrastructure.Messaging;
 
@@ -27,9 +26,7 @@ public class RabbitMQStatusNotifier : IStatusNotifier, IAsyncDisposable
         };
         var connection = await factory.CreateConnectionAsync();
         var channel = await connection.CreateChannelAsync();
-
         await channel.ExchangeDeclareAsync(exchange: ExchangeName, type: ExchangeType.Fanout);
-
         return new RabbitMQStatusNotifier(connection, channel);
     }
 
@@ -37,10 +34,7 @@ public class RabbitMQStatusNotifier : IStatusNotifier, IAsyncDisposable
     {
         var statusEvent = new StatusUpdateEvent { ConnectionId = connectionId, Message = message };
         var body = JsonSerializer.SerializeToUtf8Bytes(statusEvent);
-
-        await _channel.BasicPublishAsync(exchange: ExchangeName,
-                                          routingKey: "",
-                                          body: body);
+        await _channel.BasicPublishAsync(exchange: ExchangeName, routingKey: "", body: body);
     }
 
     public async ValueTask DisposeAsync()
