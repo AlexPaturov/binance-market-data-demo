@@ -90,11 +90,11 @@ public class FeatureCalculatorWorkerTests : IDisposable
         _mockFeatureRepo.Setup(r => r.GetLastFeatureTimeAsync(symbol)).ReturnsAsync((long?)null); // Для "оглупленной" версии это не важно
         _mockAnalysisRepo.Setup(r => r.GetCvdForOhlcvAsync(symbol, It.IsAny<DateTime>(), It.IsAny<DateTime>())).ReturnsAsync(new List<CvdResult>());
 
-        // TODO
+        // TODO rewrite with new amount and types of parameters
         // var worker = new FeatureCalculatorWorker(_workerLogger, _mockServiceProvider.Object);
 
         // --- ACT ---
-        // TODO
+        // TODO just uncomment after prev todo 
         // await worker.DoWorkAsync(CancellationToken.None);
 
         // --- ASSERT ---
