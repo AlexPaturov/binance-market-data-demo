@@ -22,7 +22,6 @@
 	<ItemGroup>
 		<ProjectReference Include="..\BinanceDataCollector.Application\BinanceDataCollector.Application.csproj" />
 		<ProjectReference Include="..\BinanceDataCollector.Infrastructure\BinanceDataCollector.Infrastructure.csproj" />
-		<ProjectReference Include="..\BinanceDataCollector.MarketScreenService\BinanceDataCollector.MarketScreenService.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -1,4 +1,8 @@
-﻿using BinanceDataCollector.Application.Analytics;
+﻿using System.Diagnostics;
+using System.Net;
+using BinanceDataCollector.Application.Analytics;
+using BinanceDataCollector.Application.Analytics.MarketScreeners;
+using BinanceDataCollector.Application.Analytics.MarketScreeners.Services;
 using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.DTOs;
@@ -6,7 +10,6 @@ using BinanceDataCollector.Infrastructure.BinanceClient;
 using BinanceDataCollector.Infrastructure.Messaging;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
-using BinanceDataCollector.MarketScreenService;
 using BinanceDataCollector.Worker.Common;
 using BinanceDataCollector.Worker.Workers;
 using BinanceDataCollector.Worker.Workers.Archives;
@@ -14,8 +17,6 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using Serilog;
 using Serilog.Enrichers.WithCaller;
-using System.Diagnostics;
-using System.Net;
 
 namespace BinanceDataCollector.Worker;
 
@@ -135,7 +136,7 @@ public class Program
             builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
             builder.Services.AddScoped<IAuditRepository, AuditRepository>();
             builder.Services.AddTransient<IIndicatorService, IndicatorService>();
-            builder.Services.AddTransient<MarketScreener>();
+            builder.Services.AddTransient<IMarketScreener, MarketScreener>();
             builder.Services.AddTransient<SymbolUpdateWorker>();
             builder.Services.AddTransient<HistoricalAuditorWorker>();
             builder.Services.AddTransient<AuditInitializationWorker>();

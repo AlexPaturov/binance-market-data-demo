@@ -1,5 +1,5 @@
-﻿using BinanceDataCollector.Application.Interfaces;
-using BinanceDataCollector.MarketScreenService;
+﻿using BinanceDataCollector.Application.Analytics.MarketScreeners.Services;
+using BinanceDataCollector.Application.Interfaces;
 using Hangfire;
 
 namespace BinanceDataCollector.Worker.Workers;
