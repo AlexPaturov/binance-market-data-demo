@@ -85,6 +85,7 @@ public class Program
             });
             builder.Services.AddScoped<IBinanceService, BinanceService>();
             builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
+            builder.Services.AddTransient<IMarketScreener, MarketScreener>();
             builder.Services.AddScoped<ITradeRepository, TradeRepository>();
             builder.Services.AddScoped<IHistoricalAuditRepository, HistoricalAuditRepository>();
             builder.Services.AddScoped<IOhlcvRepository, OhlcvRepository>();
@@ -92,7 +93,6 @@ public class Program
             builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
             builder.Services.AddScoped<IAuditRepository, AuditRepository>();
             builder.Services.AddTransient<IIndicatorService, IndicatorService>();
-            builder.Services.AddTransient<IMarketScreener, MarketScreener>();
             builder.Services.AddTransient<SymbolUpdateWorker>();
             builder.Services.AddTransient<HistoricalAuditorWorker>();
             builder.Services.AddTransient<AuditInitializationWorker>();

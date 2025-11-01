@@ -24,9 +24,7 @@ CREATE INDEX CONCURRENTLY IX_Trades_TradeTime_Desc ON public."Trades" ("TradeTim
 
 # 5. Теперь можно "отцепиться" от этой сессии, нажав Ctrl+A, а затем D.
 #    Процесс продолжит работать в фоне.
-
 # 6. Вы можете закрыть SSH, пойти спать.
-
 # 7. Чтобы вернуться в сессию и посмотреть, что там происходит:
 screen -r vacuum_session
 ## ---- как выполнять долгие команды с использованием виртуальных терминалов окончание -----------------------------------------------------------------
@@ -115,6 +113,22 @@ sudo rm -rf /etc/pgbouncer
 1. docker ps -a   -- to show which containers was run
 2. docker logs binance_pgbouncer -- Проверить логи
 3. docker logs binance_postgres -- Проверить логи
+4. docker ps -a -- Посмотри, какие контейнеры есть
+5. docker stop <container_name> -- Останови контейнер
+6. docker rm <container_name> -- Удалить контейнер
+7. docker rmi datalust/seq -- Удали image, на котором он основан
+8. docker ps -a        # контейнеры
+9. docker images       # образы
+10. docker volume ls    # тома
+11. docker network ls   # сети 
+12. docker volume rm <volume_name> -- Удалить конкретный том
+13. 
+
+- passw seq qw12qw12 24.10.2025
+   
+   
+
+
 
 # -------------------- Найти PID Worker
 pidof BinanceDataCollector.DataManager
@@ -161,6 +175,12 @@ sudo ufw allow 15672/tcp
 # Для админки Seq (уже есть, но повторить не вредно)
 sudo ufw allow 5341/tcp
 # ----------------------------- firewall end -----------------------------------------------
+
+# ----------------------------- app domain -----------------------------------------------
+Bought Nov 01, 2025.
+Renewal Nov 01, 2026.
+jahasim.com
+# ----------------------------- app domain -----------------------------------------------
 
 
 

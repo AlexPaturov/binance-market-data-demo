@@ -43,14 +43,10 @@ public class IndicatorService : IIndicatorService
         // ищем соответствующий результат в коллекциях индикаторов.
 
         var features = quotes.Select(q => {
-            // Ищем результат RSI для текущей даты
-            var rsi = rsiResult.FirstOrDefault(r => r.Date == q.Date);
-            // Ищем результат MACD для текущей даты
-            var macd = macdResult.FirstOrDefault(m => m.Date == q.Date);
-            // Ищем результат MA 2Y для текущей даты
-            var ma2y = ma2yResult.FirstOrDefault(m => m.Date == q.Date);
-            // Ищем результат MA 200W для текущей даты
-            var ma200w = ma200wResult.FirstOrDefault(m => m.Date == q.Date);
+            var rsi = rsiResult.FirstOrDefault(r => r.Date == q.Date);                     // Ищем результат RSI для текущей даты
+            var macd = macdResult.FirstOrDefault(m => m.Date == q.Date);                 // Ищем результат MACD для текущей даты
+            var ma2y = ma2yResult.FirstOrDefault(m => m.Date == q.Date);        // Ищем результат MA 2Y для текущей даты
+            var ma200w = ma200wResult.FirstOrDefault(m => m.Date == q.Date);    // Ищем результат MA 200W для текущей даты
 
             return new FeatureData
             {

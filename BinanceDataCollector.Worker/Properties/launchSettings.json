@@ -1,6 +1,6 @@
 ﻿{
   "profiles": {
-    "http": {
+    "WorkerProf": {
       "commandName": "Project",
       "dotnetRunMessages": true,
       "launchBrowser": false, 

@@ -20,21 +20,17 @@ public class Program
     public static void Main(string[] args)
     {
         var startupStopwatch = Stopwatch.StartNew();
-
         #region Минимальный "загрузочный" логгер - записать в консоль ошибку, если .Build() упадет.
-
         var configuration = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
             .AddJsonFile("appsettings.json")
-            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json",
-                optional: true)
+            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json", optional: true)
             .Build();
 
         Log.Logger = new LoggerConfiguration()
             .Enrich.FromLogContext()
             .WriteTo.Console()
             .CreateBootstrapLogger();
-
         #endregion
 
         Log.Information("Serilog настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
@@ -100,8 +96,7 @@ public class Program
 
         app.UseAuthorization();
 
-        app.MapHangfireDashboard("/hangfire",
-            new DashboardOptions { Authorization = new[] { new AllowAllConnectionsFilter() } });
+        app.MapHangfireDashboard("/hangfire", new DashboardOptions { Authorization = new[] { new AllowAllConnectionsFilter() } });
         app.MapHub<ArchiveStatusHub>("/archiveStatusHub");
         app.MapDefaultControllerRoute();
 

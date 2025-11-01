@@ -16,6 +16,7 @@ public class OhlcvRepository : IOhlcvRepository
         _connectionString = configureOptions.GetConnectionString("DefaultConnection")
                     ?? throw new InvalidOperationException("Connection string not found.");
     }
+    
     private IDbConnection Connection => new NpgsqlConnection(_connectionString);
 
     public async Task<IEnumerable<Ohlcv>> ClaimNewKlinesForProcessingAsync(int batchSize)
