@@ -28,15 +28,19 @@ public class Program
 
         #region Минимальный "загрузочный" логгер - записать в консоль ошибку, если .Build() упадет.
         var configuration = new ConfigurationBuilder()
-           .SetBasePath(Directory.GetCurrentDirectory())
-           .AddJsonFile("appsettings.json")
-           .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json", optional: true)
-           .Build();
+            .SetBasePath(Directory.GetCurrentDirectory())
+#if DEBUG
+            .AddJsonFile("appsettings.Development.json", optional: true)
+#else
+            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json", optional: true)
+#endif
+            .Build();
 
+        // Создаем и назначаем статический Log.Logger.
+        // Он будет писать в консоль и/или в файл, если что-то упадет ДО старта хоста.
         Log.Logger = new LoggerConfiguration()
-        .Enrich.FromLogContext()
-        .WriteTo.Console()
-        .CreateBootstrapLogger();
+            .ReadFrom.Configuration(configuration) // Читаем настройки из нашей временной конфигурации
+            .CreateBootstrapLogger();
         #endregion
         Log.Information("Serilog настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
@@ -49,14 +53,22 @@ public class Program
             builder.WebHost.UseUrls("http://*:7001");
             #region Logging preferences
             builder.Logging.ClearProviders();
-            builder.Logging.AddSerilog(new LoggerConfiguration()
-                .ReadFrom.Configuration(builder.Configuration)
+            // builder.Logging.AddSerilog(new LoggerConfiguration()
+            //     .ReadFrom.Configuration(builder.Configuration)
+            //     .Enrich.FromLogContext()
+            //     .Enrich.WithProcessId()
+            //     .Enrich.WithThreadId()
+            //     .Enrich.With<EnrichWithSourceClass>()
+            //     .Enrich.WithCaller()
+            //     .CreateLogger());
+            
+            builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
+                .ReadFrom.Configuration(context.Configuration)
                 .Enrich.FromLogContext()
                 .Enrich.WithProcessId()
                 .Enrich.WithThreadId()
                 .Enrich.With<EnrichWithSourceClass>()
-                .Enrich.WithCaller()
-                .CreateLogger());
+                .Enrich.WithCaller());
             #endregion
             
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
@@ -171,13 +183,11 @@ public class Program
             startupStopwatch.Stop();
             app.Run();
         }
-        catch (Exception ex)
-        {
+        catch (Exception ex) {
             Log.Fatal(ex, "Хост завершился с непредвиденной ошибкой");
-            // TODO write to file
+            // TODO write to a file
         }
-        finally
-        {
+        finally {
             Log.CloseAndFlush();
         }
     }

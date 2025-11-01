@@ -7,6 +7,7 @@
       "applicationUrl": "http://localhost:7001",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
         "DOTNET_UTF8_CONSOLE": "true"
       }
     },
@@ -15,6 +16,7 @@
       "dotnetRunMessages": true,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
         "DOTNET_UTF8_CONSOLE": "true"
       }
     }

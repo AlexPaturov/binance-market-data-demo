@@ -12,6 +12,7 @@ using Serilog;
 using System.Diagnostics;
 using System.Net;
 using BinanceDataCollector.DataManager.Middleware;
+using Serilog.Enrichers.WithCaller;
 
 namespace BinanceDataCollector.DataManager;
 
@@ -20,94 +21,109 @@ public class Program
     public static void Main(string[] args)
     {
         var startupStopwatch = Stopwatch.StartNew();
+        
         #region Минимальный "загрузочный" логгер - записать в консоль ошибку, если .Build() упадет.
-        var configuration = new ConfigurationBuilder()
+        // --- ФАЗА 1: ЗАГРУЗОЧНЫЙ ЛОГГЕР ---
+        // Создаем временную конфигурацию, чтобы Serilog знал, куда писать логи ДО старта хоста.
+        var bootstrapConfig = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json")
-            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "Production"}.json", optional: true)
+            .AddJsonFile("appsettings.json", optional: false)
+            .AddJsonFile("appsettings.Development.json", optional: true) // Просто добавляем его, если он есть
             .Build();
 
         Log.Logger = new LoggerConfiguration()
-            .Enrich.FromLogContext()
-            .WriteTo.Console()
+            .ReadFrom.Configuration(bootstrapConfig)
             .CreateBootstrapLogger();
-        #endregion
-
-        Log.Information("Serilog настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-
-        Log.Information("Запускаем приложение...");
-        var builder = WebApplication.CreateBuilder(args);
-        Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-
-        builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
-            .ReadFrom.Configuration(context.Configuration)
-            .Enrich.FromLogContext());
-
-        builder.Services.AddControllersWithViews();
-        builder.Services.AddSignalR();
-        builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
-        builder.Services.AddHttpClient("BinanceArchive", client =>
-            {
-                client.Timeout = TimeSpan.FromMinutes(10);
-                client.DefaultRequestHeaders.Add("User-Agent", "BinanceDataCollector/1.0");
-            })
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                MaxConnectionsPerServer = 10, // Ограничиваем подключения к Binance
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-                PooledConnectionLifetime = TimeSpan.FromMinutes(15), // Переиспользование соединений
-                ConnectTimeout = TimeSpan.FromSeconds(30),
-                ResponseDrainTimeout = TimeSpan.FromSeconds(10)
-            });
-
-        builder.Services.AddSingleton<IPathProvider, PathProvider>();
-        builder.Services.AddScoped<ITradeRepository, TradeRepository>();
-        builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
-        builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
-        builder.Services.AddScoped<IArchiveService, ArchiveService>();
-        builder.Services.AddHostedService<RabbitMQListenerService>();
-        builder.Services.AddScoped<IDatabaseMonitoringService, DatabaseMonitoringService>();
-        Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-
-        #region Настройка Hangfire
-        builder.Services.AddHangfire(config => config
-            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-            .UseSimpleAssemblyNameTypeSerializer()
-            .UseRecommendedSerializerSettings()
-            .UsePostgreSqlStorage(options =>
-            {
-                options.UseNpgsqlConnection(
-                    builder.Configuration.GetConnectionString("HangfireConnection"));
-            }));
-        builder.Services.AddHangfireServer();
-        #endregion
         
-        var app = builder.Build();
-        Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-        app.UseMiddleware<MemoryUsageLoggingMiddleware>();
-        if (!app.Environment.IsDevelopment())
-        {
-            app.UseExceptionHandler("/Home/Error");
-            app.UseHsts();
-        }
-
-        app.UseHttpsRedirection();
-        app.UseStaticFiles();
-
-        app.UseAuthorization();
-
-        app.MapHangfireDashboard("/hangfire", new DashboardOptions { Authorization = new[] { new AllowAllConnectionsFilter() } });
-        app.MapHub<ArchiveStatusHub>("/archiveStatusHub");
-        app.MapDefaultControllerRoute();
-
-        #region logging
-
-        Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-        startupStopwatch.Stop();
-        Log.Information("Запуск хоста (app.Run)...");
-
+        Log.Information("Serilog настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
         #endregion
 
-        app.Run();
+        try {
+            Log.Information("Start WebApplicationBuilder");
+            var builder = WebApplication.CreateBuilder(args);
+            Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+
+            // builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
+            //     .ReadFrom.Configuration(context.Configuration)
+            //     .Enrich.FromLogContext());
+
+            builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
+                .ReadFrom.Configuration(context.Configuration)
+                .Enrich.FromLogContext()
+                .Enrich.WithProcessId()
+                .Enrich.WithThreadId()
+                .Enrich.With<EnrichWithSourceClass>()
+                .Enrich.WithCaller());
+            
+            builder.Services.AddControllersWithViews();
+            builder.Services.AddSignalR();
+            builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
+            builder.Services.AddHttpClient("BinanceArchive", client =>
+                {
+                    client.Timeout = TimeSpan.FromMinutes(10);
+                    client.DefaultRequestHeaders.Add("User-Agent", "BinanceDataCollector/1.0");
+                })
+                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+                {
+                    MaxConnectionsPerServer = 10, // Ограничиваем подключения к Binance
+                    AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+                    PooledConnectionLifetime = TimeSpan.FromMinutes(15), // Переиспользование соединений
+                    ConnectTimeout = TimeSpan.FromSeconds(30),
+                    ResponseDrainTimeout = TimeSpan.FromSeconds(10)
+                });
+
+            builder.Services.AddSingleton<IPathProvider, PathProvider>();
+            builder.Services.AddScoped<ITradeRepository, TradeRepository>();
+            builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
+            builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
+            builder.Services.AddScoped<IArchiveService, ArchiveService>();
+            builder.Services.AddHostedService<RabbitMQListenerService>();
+            builder.Services.AddScoped<IDatabaseMonitoringService, DatabaseMonitoringService>();
+            Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+
+            #region Настройка Hangfire
+            builder.Services.AddHangfire(config => config
+                .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+                .UseSimpleAssemblyNameTypeSerializer()
+                .UseRecommendedSerializerSettings()
+                .UsePostgreSqlStorage(options => {
+                    options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("HangfireConnection")); 
+                }));
+            builder.Services.AddHangfireServer();
+            #endregion
+
+            var app = builder.Build();
+            Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+            app.UseMiddleware<MemoryUsageLoggingMiddleware>();
+            if (!app.Environment.IsDevelopment())
+            {
+                app.UseExceptionHandler("/Home/Error");
+                app.UseHsts();
+            }
+
+            app.UseHttpsRedirection();
+            app.UseStaticFiles();
+
+            app.UseAuthorization();
+
+            app.MapHangfireDashboard("/hangfire", new DashboardOptions { Authorization = new[] { new AllowAllConnectionsFilter() } });
+            app.MapHub<ArchiveStatusHub>("/archiveStatusHub");
+            app.MapDefaultControllerRoute();
+
+            #region logging
+            Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+            startupStopwatch.Stop();
+            Log.Information("Запуск хоста (app.Run)...");
+            #endregion
+
+            app.Run();
+        }
+        catch (Exception ex) {
+            Log.Fatal(ex, "Хост завершился с непредвиденной ошибкой");
+            // TODO write to a file
+        }
+        finally {
+            Log.CloseAndFlush();
+        }
     }
 }
