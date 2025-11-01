@@ -175,7 +175,7 @@ public class BinanceService : IBinanceService
                 return FetchResult.SuccessResult(new List<Trade>());
             }
 
-            // --- Маппинг в нашу доменную модель ---
+            // --- Маппинг в доменную модель ---
             var trades = result.Data.Select(t => new Trade
             {
                 TradeId = t.Id,
@@ -197,11 +197,7 @@ public class BinanceService : IBinanceService
         }
     }
 
-    public async Task<FetchResult> GetHistoricalAggTradesById(
-        string symbol,
-        long fromId,
-        int limit = 1000
-    )
+    public async Task<FetchResult> GetHistoricalAggTradesById(string symbol, long fromId, int limit = 1000)
     {
         try
         {

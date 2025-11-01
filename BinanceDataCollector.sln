@@ -20,12 +20,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Infras
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Worker", "BinanceDataCollector.Worker\BinanceDataCollector.Worker.csproj", "{F6646362-D21B-4C8B-8A2D-BAAF4D8EC433}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Drafts", "Drafts", "{0A6BF69E-117B-479F-9EC1-235F09AA1527}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Symbols", "BinanceDataCollector.Symbols\BinanceDataCollector.Symbols.csproj", "{A4999614-BE8D-4C02-9120-34658764ED6D}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.MarketScreenService", "BinanceDataCollector.MarketScreenService\BinanceDataCollector.MarketScreenService.csproj", "{507249C3-BF00-47B6-855E-BF5D563E5A77}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Infrastructure.Tests", "BinanceDataCollector.Infrastructure.Tests\BinanceDataCollector.Infrastructure.Tests.csproj", "{529DF414-82AB-4ECD-B64E-8AA37435F1B8}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Domain.Tests", "BinanceDataCollector.Domain.Tests\BinanceDataCollector.Domain.Tests.csproj", "{58F8F5B1-CCEB-4923-B29D-594217339A9B}"
@@ -43,13 +37,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Worker.Tests", "BinanceDataCollector.Worker.Tests\BinanceDataCollector.Worker.Tests.csproj", "{5ECA3E1D-4FC6-4156-8DFA-3C152F8DD2D6}"
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "sql", "sql", "{7091B7D6-BB6B-495E-98D5-C7E656785C9F}"
-	ProjectSection(SolutionItems) = preProject
-		clean_job_stack.sql = clean_job_stack.sql
-		duplicetes_hangfire_jobs.sql = duplicetes_hangfire_jobs.sql
-		sp_aggregate_trades_to_ohlcv.sql = sp_aggregate_trades_to_ohlcv.sql
-	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.DataManager", "BinanceDataCollector.DataManager\BinanceDataCollector.DataManager.csproj", "{3F6FB4C7-3181-47D0-B8CD-0F21C2697A52}"
 EndProject
@@ -79,14 +66,6 @@ Global
 		{F6646362-D21B-4C8B-8A2D-BAAF4D8EC433}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{F6646362-D21B-4C8B-8A2D-BAAF4D8EC433}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{F6646362-D21B-4C8B-8A2D-BAAF4D8EC433}.Release|Any CPU.Build.0 = Release|Any CPU
-		{A4999614-BE8D-4C02-9120-34658764ED6D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{A4999614-BE8D-4C02-9120-34658764ED6D}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{A4999614-BE8D-4C02-9120-34658764ED6D}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{A4999614-BE8D-4C02-9120-34658764ED6D}.Release|Any CPU.Build.0 = Release|Any CPU
-		{507249C3-BF00-47B6-855E-BF5D563E5A77}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{507249C3-BF00-47B6-855E-BF5D563E5A77}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{507249C3-BF00-47B6-855E-BF5D563E5A77}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{507249C3-BF00-47B6-855E-BF5D563E5A77}.Release|Any CPU.Build.0 = Release|Any CPU
 		{529DF414-82AB-4ECD-B64E-8AA37435F1B8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{529DF414-82AB-4ECD-B64E-8AA37435F1B8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{529DF414-82AB-4ECD-B64E-8AA37435F1B8}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -113,12 +92,9 @@ Global
 		{CAB726D1-817A-4887-8C37-E2DCE2D55516} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{58367310-5250-4F04-B30F-E26A72ACCABD} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{F6646362-D21B-4C8B-8A2D-BAAF4D8EC433} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
-		{A4999614-BE8D-4C02-9120-34658764ED6D} = {0A6BF69E-117B-479F-9EC1-235F09AA1527}
-		{507249C3-BF00-47B6-855E-BF5D563E5A77} = {0A6BF69E-117B-479F-9EC1-235F09AA1527}
 		{529DF414-82AB-4ECD-B64E-8AA37435F1B8} = {64BE44B7-373D-4026-8E3B-17AF9CA5828B}
 		{58F8F5B1-CCEB-4923-B29D-594217339A9B} = {64BE44B7-373D-4026-8E3B-17AF9CA5828B}
 		{5ECA3E1D-4FC6-4156-8DFA-3C152F8DD2D6} = {64BE44B7-373D-4026-8E3B-17AF9CA5828B}
-		{7091B7D6-BB6B-495E-98D5-C7E656785C9F} = {0A6BF69E-117B-479F-9EC1-235F09AA1527}
 		{3F6FB4C7-3181-47D0-B8CD-0F21C2697A52} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
