@@ -58,51 +58,7 @@ public class Program
                 .Enrich.WithCaller()
                 .CreateLogger());
             #endregion
-            #region Hangfire preferences
-            builder.Services.AddHangfire(config => config
-             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-             .UseSimpleAssemblyNameTypeSerializer()
-             .UseRecommendedSerializerSettings()
-             .UsePostgreSqlStorage(connectionString => {
-                 connectionString.UseNpgsqlConnection(
-                     builder.Configuration.GetConnectionString("HangfireConnection"));
-             }, new PostgreSqlStorageOptions
-             {
-                 QueuePollInterval = TimeSpan.FromSeconds(15),                  // Как часто проверять очередь
-                 InvisibilityTimeout = TimeSpan.FromHours(4),                   // Увеличиваем до 4 часов
-                 UseNativeDatabaseTransactions = true,                          // Использовать нативные транзакции
-                 PrepareSchemaIfNecessary = true,                               // Автоматически создавать схему
-                 SchemaName = "hangfire",                                       // Название схемы (опционально)
-                 JobExpirationCheckInterval = TimeSpan.FromHours(1),            // Проверка истекших заданий
-                 CountersAggregateInterval = TimeSpan.FromMinutes(5),           // Агрегация счетчиков
-                 TransactionSynchronisationTimeout = TimeSpan.FromMinutes(5)    // Таймаут синхронизации
-             }));
-
-            // --- Сервер для быстрых, приоритетных задач ---
-            builder.Services.AddHangfireServer(options =>
-            {
-                options.ServerName = "PriorityServer";
-                options.Queues = new[] { "realtime", "quick_audit"}; // Слушает ТОЛЬКО эти очереди
-               
-                options.WorkerCount = 
-                (Debugger.IsAttached || builder.Environment.IsDevelopment()) 
-                    ? Math.Max(4, Environment.ProcessorCount)  // на деве 8 ядер у маширы
-                    : Math.Max(2, Environment.ProcessorCount);  // на проде 4 ядра
-            });
-
-            // --- Сервер для тяжелых, фоновых задач ---
-            builder.Services.AddHangfireServer(options =>
-            {
-                options.ServerName = "BackgroundServer";
-                options.Queues = new[] { "historical_audit", "archive_import", "default" }; // Слушает ТОЛЬКО эти
-                options.WorkerCount =
-                (Debugger.IsAttached || builder.Environment.IsDevelopment()) 
-                    ? Environment.ProcessorCount * 4 
-                    : Environment.ProcessorCount * 2; // Выделяем ему ядра процессора
-            });
-            #endregion
-            Log.Information("Hangfire запущен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-
+            
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
             #region Регистрация сервисов
             builder.Services.AddHttpClient("BinanceArchive", client =>
@@ -151,9 +107,52 @@ public class Program
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
             #endregion
-
             Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
+            #region Hangfire preferences
+            builder.Services.AddHangfire(config => config
+             .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+             .UseSimpleAssemblyNameTypeSerializer()
+             .UseRecommendedSerializerSettings()
+             .UsePostgreSqlStorage(connectionString => {
+                 connectionString.UseNpgsqlConnection(
+                     builder.Configuration.GetConnectionString("HangfireConnection"));
+             }, new PostgreSqlStorageOptions
+             {
+                 QueuePollInterval = TimeSpan.FromSeconds(15),                  // Как часто проверять очередь
+                 InvisibilityTimeout = TimeSpan.FromHours(4),                   // Увеличиваем до 4 часов
+                 UseNativeDatabaseTransactions = true,                          // Использовать нативные транзакции
+                 PrepareSchemaIfNecessary = true,                               // Автоматически создавать схему
+                 SchemaName = "hangfire",                                       // Название схемы (опционально)
+                 JobExpirationCheckInterval = TimeSpan.FromHours(1),            // Проверка истекших заданий
+                 CountersAggregateInterval = TimeSpan.FromMinutes(5),           // Агрегация счетчиков
+                 TransactionSynchronisationTimeout = TimeSpan.FromMinutes(5)    // Таймаут синхронизации
+             }));
+
+            // --- Сервер для быстрых, приоритетных задач ---
+            builder.Services.AddHangfireServer(options =>
+            {
+                options.ServerName = "PriorityServer";
+                options.Queues = new[] { "realtime", "quick_audit"}; // Слушает ТОЛЬКО эти очереди
+                options.WorkerCount = 
+                (Debugger.IsAttached || builder.Environment.IsDevelopment()) 
+                    ? Math.Max(4, Environment.ProcessorCount)  // на деве 8 ядер у маширы
+                    : Math.Max(2, Environment.ProcessorCount);  // на проде 4 ядра
+            });
+
+            // --- Сервер для тяжелых, фоновых задач ---
+            builder.Services.AddHangfireServer(options =>
+            {
+                options.ServerName = "BackgroundServer";
+                options.Queues = new[] { "historical_audit", "archive_import", "default" }; // Слушает ТОЛЬКО эти
+                options.WorkerCount =
+                (Debugger.IsAttached || builder.Environment.IsDevelopment()) 
+                    ? Environment.ProcessorCount * 4 
+                    : Environment.ProcessorCount * 2; // Выделяем ему ядра процессора
+            });
+            #endregion
+            Log.Information("Hangfire запущен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+            
             var app = builder.Build();
             Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             

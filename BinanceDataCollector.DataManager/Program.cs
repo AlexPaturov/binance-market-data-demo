@@ -47,19 +47,6 @@ public class Program
             .ReadFrom.Configuration(context.Configuration)
             .Enrich.FromLogContext());
 
-        #region Настройка Hangfire
-        builder.Services.AddHangfire(config => config
-            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-            .UseSimpleAssemblyNameTypeSerializer()
-            .UseRecommendedSerializerSettings()
-            .UsePostgreSqlStorage(options =>
-            {
-                options.UseNpgsqlConnection(
-                    builder.Configuration.GetConnectionString("HangfireConnection"));
-            }));
-        builder.Services.AddHangfireServer();
-        #endregion
-
         builder.Services.AddControllersWithViews();
         builder.Services.AddSignalR();
         builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
@@ -86,6 +73,19 @@ public class Program
         builder.Services.AddScoped<IDatabaseMonitoringService, DatabaseMonitoringService>();
         Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
+        #region Настройка Hangfire
+        builder.Services.AddHangfire(config => config
+            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+            .UseSimpleAssemblyNameTypeSerializer()
+            .UseRecommendedSerializerSettings()
+            .UsePostgreSqlStorage(options =>
+            {
+                options.UseNpgsqlConnection(
+                    builder.Configuration.GetConnectionString("HangfireConnection"));
+            }));
+        builder.Services.AddHangfireServer();
+        #endregion
+        
         var app = builder.Build();
         Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
         app.UseMiddleware<MemoryUsageLoggingMiddleware>();
