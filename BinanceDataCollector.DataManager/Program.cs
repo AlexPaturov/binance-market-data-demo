@@ -1,17 +1,18 @@
+using System.Diagnostics;
+using System.Net;
 using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Common;
 using BinanceDataCollector.DataManager.Hubs;
 using BinanceDataCollector.DataManager.Messaging;
+using BinanceDataCollector.DataManager.Middleware;
 using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
+using BinanceDataCollector.Infrastructure.Messaging;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Serilog;
-using System.Diagnostics;
-using System.Net;
-using BinanceDataCollector.DataManager.Middleware;
 using Serilog.Enrichers.WithCaller;
 
 namespace BinanceDataCollector.DataManager;
@@ -40,16 +41,18 @@ public class Program
 
         try {
             Log.Information("Start WebApplicationBuilder");
-            //var builder = WebApplication.CreateBuilder(args);
             
+            //var builder = WebApplication.CreateBuilder(args);
+            // TODO rewrite thish boolsheet
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
                 Args = args,
                 EnvironmentName = Environments.Development
             });
+            builder.WebHost.UseUrls("http://localhost:7002");
             
             Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-            
+            #region Logging preferences
             builder.Logging.ClearProviders();
             builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
                 .ReadFrom.Configuration(context.Configuration)
@@ -58,7 +61,8 @@ public class Program
                 .Enrich.WithThreadId()
                 .Enrich.With<EnrichWithSourceClass>()
                 .Enrich.WithCaller());
-            
+            #endregion
+            #region Регистрация сервисов
             builder.Services.AddControllersWithViews();
             builder.Services.AddSignalR();
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
@@ -75,8 +79,13 @@ public class Program
                     ConnectTimeout = TimeSpan.FromSeconds(30),
                     ResponseDrainTimeout = TimeSpan.FromSeconds(10)
                 });
-
+           
             builder.Services.AddSingleton<IPathProvider, PathProvider>();
+            builder.Services.AddSingleton<IStatusNotifier>(sp =>
+            {
+                var configuration = sp.GetRequiredService<IConfiguration>();
+                return RabbitMqStatusNotifier.CreateAsync(configuration).GetAwaiter().GetResult();
+            });
             builder.Services.AddScoped<ITradeRepository, TradeRepository>();
             builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
             builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
@@ -84,7 +93,7 @@ public class Program
             builder.Services.AddHostedService<RabbitMQListenerService>();
             builder.Services.AddScoped<IDatabaseMonitoringService, DatabaseMonitoringService>();
             Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-
+            #endregion
             #region Настройка Hangfire
             builder.Services.AddHangfire(config => config
                 .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -96,7 +105,7 @@ public class Program
             builder.Services.AddHangfireServer();
             #endregion
 
-            PrintConfiguration(builder.Configuration);
+            PrintConfiguration(builder.Configuration); // TODO service information - dele
             var app = builder.Build();
             Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             app.UseMiddleware<MemoryUsageLoggingMiddleware>();

@@ -185,7 +185,7 @@ public class ArchiveService : IArchiveService
             PageSize = pageSize
         };
 
-        var filePath = Path.Combine(_pathProvider.GetTradeArchivesPath(), zipFileName) ; // Предполагаем, что PathProvider умеет строить путь
+        var filePath = Path.Combine(_pathProvider.GetTradeArchivesPath(), zipFileName) ;
         if (!File.Exists(filePath)) return result;
 
         var (symbol, date) = ArchiveFileNameParser.Parse(zipFileName);

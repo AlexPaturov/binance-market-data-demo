@@ -6,19 +6,19 @@ using System.Text.Json;
 
 namespace BinanceDataCollector.Infrastructure.Messaging;
 
-public class RabbitMQStatusNotifier : IStatusNotifier, IAsyncDisposable
+public class RabbitMqStatusNotifier : IStatusNotifier, IAsyncDisposable
 {
     private const string ExchangeName = "status_updates_exchange";
     private readonly IConnection _connection;
     private readonly IChannel _channel;
 
-    private RabbitMQStatusNotifier(IConnection connection, IChannel channel)
+    private RabbitMqStatusNotifier(IConnection connection, IChannel channel)
     {
         _connection = connection;
         _channel = channel;
     }
 
-    public static async Task<RabbitMQStatusNotifier> CreateAsync(IConfiguration configuration)
+    public static async Task<RabbitMqStatusNotifier> CreateAsync(IConfiguration configuration)
     {
         var factory = new ConnectionFactory() 
         { 
@@ -27,7 +27,7 @@ public class RabbitMQStatusNotifier : IStatusNotifier, IAsyncDisposable
         var connection = await factory.CreateConnectionAsync();
         var channel = await connection.CreateChannelAsync();
         await channel.ExchangeDeclareAsync(exchange: ExchangeName, type: ExchangeType.Fanout);
-        return new RabbitMQStatusNotifier(connection, channel);
+        return new RabbitMqStatusNotifier(connection, channel);
     }
 
     public async Task SendStatusUpdateAsync(string connectionId, string message)

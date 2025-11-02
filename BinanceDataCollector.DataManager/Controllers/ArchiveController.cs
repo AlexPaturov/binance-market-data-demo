@@ -105,7 +105,6 @@ public class ArchiveController : Controller
         foreach (var fileName in request.FileNames)
         {
             // Ставим задачу в очередь для КАЖДОГО выбранного файла
-            // Здесь мы вызываем ArchiveProcessingWorker, который нам еще предстоит создать
             _backgroundJobClient.Enqueue<ArchiveUnpackerWorker>(
                 worker => worker.UnpackArchiveAsync(fileName, request.ConnectionId)
             );

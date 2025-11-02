@@ -57,7 +57,6 @@ public class Program
             builder.WebHost.UseUrls("http://*:7001");
 
             #region Logging preferences
-
             builder.Logging.ClearProviders();
             builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
                 .ReadFrom.Configuration(context.Configuration)
@@ -66,13 +65,11 @@ public class Program
                 .Enrich.WithThreadId()
                 .Enrich.With<EnrichWithSourceClass>()
                 .Enrich.WithCaller());
-
             #endregion
 
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
 
             #region Регистрация сервисов
-
             builder.Services.AddHttpClient("BinanceArchive", client =>
                 {
                     client.Timeout = TimeSpan.FromMinutes(10); // Большие архивы могут качаться долго
@@ -93,11 +90,10 @@ public class Program
                 var configuration = sp.GetRequiredService<IConfiguration>();
                 // Асинхронно создаем и ждем, пока экземпляр будет готов.
                 // .GetAwaiter().GetResult() - это способ синхронно дождаться async метода в синхронном коде.
-                return RabbitMQStatusNotifier.CreateAsync(configuration).GetAwaiter().GetResult();
+                return RabbitMqStatusNotifier.CreateAsync(configuration).GetAwaiter().GetResult();
             });
             builder.Services.AddScoped<IBinanceService, BinanceService>();
             builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
-            builder.Services.AddScoped<IMarketScreener, MarketScreener>();
             builder.Services.AddScoped<ITradeRepository, TradeRepository>();
             builder.Services.AddScoped<IHistoricalAuditRepository, HistoricalAuditRepository>();
             builder.Services.AddScoped<IOhlcvRepository, OhlcvRepository>();
@@ -105,6 +101,7 @@ public class Program
             builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
             builder.Services.AddScoped<IAuditRepository, AuditRepository>();
             builder.Services.AddTransient<IIndicatorService, IndicatorService>();
+            builder.Services.AddScoped<MarketScreener>();
             builder.Services.AddScoped<SymbolUpdateWorker>();
             builder.Services.AddTransient<HistoricalAuditorWorker>();
             builder.Services.AddTransient<AuditInitializationWorker>();
@@ -115,7 +112,8 @@ public class Program
             builder.Services.AddTransient<OhlcvAggregatorWorker>();
             builder.Services.AddTransient<FeatureCalculatorWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
-            builder.Services.AddTransient<ArchiveDownloaderWorker>();
+            builder.Services.AddTransient<ArchiveDownloaderWorker>(); // ArchiveUnpackerWorker
+            builder.Services.AddTransient<ArchiveUnpackerWorker>(); // 
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
 

@@ -7,7 +7,7 @@ namespace BinanceDataCollector.Application.Analytics.MarketScreeners.Services;
 // Создадим небольшой класс для удобного хранения результата
 
 
-public class MarketScreener : IMarketScreener
+public class MarketScreener
 {
     private readonly BinanceRestClient _restClient;
 
