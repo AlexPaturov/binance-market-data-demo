@@ -40,13 +40,17 @@ public class Program
 
         try {
             Log.Information("Start WebApplicationBuilder");
-            var builder = WebApplication.CreateBuilder(args);
+            //var builder = WebApplication.CreateBuilder(args);
+            
+            var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+            {
+                Args = args,
+                EnvironmentName = Environments.Development
+            });
+            
             Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
-
-            // builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
-            //     .ReadFrom.Configuration(context.Configuration)
-            //     .Enrich.FromLogContext());
-
+            
+            builder.Logging.ClearProviders();
             builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
                 .ReadFrom.Configuration(context.Configuration)
                 .Enrich.FromLogContext()
@@ -92,6 +96,7 @@ public class Program
             builder.Services.AddHangfireServer();
             #endregion
 
+            PrintConfiguration(builder.Configuration);
             var app = builder.Build();
             Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             app.UseMiddleware<MemoryUsageLoggingMiddleware>();
@@ -125,5 +130,15 @@ public class Program
         finally {
             Log.CloseAndFlush();
         }
+    }
+    
+    private static void PrintConfiguration(IConfiguration configuration)
+    {
+        Console.WriteLine("--- Configuration Debug View ---");
+        foreach (var a in configuration.AsEnumerable())
+        {
+            Console.WriteLine($"{a.Key} = {a.Value}");
+        }
+        Console.WriteLine("--- End Configuration Debug View ---");
     }
 }
