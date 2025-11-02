@@ -105,7 +105,7 @@ public class Program
             builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
             builder.Services.AddScoped<IAuditRepository, AuditRepository>();
             builder.Services.AddTransient<IIndicatorService, IndicatorService>();
-            builder.Services.AddScoped<ISymbolUpdateWorker, SymbolUpdateWorker>();
+            builder.Services.AddScoped<SymbolUpdateWorker>();
             builder.Services.AddTransient<HistoricalAuditorWorker>();
             builder.Services.AddTransient<AuditInitializationWorker>();
             builder.Services.AddTransient<QuickAuditorWorker>();

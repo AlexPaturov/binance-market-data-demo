@@ -8,7 +8,7 @@ namespace BinanceDataCollector.Worker.Workers;
 /// Фоновый сервис, который периодически сканирует рынок,
 /// находит самые активные пары и обновляет их список в базе данных.
 /// </summary>
-public class SymbolUpdateWorker : ISymbolUpdateWorker
+public class SymbolUpdateWorker
 {
     private readonly ILogger<SymbolUpdateWorker> _logger;
     private readonly MarketScreener _marketScreener;
