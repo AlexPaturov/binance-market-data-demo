@@ -49,7 +49,7 @@ public class Program
                 Args = args,
                 EnvironmentName = Environments.Development
             });
-            builder.WebHost.UseUrls("http://localhost:7002");
+            builder.WebHost.UseUrls("http://*:7002");
             
             Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             #region Logging preferences
