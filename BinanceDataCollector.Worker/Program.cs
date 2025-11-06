@@ -31,7 +31,7 @@ public class Program
         var bootstrapConfig = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
             .AddJsonFile("appsettings.json", optional: false)
-            .AddJsonFile("appsettings.Development.json", optional: true) // Просто добавляем его, если он есть
+            .AddJsonFile("appsettings.Development.json", optional: true) // Просто добавляем его,  если он есть
             .Build();
 
         Log.Logger = new LoggerConfiguration()
