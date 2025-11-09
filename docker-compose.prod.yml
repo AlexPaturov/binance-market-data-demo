@@ -1,54 +1,146 @@
+# --- СЕТИ ---
+# Объявляем сети, которые будут использовать наши сервисы.
+# 'internal_network' - для связи между сервисами, полностью изолирована от внешнего мира.
+# 'web' - для связи с обратным прокси Traefik.
+networks:
+  internal_network:
+    driver: bridge
+  web:
+    driver: bridge
+
 services:
+  # --- ОБРАТНЫЙ ПРОКСИ ---
+  # Единая точка входа для всего трафика. Управляет SSL и маршрутизацией.
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: always
+    command:
+      - "--api.insecure=true" # Включаем дашборд (для отладки)
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false" # Явно указываем, какие сервисы выставлять наружу
+      - "--entrypoints.web.address=:80" # Открываем порт 80
+      - "--entrypoints.websecure.address=:443" # --- Здесь будут настройки для SSL, когда мы их добавим ---
+      - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}" # Передается из Secrets
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080" # Дашборд будет доступен на порту 8080
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro" # Traefik читает метаданные Docker
+      - "letsencrypt_data:/letsencrypt"
+    networks:
+      - web # Traefik подключен к "внешней" сети
+
+  # --- БАЗА ДАННЫХ ---
   db:
     image: postgres:16-alpine
     container_name: binance_postgres
     restart: always
     environment:
-      - POSTGRES_USER=bindatacoll
-      - POSTGRES_PASSWORD=dt_hfgd_yyyd
+      # Эти значения нужно будет заменить на ${DB_USER}, ${DB_PASSWORD} и передавать из GitHub Secrets
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_DB=market_analytics
-    ports:
-      - "5432:5432"
+      - POSTGRES_INITDB_ARGS=--auth-host=md5      
+      - POSTGRES_HOST_AUTH_METHOD=md5          
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./postgres-config/custom.conf:/etc/postgresql/postgresql.conf # <-- конфигурация параметров работы postgresql
+    command:
+      - "postgres"
+      - "-c"
+      - "password_encryption=md5"
+    networks:
+      - internal_network # База данных подключена ТОЛЬКО к внутренней сети
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d market_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      
+  # --- СЕРВЕР ЛОГОВ ---
   seq:
-    image: datalust/seq:latest # Официальный образ Seq
+    image: datalust/seq:latest
     container_name: binance_seq
     restart: always
     environment:
-      - ACCEPT_EULA=Y # Обязательно для принятия лицензионного соглашения
-    ports:
-      - "5341:80"     # Веб-интерфейс будет доступен на порту 5341
-      - "5342:5341"   # Порт для приема логов (опционально, если нужно снаружи)
+      - ACCEPT_EULA=Y
     volumes:
-      - seq_data:/data # Сохраняем данные и настройки Seq
-#  app:
-#    image: ghcr.io/alexpaturov/binancedatacollector/binance-collector:latest
-#    container_name: binance_collector_app
-#    restart: always
-#    depends_on:
-#      - db
-#      - seq # <-- Зависимость от Seq
-#      - rabbitmq
-#    ports:
-#      - "7001:7001" # Пробрасываем порт 7001 хост-машины на порт 7001 контейнера
-#    environment:
-#      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=bindatacoll;Password=dt_hfgd_yyyd
-#      - ConnectionStrings__HangfireConnection=Host=db;Port=5432;Database=market_analytics_jobs;Username=bindatacoll;Password=dt_hfgd_yyyd
-#      - SEQ_URL=http://seq
+      - seq_data:/data
+    networks:
+      - internal_network # Seq доступен только из внутренней сети...
+      - web              # ...и через Traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.seq.rule=Host(`seq.jahasim.com`)" # <-- Заменить на ваш домен
+      - "traefik.http.routers.seq.entrypoints=websecure"
+      - "traefik.http.routers.seq.tls.certresolver=myresolver"
+      - "traefik.http.services.seq.loadbalancer.server.port=80"
+  
+  # --- БРОКЕР СООБЩЕНИЙ ---
   rabbitmq:
-    image: rabbitmq:3-management
-    container_name: rabbitmq
-    ports:
-      - "5672:5672"   # Порт для подключения клиентов
-      - "15672:15672" # Порт для веб-интерфейса управления
+    image: rabbitmq:3-management-alpine
+    container_name: binance_rabbitmq
+    restart: always
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
+    networks:
+      - internal_network
+    # UI RabbitMQ не будем выставлять наружу для безопасности
+
+  worker:
+    image: ghcr.io/alexpaturov/binancedatacollector/worker:latest
+    container_name: bdc_worker
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
     environment:
-      - RABBITMQ_DEFAULT_USER=guest # Имя пользователя для админки и подключения
-      - RABBITMQ_DEFAULT_PASS=guest
-volumes:     # <-- Определяем тома
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=${DB_USER};Password=${DB_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=db;Port=5432;Database=market_analytics_jobs;Username=${DB_USER};Password=${DB_PASSWORD}
+      - RabbitMQ__HostName=rabbitmq
+      - Serilog__WriteTo__1__Args__serverUrl=http://seq
+    networks:
+      - internal_network
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.hangfire.rule=Host(`hangfire.jahasim.com`)"
+      - "traefik.http.routers.hangfire.entrypoints=websecure"
+      - "traefik.http.routers.hangfire.tls.certresolver=myresolver"
+      - "traefik.http.services.hangfire.loadbalancer.server.port=7001"
+
+  datamanager:
+    image: ghcr.io/alexpaturov/binancedatacollector/datamanager:latest 
+    container_name: bdc_datamanager
+    restart: always
+    depends_on:
+      - db
+      - rabbitmq
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=${DB_USER};Password=${DB_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=db;Port=5432;Database=market_analytics_jobs;Username=${DB_USER};Password=${DB_PASSWORD}
+      - RabbitMQ__HostName=rabbitmq
+      - Serilog__WriteTo__1__Args__serverUrl=http://seq
+    networks:
+      - internal_network
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.datamanager.rule=Host(`datamanager.jahasim.com`)"
+      - "traefik.http.routers.datamanager.entrypoints=websecure"
+      - "traefik.http.routers.datamanager.tls.certresolver=myresolver"
+      - "traefik.http.services.datamanager.loadbalancer.server.port=7002"
+
+volumes:
   postgres_data:
-  seq_data:   
+  seq_data:
   rabbitmq_data:
+  letsencrypt_data:
