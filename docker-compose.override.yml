@@ -13,9 +13,10 @@ services:
       - "15672:15672" # Порт для UI
 
   worker: # Добавляем сервис worker
+    container_name: bdc_worker
     build:
       context: .
-      dockerfile: src/BinanceDataCollector.Worker/Dockerfile
+      dockerfile: /home/lex/RiderProjects/BinanceDataCollector/Dockerfile
     depends_on:
       db:
         condition: service_healthy
@@ -31,9 +32,10 @@ services:
       - Serilog__WriteTo__1__Args__serverUrl=http://seq
 
   datamanager: # Добавляем сервис datamanager
+    container_name: bdc_datamanager
     build:
       context: .
-      dockerfile: src/BinanceDataCollector.DataManager/Dockerfile
+      dockerfile: /home/lex/RiderProjects/BinanceDataCollector/Dockerfile
     depends_on:
       - db
       - rabbitmq
