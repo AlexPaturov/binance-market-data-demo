@@ -6,11 +6,11 @@ WORKDIR /src
 
 # Копируем все .csproj и восстанавливаем зависимости для кэширования
 COPY *.sln .
-COPY src/BinanceDataCollector.Application/*.csproj src/BinanceDataCollector.Application/
-COPY src/BinanceDataCollector.Domain/*.csproj src/BinanceDataCollector.Domain/
-COPY src/BinanceDataCollector.Infrastructure/*.csproj src/BinanceDataCollector.Infrastructure/
-COPY src/BinanceDataCollector.Worker/*.csproj src/BinanceDataCollector.Worker/
-COPY src/BinanceDataCollector.DataManager/*.csproj src/BinanceDataCollector.DataManager/
+COPY src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj src/BinanceDataCollector.Application/
+COPY src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj src/BinanceDataCollector.Domain/
+COPY src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj src/BinanceDataCollector.Infrastructure/
+COPY src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj src/BinanceDataCollector.Worker/
+COPY src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj src/BinanceDataCollector.DataManager/
 RUN dotnet restore
 
 # Копируем весь остальной исходный код
