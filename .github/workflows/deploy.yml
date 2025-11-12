@@ -5,8 +5,8 @@ on:
     branches: [ "master" ]
 
 env:
-  WORKER_IMAGE: ghcr.io/${{ toLower(github.repository_owner) }}/binancedatacollector/worker
-  DATAMANAGER_IMAGE: ghcr.io/${{ toLower(github.repository_owner) }}/binancedatacollector/datamanager
+  WORKER_IMAGE: ghcr.io/${{ lower(github.repository_owner) }}/binancedatacollector/worker
+  DATAMANAGER_IMAGE: ghcr.io/${{ lower(github.repository_owner) }}/binancedatacollector/datamanager
 
 jobs:
   build-and-deploy:
