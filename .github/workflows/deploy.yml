@@ -4,10 +4,6 @@ on:
   push:
     branches: [ "master" ]
 
-env:
-  WORKER_IMAGE: ghcr.io/env.GITHUB_REPOSITORY_OWNER/binancedatacollector/worker
-  DATAMANAGER_IMAGE: ghcr.io/env.GITHUB_REPOSITORY_OWNER/binancedatacollector/datamanager
-
 jobs:
   build-and-deploy:
     runs-on: self-hosted
@@ -15,6 +11,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up Docker image names
+      # Этот шаг создает переменные окружения для последующих шагов
+        run: |
+          echo "WORKER_IMAGE=ghcr.io/alexpaturov/binancedatacollector/worker" | tr '[:upper:]' '[:lower:]' >> $GITHUB_ENV
+          echo "DATAMANAGER_IMAGE=ghcr.io/alexpaturov/binancedatacollector/datamanager" | tr '[:upper:]' '[:lower:]' >> $GITHUB_ENV
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -25,13 +27,13 @@ jobs:
 
       - name: Build and push Worker image
         run: |
-          docker build . --file Dockerfile --tag $WORKER_IMAGE:latest --target worker
-          docker push $WORKER_IMAGE:latest
+          docker build . --file Dockerfile --tag ${{ env.WORKER_IMAGE }}:latest --target worker
+          docker push ${{ env.WORKER_IMAGE }}:latest
 
       - name: Build and push DataManager image
         run: |
-          docker build . --file Dockerfile --tag $DATAMANAGER_IMAGE:latest --target datamanager
-          docker push $DATAMANAGER_IMAGE:latest
+          docker build . --file Dockerfile --tag ${{ env.DATAMANAGER_IMAGE }}:latest --target datamanager
+          docker push ${{ env.DATAMANAGER_IMAGE }}:latest
 
       - name: Create .env file for Docker Compose
         run: |
