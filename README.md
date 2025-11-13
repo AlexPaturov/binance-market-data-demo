@@ -19,11 +19,11 @@
 
 Полная документация по проекту, включая описание архитектуры, структуры базы данных, настройки сервера и процесса развертывания, находится в папке [`/docs`](./docs/01_overview.md).
 
-- **[01 - Обзор проекта](./docs/01_overview.md)**
-- **[02 - Архитектура приложения](./docs/02_architecture.md)**
-- **[03 - База данных (PostgreSQL)](./docs/03_database.md)**
-- **[04 - Развертывание и CI/CD](./docs/04_deployment.md)**
-- **[05 - Настройка Сервера (Ubuntu Server)](./docs/05_setup.md)**
+- **[01 - Обзор проекта](./docs/mds/01_overview.md)**
+- **[02 - Архитектура приложения](./docs/mds/02_architecture.md)**
+- **[03 - База данных (PostgreSQL)](./docs/mds/03_database.md)**
+- **[04 - Развертывание и CI/CD](./docs/mds/04_deployment.md)**
+- **[05 - Настройка Сервера (Ubuntu Server)](./docs/mds/05_setup.md)**
 
 ---
 
