@@ -1,0 +1,414 @@
+  Determining projects to restore...
+  Restored /source/src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj (in 2.16 sec).
+  Restored /source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj (in 5.96 sec).
+  Restored /source/src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj (in 9.8 sec).
+  Restored /source/src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj (in 9.87 sec).
+  Restored /source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj (in 9.87 sec).
+/source/src/BinanceDataCollector.Domain/Entities/FeatureData.cs(8,19): warning CS8618: Non-nullable property 'Symbol' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj]
+/source/src/BinanceDataCollector.Domain/Events/StatusUpdateEvent.cs(13,19): warning CS8618: Non-nullable property 'ConnectionId' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj]
+/source/src/BinanceDataCollector.Domain/Events/StatusUpdateEvent.cs(18,19): warning CS8618: Non-nullable property 'Message' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj]
+  BinanceDataCollector.Domain -> /source/src/BinanceDataCollector.Domain/bin/Release/net8.0/BinanceDataCollector.Domain.dll
+/source/src/BinanceDataCollector.Application/ViewModels/DatabaseDetailsViewModel.cs(7,41): warning CS8618: Non-nullable property 'Connections' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/ViewModels/DatabaseDetailsViewModel.cs(8,32): warning CS8618: Non-nullable property 'TableSizes' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/ViewModels/DatabaseDetailsViewModel.cs(9,19): warning CS8618: Non-nullable property 'TotalDatabaseSize' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/Models/TableSizeInfo.cs(5,19): warning CS8618: Non-nullable property 'TableName' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/Models/TableSizeInfo.cs(6,19): warning CS8618: Non-nullable property 'TableSize' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/Models/TableSizeInfo.cs(7,19): warning CS8618: Non-nullable property 'IndexSize' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/Models/TableSizeInfo.cs(8,19): warning CS8618: Non-nullable property 'TotalSize' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/Models/PostgresConnectionInfo.cs(8,19): warning CS8618: Non-nullable property 'DatabaseName' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/Models/PostgresConnectionInfo.cs(9,19): warning CS8618: Non-nullable property 'UserName' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/Models/PostgresConnectionInfo.cs(10,19): warning CS8618: Non-nullable property 'ApplicationName' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/Models/PostgresConnectionInfo.cs(11,19): warning CS8618: Non-nullable property 'State' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/Archives/Models/ArchivedFileInfo.cs(8,19): warning CS8618: Non-nullable property 'FileName' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+/source/src/BinanceDataCollector.Application/Archives/Models/ArchivedFileInfo.cs(9,19): warning CS8618: Non-nullable property 'Symbol' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj]
+  BinanceDataCollector.Application -> /source/src/BinanceDataCollector.Application/bin/Release/net8.0/BinanceDataCollector.Application.dll
+/source/src/BinanceDataCollector.Infrastructure/Persistence/Csv/Converters/SafeLongConverter.cs(14,28): warning CS8765: Nullability of type of parameter 'text' doesn't match overridden member (possibly because of nullability attributes). [/source/src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj]
+/source/src/BinanceDataCollector.Infrastructure/Services/ArchiveService.cs(39,42): warning CS8425: Async-iterator 'ArchiveService.DownloadAndParseTradesAsync(string, DateOnly, CancellationToken)' has one or more parameters of type 'CancellationToken' but none of them is decorated with the 'EnumeratorCancellation' attribute, so the cancellation token parameter from the generated 'IAsyncEnumerable<>.GetAsyncEnumerator' will be unconsumed [/source/src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj]
+/source/src/BinanceDataCollector.Infrastructure/Services/ArchiveService.cs(123,42): warning CS8425: Async-iterator 'ArchiveService.ParseTradesFromLocalZipAsync(string, string, CancellationToken)' has one or more parameters of type 'CancellationToken' but none of them is decorated with the 'EnumeratorCancellation' attribute, so the cancellation token parameter from the generated 'IAsyncEnumerable<>.GetAsyncEnumerator' will be unconsumed [/source/src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj]
+/source/src/BinanceDataCollector.Infrastructure/Services/ArchiveService.cs(156,42): warning CS8425: Async-iterator 'ArchiveService.ParseTradesFromCsvStreamAsync(Stream, string, CancellationToken)' has one or more parameters of type 'CancellationToken' but none of them is decorated with the 'EnumeratorCancellation' attribute, so the cancellation token parameter from the generated 'IAsyncEnumerable<>.GetAsyncEnumerator' will be unconsumed [/source/src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj]
+/source/src/BinanceDataCollector.Infrastructure/Messaging/RabbitMqStatusNotifier.cs(25,24): warning CS8601: Possible null reference assignment. [/source/src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj]
+/source/src/BinanceDataCollector.Infrastructure/Services/DatabaseMonitoringService.cs(75,22): warning CS0219: The variable 'connectionsSql' is assigned but its value is never used [/source/src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj]
+  BinanceDataCollector.Infrastructure -> /source/src/BinanceDataCollector.Infrastructure/bin/Release/net8.0/BinanceDataCollector.Infrastructure.dll
+/source/src/BinanceDataCollector.Worker/Common/DashboardHostedService.cs(22,23): warning CS0618: 'PostgreSqlStorage.PostgreSqlStorage(string)' is obsolete: 'Will be removed in 2.0, please use the overload with IConnectionFactory argument' [/source/src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj]
+/source/src/BinanceDataCollector.Worker/Workers/Archives/ArchiveDownloaderWorker.cs(107,31): warning CS8602: Dereference of a possibly null reference. [/source/src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj]
+/source/src/BinanceDataCollector.Worker/Workers/HistoricalAuditorWorker.cs(155,47): warning CS8602: Dereference of a possibly null reference. [/source/src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj]
+/source/src/BinanceDataCollector.Worker/Workers/HistoricalAuditorWorker.cs(155,69): warning CS8602: Dereference of a possibly null reference. [/source/src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj]
+/source/src/BinanceDataCollector.Worker/Workers/BinanceCollectorWorker.cs(20,29): warning CS0414: The field 'BinanceCollectorWorker._mainWhileRestartDelaySeconds' is assigned but its value is never used [/source/src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj]
+/source/src/BinanceDataCollector.Worker/Workers/BinanceCollectorWorker.cs(19,29): warning CS0414: The field 'BinanceCollectorWorker._collectorStartDelayMinutes' is assigned but its value is never used [/source/src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj]
+  BinanceDataCollector.Worker -> /source/src/BinanceDataCollector.Worker/bin/Release/net8.0/BinanceDataCollector.Worker.dll
+/source/src/BinanceDataCollector.DataManager/Models/HomeViewModel.cs(42,19): warning CS8618: Non-nullable property 'Name' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Models/HomeViewModel.cs(43,19): warning CS8618: Non-nullable property 'Queues' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Models/ArchiveManagementViewModel.cs(7,25): warning CS8618: Non-nullable property 'ActiveSymbols' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Models/ArchiveManagementViewModel.cs(8,35): warning CS8618: Non-nullable property 'ArchivedFiles' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Models/HomeViewModel.cs(31,37): warning CS8618: Non-nullable property 'MainDbDetails' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Models/HomeViewModel.cs(36,37): warning CS8618: Non-nullable property 'HangfireDbDetails' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Models/DownloadArchivesRequest.cs(43,19): warning CS8618: Non-nullable property 'ConnectionId' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Controllers/ArchiveController.cs(143,25): warning CS8618: Non-nullable property 'FileNames' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Controllers/ArchiveController.cs(144,19): warning CS8618: Non-nullable property 'ConnectionId' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Controllers/ArchiveController.cs(149,25): warning CS8618: Non-nullable property 'FileNames' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Controllers/ArchiveController.cs(67,32): warning CS8600: Converting null literal or possible null value to non-nullable type. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Controllers/ArchiveController.cs(82,32): warning CS8602: Dereference of a possibly null reference. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Messaging/RabbitMQListenerService.cs(33,24): warning CS8601: Possible null reference assignment. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Messaging/RabbitMQListenerService.cs(34,32): warning CS8604: Possible null reference argument for parameter 's' in 'int int.Parse(string s)'. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Messaging/RabbitMQListenerService.cs(35,24): warning CS8601: Possible null reference assignment. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+/source/src/BinanceDataCollector.DataManager/Messaging/RabbitMQListenerService.cs(36,24): warning CS8601: Possible null reference assignment. [/source/src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj]
+  BinanceDataCollector.DataManager -> /source/src/BinanceDataCollector.DataManager/bin/Release/net8.0/BinanceDataCollector.DataManager.dll
+  BinanceDataCollector.DataManager -> /app/publish/
+/app/publish:
+Azure.Core.dll
+Azure.Identity.dll
+Ben.Demystifier.dll
+Binance.Net.dll
+BinanceDataCollector.Application.dll
+BinanceDataCollector.Application.pdb
+BinanceDataCollector.DataManager
+BinanceDataCollector.DataManager.deps.json
+BinanceDataCollector.DataManager.dll
+BinanceDataCollector.DataManager.pdb
+BinanceDataCollector.DataManager.runtimeconfig.json
+BinanceDataCollector.Domain.dll
+BinanceDataCollector.Domain.pdb
+BinanceDataCollector.Infrastructure.dll
+BinanceDataCollector.Infrastructure.pdb
+BinanceDataCollector.Worker
+BinanceDataCollector.Worker.deps.json
+BinanceDataCollector.Worker.dll
+BinanceDataCollector.Worker.pdb
+BinanceDataCollector.Worker.runtimeconfig.json
+CryptoExchange.Net.dll
+CsvHelper.dll
+Dapper.dll
+Hangfire.AspNetCore.dll
+Hangfire.Core.dll
+Hangfire.NetCore.dll
+Hangfire.PostgreSql.dll
+Microsoft.Bcl.AsyncInterfaces.dll
+Microsoft.Bcl.Cryptography.dll
+Microsoft.Data.SqlClient.dll
+Microsoft.Extensions.Caching.Memory.dll
+Microsoft.Extensions.Configuration.Abstractions.dll
+Microsoft.Extensions.Configuration.Binder.dll
+Microsoft.Extensions.Configuration.dll
+Microsoft.Extensions.DependencyInjection.Abstractions.dll
+Microsoft.Extensions.DependencyInjection.dll
+Microsoft.Extensions.DependencyModel.dll
+Microsoft.Extensions.Diagnostics.Abstractions.dll
+Microsoft.Extensions.Diagnostics.dll
+Microsoft.Extensions.FileProviders.Abstractions.dll
+Microsoft.Extensions.Hosting.Abstractions.dll
+Microsoft.Extensions.Http.dll
+Microsoft.Extensions.Logging.Abstractions.dll
+Microsoft.Extensions.Logging.dll
+Microsoft.Extensions.Options.ConfigurationExtensions.dll
+Microsoft.Extensions.Options.dll
+Microsoft.Extensions.Primitives.dll
+Microsoft.Identity.Client.Extensions.Msal.dll
+Microsoft.Identity.Client.dll
+Microsoft.IdentityModel.Abstractions.dll
+Microsoft.IdentityModel.JsonWebTokens.dll
+Microsoft.IdentityModel.Logging.dll
+Microsoft.IdentityModel.Protocols.OpenIdConnect.dll
+Microsoft.IdentityModel.Protocols.dll
+Microsoft.IdentityModel.Tokens.dll
+Microsoft.SqlServer.Server.dll
+Newtonsoft.Json.dll
+Npgsql.dll
+RabbitMQ.Client.dll
+Serilog.AspNetCore.dll
+Serilog.Enrichers.Process.dll
+Serilog.Enrichers.Thread.dll
+Serilog.Enrichers.WithCaller.dll
+Serilog.Exceptions.dll
+Serilog.Extensions.Hosting.dll
+Serilog.Extensions.Logging.dll
+Serilog.Formatting.Compact.dll
+Serilog.Settings.Configuration.dll
+Serilog.Sinks.Async.dll
+Serilog.Sinks.Console.dll
+Serilog.Sinks.Debug.dll
+Serilog.Sinks.File.dll
+Serilog.Sinks.Seq.dll
+Serilog.dll
+Skender.Stock.Indicators.dll
+System.ClientModel.dll
+System.Configuration.ConfigurationManager.dll
+System.Diagnostics.DiagnosticSource.dll
+System.Diagnostics.EventLog.dll
+System.IO.Pipelines.dll
+System.IdentityModel.Tokens.Jwt.dll
+System.Memory.Data.dll
+System.Security.Cryptography.Pkcs.dll
+System.Security.Cryptography.ProtectedData.dll
+System.Text.Encodings.Web.dll
+System.Text.Json.dll
+ca
+cs
+de
+es
+fa
+fr
+it
+ja
+ko
+libman.json
+nb
+nl
+pl
+pt
+pt-BR
+pt-PT
+ru
+runtimes
+sv
+tr
+tr-TR
+web.config
+wwwroot
+zh
+zh-Hans
+zh-Hant
+zh-TW
+
+/app/publish/ca:
+Hangfire.Core.resources.dll
+
+/app/publish/cs:
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/de:
+Hangfire.Core.resources.dll
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/es:
+Hangfire.Core.resources.dll
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/fa:
+Hangfire.Core.resources.dll
+
+/app/publish/fr:
+Hangfire.Core.resources.dll
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/it:
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/ja:
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/ko:
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/nb:
+Hangfire.Core.resources.dll
+
+/app/publish/nl:
+Hangfire.Core.resources.dll
+
+/app/publish/pl:
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/pt:
+Hangfire.Core.resources.dll
+
+/app/publish/pt-BR:
+Hangfire.Core.resources.dll
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/pt-PT:
+Hangfire.Core.resources.dll
+
+/app/publish/ru:
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/runtimes:
+browser
+unix
+win
+win-arm64
+win-x64
+win-x86
+
+/app/publish/runtimes/browser:
+lib
+
+/app/publish/runtimes/browser/lib:
+net8.0
+
+/app/publish/runtimes/browser/lib/net8.0:
+System.Text.Encodings.Web.dll
+
+/app/publish/runtimes/unix:
+lib
+
+/app/publish/runtimes/unix/lib:
+net8.0
+
+/app/publish/runtimes/unix/lib/net8.0:
+Microsoft.Data.SqlClient.dll
+
+/app/publish/runtimes/win:
+lib
+
+/app/publish/runtimes/win/lib:
+net8.0
+
+/app/publish/runtimes/win/lib/net8.0:
+Microsoft.Data.SqlClient.dll
+System.Diagnostics.EventLog.Messages.dll
+System.Diagnostics.EventLog.dll
+System.Security.Cryptography.Pkcs.dll
+
+/app/publish/runtimes/win-arm64:
+native
+
+/app/publish/runtimes/win-arm64/native:
+Microsoft.Data.SqlClient.SNI.dll
+
+/app/publish/runtimes/win-x64:
+native
+
+/app/publish/runtimes/win-x64/native:
+Microsoft.Data.SqlClient.SNI.dll
+
+/app/publish/runtimes/win-x86:
+native
+
+/app/publish/runtimes/win-x86/native:
+Microsoft.Data.SqlClient.SNI.dll
+
+/app/publish/sv:
+Hangfire.Core.resources.dll
+
+/app/publish/tr:
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/tr-TR:
+Hangfire.Core.resources.dll
+
+/app/publish/wwwroot:
+BinanceDataCollector.DataManager.styles.css
+css
+favicon.ico
+js
+lib
+
+/app/publish/wwwroot/css:
+site.css
+
+/app/publish/wwwroot/js:
+site.js
+
+/app/publish/wwwroot/lib:
+bootstrap
+jquery
+jquery-validation
+jquery-validation-unobtrusive
+microsoft
+
+/app/publish/wwwroot/lib/bootstrap:
+LICENSE
+dist
+
+/app/publish/wwwroot/lib/bootstrap/dist:
+css
+js
+
+/app/publish/wwwroot/lib/bootstrap/dist/css:
+bootstrap-grid.css
+bootstrap-grid.css.map
+bootstrap-grid.min.css
+bootstrap-grid.min.css.map
+bootstrap-grid.rtl.css
+bootstrap-grid.rtl.css.map
+bootstrap-grid.rtl.min.css
+bootstrap-grid.rtl.min.css.map
+bootstrap-reboot.css
+bootstrap-reboot.css.map
+bootstrap-reboot.min.css
+bootstrap-reboot.min.css.map
+bootstrap-reboot.rtl.css
+bootstrap-reboot.rtl.css.map
+bootstrap-reboot.rtl.min.css
+bootstrap-reboot.rtl.min.css.map
+bootstrap-utilities.css
+bootstrap-utilities.css.map
+bootstrap-utilities.min.css
+bootstrap-utilities.min.css.map
+bootstrap-utilities.rtl.css
+bootstrap-utilities.rtl.css.map
+bootstrap-utilities.rtl.min.css
+bootstrap-utilities.rtl.min.css.map
+bootstrap.css
+bootstrap.css.map
+bootstrap.min.css
+bootstrap.min.css.map
+bootstrap.rtl.css
+bootstrap.rtl.css.map
+bootstrap.rtl.min.css
+bootstrap.rtl.min.css.map
+
+/app/publish/wwwroot/lib/bootstrap/dist/js:
+bootstrap.bundle.js
+bootstrap.bundle.js.map
+bootstrap.bundle.min.js
+bootstrap.bundle.min.js.map
+bootstrap.esm.js
+bootstrap.esm.js.map
+bootstrap.esm.min.js
+bootstrap.esm.min.js.map
+bootstrap.js
+bootstrap.js.map
+bootstrap.min.js
+bootstrap.min.js.map
+
+/app/publish/wwwroot/lib/jquery:
+LICENSE.txt
+dist
+
+/app/publish/wwwroot/lib/jquery/dist:
+jquery.js
+jquery.min.js
+jquery.min.map
+
+/app/publish/wwwroot/lib/jquery-validation:
+LICENSE.md
+dist
+
+/app/publish/wwwroot/lib/jquery-validation/dist:
+additional-methods.js
+additional-methods.min.js
+jquery.validate.js
+jquery.validate.min.js
+
+/app/publish/wwwroot/lib/jquery-validation-unobtrusive:
+LICENSE.txt
+jquery.validate.unobtrusive.js
+jquery.validate.unobtrusive.min.js
+
+/app/publish/wwwroot/lib/microsoft:
+signalr
+
+/app/publish/wwwroot/lib/microsoft/signalr:
+dist
+
+/app/publish/wwwroot/lib/microsoft/signalr/dist:
+browser
+
+/app/publish/wwwroot/lib/microsoft/signalr/dist/browser:
+signalr.js
+signalr.js.map
+signalr.min.js
+signalr.min.js.map
+
+/app/publish/zh:
+Hangfire.Core.resources.dll
+
+/app/publish/zh-Hans:
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/zh-Hant:
+Microsoft.Data.SqlClient.resources.dll
+
+/app/publish/zh-TW:
+Hangfire.Core.resources.dll

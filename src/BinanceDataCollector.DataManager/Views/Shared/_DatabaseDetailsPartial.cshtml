@@ -1,0 +1,100 @@
+@model BinanceDataCollector.Application.ViewModels.DatabaseDetailsViewModel
+
+@if (Model != null)
+{
+    <!-- Таблица с подключениями -->
+    <h5>Connections (Total: @(Model.Connections?.Sum(c => c.ConnectionCount) ?? 0))</h5>
+    <table class="table table-sm table-bordered table-hover" style="font-size: 0.8rem;">
+        <thead class="table-light">
+            <tr>
+                <th>Application</th>
+                <th>Database</th>
+                <th>State</th>
+                <th class="text-end">Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            @if (Model.Connections != null && Model.Connections.Any())
+            {
+                @foreach (var conn in Model.Connections)
+                {
+                    <tr>
+                        <td>
+                            @if (!string.IsNullOrWhiteSpace(conn.ApplicationName))
+                            {
+                                <span class="badge bg-primary">@conn.ApplicationName</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary">N/A</span>
+                            }
+                        </td>
+                        <td>@conn.DatabaseName</td>
+                        <td>
+                            @if (conn.State == "idle")
+                            {
+                                <span class="text-muted">@conn.State</span>
+                            }
+                            else if (conn.State == "active")
+                            {
+                                <span class="text-success fw-bold">@conn.State</span>
+                            }
+                            else
+                            {
+                                @conn.State
+                            }
+                        </td>
+                        <td class="text-end">@conn.ConnectionCount</td>
+                    </tr>
+                }
+            }
+            else
+            {
+                <tr>
+                    <td colspan="4" class="text-center text-muted">No active connections found.</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <hr />
+
+    <!-- Таблица с размерами таблиц -->
+    <h5>Table Sizes (Total: @Model.TotalDatabaseSize)</h5>
+    <div class="table-container-scrollable" style="max-height: 300px;">
+        <table class="table table-sm table-bordered" style="font-size: 0.8rem;">
+            <thead class="table-light">
+                <tr>
+                    <th>Table Name</th>
+                    <th class="text-end">Data Size</th>
+                    <th class="text-end">Index Size</th>
+                    <th class="text-end">Total Size</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (Model.TableSizes != null && Model.TableSizes.Any())
+                {
+                    @foreach (var table in Model.TableSizes)
+                    {
+                        <tr>
+                            <td>@table.TableName</td>
+                            <td class="text-end">@table.TableSize</td>
+                            <td class="text-end">@table.IndexSize</td>
+                            <td class="text-end">@table.TotalSize</td>
+                        </tr>
+                    }
+                }
+                else
+                {
+                    <tr>
+                         <td colspan="4" class="text-center text-muted">No table size information available.</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else
+{
+    <p class="text-danger">Error: Database details are not available.</p>
+}

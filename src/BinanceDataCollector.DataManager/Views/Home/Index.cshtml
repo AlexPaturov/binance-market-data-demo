@@ -1,0 +1,134 @@
+@model BinanceDataCollector.DataManager.Models.HomeViewModel
+
+@{
+    ViewData["Title"] = "System Dashboard";
+}
+
+<div class="text-center">
+    <h2 class="display-4">Welcome to Data Collector Dashboard</h2>
+    <p>System Status: <span class="badge bg-success">@Model.SystemStatus</span></p>
+</div>
+
+<hr/>
+
+<div class="row">
+    <div class="col-md-6">
+
+        <!-- Блок для основной БД -->
+        <h3>Main DB Status</h3>
+        <div id="main-db-details-container">
+            <!-- Начальная загрузка Partial View с данными из модели -->
+            @if (Model.MainDbDetails != null)
+            {
+                <partial name="~/Views/Shared/_DatabaseDetailsPartial.cshtml" model="Model.MainDbDetails"/>
+            }
+            else
+            {
+                <p>Loading...</p>
+            }
+        </div>
+        <hr/>
+
+        <!-- Блок для Hangfire БД -->
+        <h3>Hangfire DB Status</h3>
+        <div id="hangfire-db-details-container">
+            @if (Model.HangfireDbDetails != null)
+            {
+                <partial name="~/Views/Shared/_DatabaseDetailsPartial.cshtml" model="Model.HangfireDbDetails"/>
+            }
+            else
+            {
+                <p>Loading...</p>
+            }
+        </div>
+
+    </div>
+
+    <div class="col-md-6">
+
+        <h3>System Overview</h3>
+
+        <table class="table">
+            <tbody>
+            <tr>
+                <th>Tracked Symbols</th>
+                <td>@Model.TrackedSymbolsCount</td>
+            </tr>
+            @if (Model.LastTrade != null)
+            {
+                <tr>
+                    <th>Last Saved Trade ID</th>
+                    <td>@Model.LastTrade.TradeId (@Model.LastTrade.Symbol)</td>
+                </tr>
+                <tr>
+                    <th>Last Trade Time (UTC)</th>
+                    <td>@DateTimeOffset.FromUnixTimeMilliseconds(Model.LastTrade.TradeTime).ToString("yyyy-MM-dd HH:mm:ss.fff")</td>
+                </tr>
+            }
+            else
+            {
+                <tr>
+                    <td colspan="2" class="text-muted">No trades found in database yet.</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+
+        <hr/>
+
+        <h3>Hangfire Servers</h3>
+        <div class="table-container-scrollable" style="max-height: 400px;">
+            <table class="table table-striped table-compact">
+                <thead>
+                <tr>
+                    <th>Server Name</th>
+                    <th>Queues</th>
+                    <th>Workers</th>
+                    <th>Heartbeat (UTC)</th>
+                </tr>
+                </thead>
+                <tbody>
+                @if (Model.HangfireServers != null)
+                {
+                    @foreach (var server in Model.HangfireServers)
+                    {
+                        <tr>
+                            <td>@server.Name</td>
+                            <td><small>@server.Queues</small></td>
+                            <td>@server.WorkerCount</td>
+                            <td>@server.Heartbeat.ToString("HH:mm:ss")</td>
+                        </tr>
+                    }
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        // Обновляем содержимое #main-db-details-container и #hangfire-db-details-container каждые 5 секунд.
+        $(document).ready(function () {
+            const mainDbDetailsContainer = $('#main-db-details-container');
+            const hangfireDbDetailsContainer = $('#hangfire-db-details-container');
+
+            const mainDbDetailsUrl = '@Url.Action("GetMainDbDetails", "Home")';
+            const hangfireDbDetailsUrl = '@Url.Action("GetHangfireDbDetails", "Home")';
+
+            function loadMainDbDetails() {
+                mainDbDetailsContainer.load(mainDbDetailsUrl);
+            }
+
+            function loadHangfireDbDetails() {
+                hangfireDbDetailsContainer.load(hangfireDbDetailsUrl);
+            }
+
+            // Запускаем автоматическое обновление через 5 секунд после загрузки страницы (Первоначальные данные уже отрисованы на сервере)
+            setTimeout(() => {
+                setInterval(loadMainDbDetails, 5000);
+                setInterval(loadHangfireDbDetails, 5000);
+            }, 5000);
+        });
+    </script>
+}

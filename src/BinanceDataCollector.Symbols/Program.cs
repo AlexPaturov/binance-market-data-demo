@@ -1,0 +1,19 @@
+﻿namespace BinanceDataCollector.Symbols;
+
+public class Program
+{
+    static async Task Main(string[] args)
+    {
+        var fetcher = new SymbolFetcher();
+        var symbols = await fetcher.GetSpotUsdtPairsAsync();
+
+        Console.WriteLine($"Найдено {symbols.Count} активных USDT пар.");
+
+        // Выводим первые 20 для примера
+        //foreach (var symbol in symbols.Take(20))
+        foreach (var symbol in symbols)
+        {
+            Console.WriteLine(symbol);
+        }
+    }
+}
