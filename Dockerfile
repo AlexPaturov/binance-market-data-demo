@@ -7,10 +7,12 @@ WORKDIR /src
 # Копируем .csproj и .sln для восстановления зависимостей
 COPY ["BinanceDataCollector.sln", "./"]
 COPY "src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj" "src/BinanceDataCollector.Application/"
+COPY "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj" "src/BinanceDataCollector.DataManager/"
 COPY "src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj" "src/BinanceDataCollector.Domain/"
 COPY "src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj" "src/BinanceDataCollector.Infrastructure/"
+COPY "src/BinanceDataCollector.MarketScreenService/BinanceDataCollector.MarketScreenService.csproj" "src/BinanceDataCollector.MarketScreenService/"
+COPY "src/BinanceDataCollector.Symbols/BinanceDataCollector.Symbols.csproj" "src/BinanceDataCollector.Symbols/"
 COPY "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj" "src/BinanceDataCollector.Worker/"
-COPY "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj" "src/BinanceDataCollector.DataManager/"
 
 COPY "tests/BinanceDataCollector.Application.Tests/BinanceDataCollector.Application.Tests.csproj" "tests/BinanceDataCollector.Application.Tests/"
 COPY "tests/BinanceDataCollector.Domain.Tests/BinanceDataCollector.Domain.Tests.csproj" "tests/BinanceDataCollector.Domain.Tests/"
