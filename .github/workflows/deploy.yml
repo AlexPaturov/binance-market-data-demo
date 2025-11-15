@@ -38,14 +38,15 @@ jobs:
           docker build . --file Dockerfile --tag ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest --target datamanager
           docker push ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest
 
-      - name: Create .env file for Docker Compose
+      - name: Prepare deployment directory
         run: |
-          echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" > .env
-          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
-          echo "ACME_EMAIL=${{ secrets.ACME_EMAIL }}" >> .env
+          cp docker-compose.prod.yml /opt/BinanceCollector/docker-compose.yml
+          echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" > /opt/BinanceCollector/.env
+          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> /opt/BinanceCollector/.env
+          echo "ACME_EMAIL=${{ secrets.ACME_EMAIL }}" >> /opt/BinanceCollector/.env
 
       - name: Deploy with Docker Compose
-        # Этот шаг выполняется в рабочей директории runner'а, где лежат все файлы из репозитория
+        working-directory: /opt/BinanceCollector # <-- Указываем, где выполнять команды
         run: |
-          docker compose -f docker-compose.prod.yml --env-file .env pull
-          docker compose -f docker-compose.prod.yml --env-file .env up -d
+          docker compose pull
+          docker compose up -d
