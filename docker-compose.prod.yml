@@ -91,19 +91,39 @@ services:
       - internal_network
     # UI RabbitMQ не будем выставлять наружу для безопасности
 
+  pgbouncer:
+    image: edoburu/pgbouncer
+    container_name: binance_pgbouncer
+    restart: always
+    depends_on:
+      - db
+    networks:
+      - internal_network # pgbouncer должен быть только во внутренней сети
+    environment:
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=1000
+      - DEFAULT_POOL_SIZE=100
+      - MIN_POOL_SIZE=10
+      - RESERVE_POOL_SIZE=10
+      - AUTH_TYPE=md5
+
   worker:
     image: ghcr.io/alexpaturov/binancedatacollector/worker:latest
     container_name: bdc_worker
     restart: always
     depends_on:
-      db:
-        condition: service_healthy
+      pgbouncer:
+        condition: service_started
       rabbitmq:
         condition: service_started
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=db;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__DefaultConnection=Host=pgbouncer;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=pgbouncer;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=rabbitmq
       - Serilog__WriteTo__1__Args__serverUrl=http://seq
     networks:
@@ -121,12 +141,12 @@ services:
     container_name: bdc_datamanager
     restart: always
     depends_on:
-      - db
+      - pgbouncer
       - rabbitmq
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=${DB_USER};Password=${DB_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=db;Port=5432;Database=market_analytics_jobs;Username=${DB_USER};Password=${DB_PASSWORD}
+      - ConnectionStrings__DefaultConnection=Host=pgbouncer;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=pgbouncer;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=rabbitmq
       - Serilog__WriteTo__1__Args__serverUrl=http://seq
     networks:

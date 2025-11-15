@@ -377,3 +377,4 @@ FodyWeavers.xsd
 /BinanceDataCollector.Worker/docs/ai_question_description.md
 /BinanceDataCollector.Worker/docs/to_do_list.md
 docker-compose.override.yml
+.env
