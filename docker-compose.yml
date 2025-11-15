@@ -1,7 +1,6 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: binance_postgres
     restart: always
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
@@ -40,7 +39,6 @@ services:
 
   seq:
     image: datalust/seq:latest
-    container_name: binance_seq
     restart: always
     environment:
       - ACCEPT_EULA=Y
@@ -49,7 +47,6 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
-    container_name: binance_rabbitmq
     restart: always
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
