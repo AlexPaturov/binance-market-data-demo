@@ -37,7 +37,7 @@ COPY --from=build-worker /app/publish .
 
 # V-- ЯВНО КОПИРУЕМ НУЖНЫЕ КОНФИГИ --V
 COPY src/BinanceDataCollector.Worker/appsettings.json .
-COPY src/BinanceDataCollector.Worker/appsettings.Production.json .
+#COPY src/BinanceDataCollector.Worker/appsettings.Production.json .
 # ^-- ЯВНО КОПИРУЕМ НУЖНЫЕ КОНФИГИ --^
 
 ENTRYPOINT ["dotnet", "BinanceDataCollector.Worker.dll"]
@@ -51,7 +51,7 @@ COPY --from=build-datamanager /app/publish .
 
 # V-- ЯВНО КОПИРУЕМ НУЖНЫЕ КОНФИГИ --V
 COPY src/BinanceDataCollector.DataManager/appsettings.json .
-COPY src/BinanceDataCollector.DataManager/appsettings.Production.json .
+#COPY src/BinanceDataCollector.DataManager/appsettings.Production.json .
 # ^-- ЯВНО КОПИРУЕМ НУЖНЫЕ КОНФИГИ --^
 
 ENTRYPOINT ["dotnet", "BinanceDataCollector.DataManager.dll"]
