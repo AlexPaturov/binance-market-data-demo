@@ -13,7 +13,6 @@ COPY "src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructur
 COPY "src/BinanceDataCollector.MarketScreenService/BinanceDataCollector.MarketScreenService.csproj" "src/BinanceDataCollector.MarketScreenService/"
 COPY "src/BinanceDataCollector.Symbols/BinanceDataCollector.Symbols.csproj" "src/BinanceDataCollector.Symbols/"
 COPY "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj" "src/BinanceDataCollector.Worker/"
-
 COPY "tests/BinanceDataCollector.Application.Tests/BinanceDataCollector.Application.Tests.csproj" "tests/BinanceDataCollector.Application.Tests/"
 COPY "tests/BinanceDataCollector.Domain.Tests/BinanceDataCollector.Domain.Tests.csproj" "tests/BinanceDataCollector.Domain.Tests/"
 COPY "tests/BinanceDataCollector.Infrastructure.Tests/BinanceDataCollector.Infrastructure.Tests.csproj" "tests/BinanceDataCollector.Infrastructure.Tests/"
@@ -21,8 +20,16 @@ COPY "tests/BinanceDataCollector.Worker.Tests/BinanceDataCollector.Worker.Tests.
 
 RUN dotnet restore "BinanceDataCollector.sln"
 
-# Копируем остальной код
-COPY . .
+# Копируем остальной код по папкам
+COPY src/BinanceDataCollector.Application/ ./src/BinanceDataCollector.Application/
+COPY src/BinanceDataCollector.Domain/ ./src/BinanceDataCollector.Domain/
+COPY src/BinanceDataCollector.Infrastructure/ ./src/BinanceDataCollector.Infrastructure/
+COPY src/BinanceDataCollector.Worker/ ./src/BinanceDataCollector.Worker/
+COPY src/BinanceDataCollector.DataManager/ ./src/BinanceDataCollector.DataManager/
+COPY tests/BinanceDataCollector.Application.Tests/ ./tests/BinanceDataCollector.Application.Tests/
+COPY tests/BinanceDataCollector.Domain.Tests/ ./tests/BinanceDataCollector.Domain.Tests/
+COPY tests/BinanceDataCollector.Infrastructure.Tests/ ./tests/BinanceDataCollector.Infrastructure.Tests/
+COPY tests/BinanceDataCollector.Worker.Tests/ ./tests/BinanceDataCollector.Worker.Tests/
 
 # ================================================
 # Ступень 2: Публикация Worker
