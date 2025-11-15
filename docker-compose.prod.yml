@@ -100,8 +100,8 @@ services:
     networks:
       - internal_network # pgbouncer должен быть только во внутренней сети
     environment:
-      - DB_USER=${POSTGRES_USER}
-      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_USER=bindatacoll
+      - DB_PASSWORD=dt_hfgd_yyyd
       - DB_HOST=db
       - DB_PORT=5432
       - POOL_MODE=transaction
