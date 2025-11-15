@@ -11,6 +11,12 @@ COPY "src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj" "src/B
 COPY "src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj" "src/BinanceDataCollector.Infrastructure/"
 COPY "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj" "src/BinanceDataCollector.Worker/"
 COPY "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj" "src/BinanceDataCollector.DataManager/"
+
+COPY "tests/BinanceDataCollector.Application.Tests/BinanceDataCollector.Application.Tests.csproj" "tests/BinanceDataCollector.Application.Tests/"
+COPY "tests/BinanceDataCollector.Domain.Tests/BinanceDataCollector.Domain.Tests.csproj" "tests/BinanceDataCollector.Domain.Tests/"
+COPY "tests/BinanceDataCollector.Infrastructure.Tests/BinanceDataCollector.Infrastructure.Tests.csproj" "tests/BinanceDataCollector.Infrastructure.Tests/"
+COPY "src/BinanceDataCollector.Worker.Tests/BinanceDataCollector.Worker.Tests.csproj" "src/BinanceDataCollector.Worker.Tests/"
+
 RUN dotnet restore "BinanceDataCollector.sln"
 
 # Копируем остальной код
