@@ -15,7 +15,7 @@ COPY "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.cspr
 COPY "tests/BinanceDataCollector.Application.Tests/BinanceDataCollector.Application.Tests.csproj" "tests/BinanceDataCollector.Application.Tests/"
 COPY "tests/BinanceDataCollector.Domain.Tests/BinanceDataCollector.Domain.Tests.csproj" "tests/BinanceDataCollector.Domain.Tests/"
 COPY "tests/BinanceDataCollector.Infrastructure.Tests/BinanceDataCollector.Infrastructure.Tests.csproj" "tests/BinanceDataCollector.Infrastructure.Tests/"
-COPY "src/BinanceDataCollector.Worker.Tests/BinanceDataCollector.Worker.Tests.csproj" "src/BinanceDataCollector.Worker.Tests/"
+COPY "tests/BinanceDataCollector.Worker.Tests/BinanceDataCollector.Worker.Tests.csproj" "tests/BinanceDataCollector.Worker.Tests/"
 
 RUN dotnet restore "BinanceDataCollector.sln"
 
