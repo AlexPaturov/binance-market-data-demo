@@ -126,6 +126,8 @@ sudo rm -rf /etc/pgbouncer
 13. 
 
 - passw seq qw12qw12 24.10.2025
+- docker stop $(docker ps -q) -- остановка всех контейнеров
+- docker rm $(docker ps -aq)
    
    
 
