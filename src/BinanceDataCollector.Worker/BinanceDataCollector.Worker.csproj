@@ -28,16 +28,5 @@
 	  <ProjectReference Include="..\BinanceDataCollector.Application\BinanceDataCollector.Application.csproj" />
 	  <ProjectReference Include="..\BinanceDataCollector.Infrastructure\BinanceDataCollector.Infrastructure.csproj" />
 	</ItemGroup>
-
-    <ItemGroup>
-        <!-- Не копировать Development конфиг в публикацию -->
-        <Content Update="appsettings.Development.json">
-            <CopyToPublishDirectory>Never</CopyToPublishDirectory>
-        </Content>
-
-        <!-- Не копировать appsettings из других проектов -->
-        <Content Update="../**/appsettings*.json">
-            <CopyToPublishDirectory>Never</CopyToPublishDirectory>
-        </Content>
-    </ItemGroup>
+    
 </Project>
