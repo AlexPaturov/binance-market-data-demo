@@ -26,6 +26,8 @@ COPY src/BinanceDataCollector.Domain/ ./src/BinanceDataCollector.Domain/
 COPY src/BinanceDataCollector.Infrastructure/ ./src/BinanceDataCollector.Infrastructure/
 COPY src/BinanceDataCollector.Worker/ ./src/BinanceDataCollector.Worker/
 COPY src/BinanceDataCollector.DataManager/ ./src/BinanceDataCollector.DataManager/
+COPY src/BinanceDataCollector.MarketScreenService/ ./src/BinanceDataCollector.MarketScreenService/
+COPY src/BinanceDataCollector.Symbols/ ./src/BinanceDataCollector.Symbols/
 COPY tests/BinanceDataCollector.Application.Tests/ ./tests/BinanceDataCollector.Application.Tests/
 COPY tests/BinanceDataCollector.Domain.Tests/ ./tests/BinanceDataCollector.Domain.Tests/
 COPY tests/BinanceDataCollector.Infrastructure.Tests/ ./tests/BinanceDataCollector.Infrastructure.Tests/
@@ -35,25 +37,26 @@ COPY tests/BinanceDataCollector.Worker.Tests/ ./tests/BinanceDataCollector.Worke
 # Ступень 2: Публикация Worker
 # ================================================
 FROM base-build AS build-worker
-RUN dotnet publish "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj" -c Release -o /app/publish
+RUN dotnet publish "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj" \
+    -c Release \
+    -o /app/publish/worker \
+    --no-restore
 
 # ================================================
 # Ступень 3: Публикация DataManager
 # ================================================
 FROM base-build AS build-datamanager
-RUN dotnet publish "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj" -c Release -o /app/publish
+RUN dotnet publish "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj" \
+    -c Release \
+    -o /app/publish/datamanager \
+    --no-restore
 
 # ================================================
 # Ступень 4: Финальный образ для Worker
 # ================================================
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS worker
 WORKDIR /app
-COPY --from=build-worker /app/publish .
-
-# V-- ЯВНО КОПИРУЕМ НУЖНЫЕ КОНФИГИ --V
-COPY src/BinanceDataCollector.Worker/appsettings.json .
-# ^-- ЯВНО КОПИРУЕМ НУЖНЫЕ КОНФИГИ --^
-
+COPY --from=build-worker /app/publish/worker .
 ENTRYPOINT ["dotnet", "BinanceDataCollector.Worker.dll"]
 
 # ================================================
@@ -61,10 +64,5 @@ ENTRYPOINT ["dotnet", "BinanceDataCollector.Worker.dll"]
 # ================================================
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS datamanager
 WORKDIR /app
-COPY --from=build-datamanager /app/publish .
-
-# V-- ЯВНО КОПИРУЕМ НУЖНЫЕ КОНФИГИ --V
-COPY src/BinanceDataCollector.DataManager/appsettings.json .
-# ^-- ЯВНО КОПИРУЕМ НУЖНЫЕ КОНФИГИ --^
-
+COPY --from=build-datamanager /app/publish/datamanager .
 ENTRYPOINT ["dotnet", "BinanceDataCollector.DataManager.dll"]
