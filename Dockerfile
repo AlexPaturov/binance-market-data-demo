@@ -37,18 +37,22 @@ COPY tests/BinanceDataCollector.Worker.Tests/ ./tests/BinanceDataCollector.Worke
 # Ступень 2: Публикация Worker
 # ================================================
 FROM base-build AS build-worker
+WORKDIR /src
+# Публикуем сразу в уникальную папку для Worker
 RUN dotnet publish "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj" \
     -c Release \
-    -o /app/publish/worker \
+    -o /app/worker \
     --no-restore
 
 # ================================================
 # Ступень 3: Публикация DataManager
 # ================================================
 FROM base-build AS build-datamanager
+WORKDIR /src
+# Публикуем сразу в уникальную папку для DataManager
 RUN dotnet publish "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj" \
     -c Release \
-    -o /app/publish/datamanager \
+    -o /app/datamanager \
     --no-restore
 
 # ================================================
@@ -56,7 +60,7 @@ RUN dotnet publish "src/BinanceDataCollector.DataManager/BinanceDataCollector.Da
 # ================================================
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS worker
 WORKDIR /app
-COPY --from=build-worker /app/publish/worker .
+COPY --from=build-worker /app/worker .
 ENTRYPOINT ["dotnet", "BinanceDataCollector.Worker.dll"]
 
 # ================================================
@@ -64,5 +68,5 @@ ENTRYPOINT ["dotnet", "BinanceDataCollector.Worker.dll"]
 # ================================================
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS datamanager
 WORKDIR /app
-COPY --from=build-datamanager /app/publish/datamanager .
+COPY --from=build-datamanager /app/datamanager .
 ENTRYPOINT ["dotnet", "BinanceDataCollector.DataManager.dll"]
