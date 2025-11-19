@@ -1,7 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Net;
 using BinanceDataCollector.Application.Analytics;
-using BinanceDataCollector.Application.Analytics.MarketScreeners;
 using BinanceDataCollector.Application.Analytics.MarketScreeners.Services;
 using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
@@ -31,7 +30,7 @@ public class Program
         var bootstrapConfig = new ConfigurationBuilder()
             .SetBasePath(Directory.GetCurrentDirectory())
             .AddJsonFile("appsettings.json", optional: false)
-            .AddJsonFile("appsettings.Development.json", optional: true) // Просто добавляем его,  если он есть
+            .AddJsonFile("appsettings.Development.json", optional: true) // Просто добавляем его, если он есть
             .Build();
 
         Log.Logger = new LoggerConfiguration()
@@ -58,7 +57,7 @@ public class Program
 
             #region Logging preferences
             builder.Logging.ClearProviders();
-            builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
+            builder.Host.UseSerilog((context, loggerConfiguration) => loggerConfiguration
                 .ReadFrom.Configuration(context.Configuration)
                 .Enrich.FromLogContext()
                 .Enrich.WithProcessId()
@@ -112,8 +111,9 @@ public class Program
             builder.Services.AddTransient<OhlcvAggregatorWorker>();
             builder.Services.AddTransient<FeatureCalculatorWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
-            builder.Services.AddTransient<ArchiveDownloaderWorker>(); // ArchiveUnpackerWorker
-            builder.Services.AddTransient<ArchiveUnpackerWorker>(); // 
+            // builder.Services.AddTransient<ArchiveDownloaderWorker>(); // must be deleted
+            builder.Services.AddTransient<IArchiveDownloaderWorker, ArchiveDownloaderWorker>();
+            builder.Services.AddTransient<ArchiveUnpackerWorkerWorker>(); // 
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
 

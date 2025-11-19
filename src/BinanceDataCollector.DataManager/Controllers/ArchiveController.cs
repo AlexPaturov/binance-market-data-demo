@@ -1,7 +1,6 @@
 using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Models;
-using BinanceDataCollector.Worker.Workers.Archives;
 using Hangfire;
 using Microsoft.AspNetCore.Mvc;
 
@@ -83,7 +82,7 @@ public class ArchiveController : Controller
         {
             foreach (var date in datesToDownload)
             {
-                _backgroundJobClient.Enqueue<ArchiveDownloaderWorker>(
+                _backgroundJobClient.Enqueue<IArchiveDownloaderWorker>(
                     worker => worker.DownloadArchiveAsync(request.RequestId, request.ConnectionId, symbol, date)
                 );
                 totalJobs++;
@@ -105,7 +104,7 @@ public class ArchiveController : Controller
         foreach (var fileName in request.FileNames)
         {
             // Ставим задачу в очередь для КАЖДОГО выбранного файла
-            _backgroundJobClient.Enqueue<ArchiveUnpackerWorker>(
+            _backgroundJobClient.Enqueue<IArchiveUnpackerWorker>(
                 worker => worker.UnpackArchiveAsync(fileName, request.ConnectionId)
             );
         }
@@ -126,7 +125,7 @@ public class ArchiveController : Controller
         foreach (var fileName in request.FileNames)
         {
             // Ставим задачу в очередь для нового воркера ArchiveDeletionWorker
-            _backgroundJobClient.Enqueue<ArchiveDeletionWorker>(
+            _backgroundJobClient.Enqueue<IArchiveDeletionWorker>(
                 worker => worker.DeleteFileAsync(fileName)
             );
         }

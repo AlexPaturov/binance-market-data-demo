@@ -7,7 +7,7 @@ namespace BinanceDataCollector.Worker.Workers.Archives;
 
 [Queue("archive_import")]               // Выполняем в низкоприоритетной очереди
 //[DisableConcurrentExecution(10 * 60)]   // Таймаут на скачивание одного файла - 10 минут
-public class ArchiveDownloaderWorker
+public class ArchiveDownloaderWorker : IArchiveDownloaderWorker
 {
     private readonly IArchiveService _archiveService; // Предполагаем, что он уже есть
     private readonly ILogger<ArchiveDownloaderWorker> _logger;

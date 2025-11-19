@@ -7,9 +7,9 @@ using BinanceDataCollector.DataManager.Hubs;
 using BinanceDataCollector.DataManager.Messaging;
 using BinanceDataCollector.DataManager.Middleware;
 using BinanceDataCollector.Domain.DTOs;
+using BinanceDataCollector.Infrastructure.Messaging;
 using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
-using BinanceDataCollector.Infrastructure.Messaging;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Serilog;
@@ -54,7 +54,7 @@ public class Program
             Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             #region Logging preferences
             builder.Logging.ClearProviders();
-            builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
+            builder.Host.UseSerilog((context, loggerConfiguration) => loggerConfiguration
                 .ReadFrom.Configuration(context.Configuration)
                 .Enrich.FromLogContext()
                 .Enrich.WithProcessId()

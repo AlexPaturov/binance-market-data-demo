@@ -12,16 +12,16 @@ namespace BinanceDataCollector.Worker.Workers.Archives;
 /// После успешной распаковки, поставить в очередь Hangfire задачу для следующего эта-па — импорта (CsvImportWorker).
 /// (Опционально) Удалить исходный ZIP-файл, чтобы не занимать место.
 /// </summary>
-public class ArchiveUnpackerWorker : IArchiveUnpacker
+public class ArchiveUnpackerWorkerWorker : IArchiveUnpackerWorker
 {
-    private readonly ILogger<ArchiveUnpackerWorker> _logger;
+    private readonly ILogger<ArchiveUnpackerWorkerWorker> _logger;
     private readonly IBackgroundJobClient _backgroundJobClient;
     private readonly IStatusNotifier _notifier;
     private readonly string _downloadPath;
     private readonly string _destinationPath;
 
-    public ArchiveUnpackerWorker(
-        ILogger<ArchiveUnpackerWorker> logger,
+    public ArchiveUnpackerWorkerWorker(
+        ILogger<ArchiveUnpackerWorkerWorker> logger,
         IPathProvider pathProvider,
         IBackgroundJobClient backgroundJobClient,
         IStatusNotifier notifier)
