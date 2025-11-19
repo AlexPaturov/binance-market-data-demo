@@ -29,9 +29,19 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Content Update="appsettings.Development.json">
-	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-	  </Content>
+        <!-- Не копировать appsettings из других проектов -->
+        <Content Remove="../**/appsettings*.json" />
+
+        <!-- Но оставить свой -->
+        <Content Include="appsettings.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        </Content>
+
+        <!-- Development конфиг не нужен в Production -->
+        <Content Update="appsettings.Development.json">
+            <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+        </Content>
 	</ItemGroup>
     
 </Project>
