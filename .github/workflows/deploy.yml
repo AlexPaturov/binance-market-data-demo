@@ -48,8 +48,8 @@ jobs:
           
           # 3. Создаем .env файл с секретами
           cat > .env << EOF
-          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_USER=${{ secrets.DB_USER }}
+          POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}
           ACME_EMAIL=${{ secrets.ACME_EMAIL }}
           EOF
           
