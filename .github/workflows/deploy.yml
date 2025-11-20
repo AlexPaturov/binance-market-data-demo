@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: List files for debugging
         run: ls -R
 
@@ -47,10 +47,16 @@ jobs:
           cd /opt/BinanceCollector
           
           # 3. Создаем .env файл с секретами
-          echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" > .env
-          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
-          echo "ACME_EMAIL=${{ secrets.ACME_EMAIL }}" >> .env
-
-          # 4. Скачиваем свежие образы и перезапускаем сервисы
-          docker compose --env-file .env pull
-          docker compose --env-file .env up -d
+          cat > .env << EOF
+          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          ACME_EMAIL=${{ secrets.ACME_EMAIL }}
+          EOF
+          
+          # 4. Проверяем содержимое .env (для отладки, потом можно удалить)
+          echo "=== .env file created ==="
+          cat .env | sed 's/PASSWORD=.*/PASSWORD=***HIDDEN***/'
+          
+          # 5. Скачиваем свежие образы и перезапускаем сервисы
+          docker compose pull
+          docker compose up -d
