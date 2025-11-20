@@ -51,7 +51,7 @@ jobs:
           POSTGRES_USER=${{ secrets.DB_USER }}
           POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}
           ACME_EMAIL=${{ secrets.ACME_EMAIL }}
-          SERILOG_SEQ_URL=http://seq
+          SERILOG_SEQ_URL=http://seq:5341
           SEQ_ADMIN_USER=lex
           SEQ_ADMIN_PASS=lex
           EOF
