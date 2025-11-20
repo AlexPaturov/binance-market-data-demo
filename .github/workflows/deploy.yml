@@ -48,13 +48,13 @@ jobs:
           
           # 3. Создаем .env файл с секретами
           cat > .env << EOF
-POSTGRES_USER=${{ secrets.DB_USER }}
-POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}
-ACME_EMAIL=${{ secrets.ACME_EMAIL }}
-SERILOG_SEQ_URL=http://seq
-SEQ_ADMIN_USER=lex
-SEQ_ADMIN_PASS=lex
-EOF
+          POSTGRES_USER=${{ secrets.DB_USER }}
+          POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}
+          ACME_EMAIL=${{ secrets.ACME_EMAIL }}
+          SERILOG_SEQ_URL=http://seq
+          SEQ_ADMIN_USER=lex
+          SEQ_ADMIN_PASS=lex
+          EOF
           
           # 4. Проверяем содержимое .env (для отладки, потом можно удалить)
           echo "=== .env file created ==="
