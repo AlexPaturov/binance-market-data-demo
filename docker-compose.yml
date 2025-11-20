@@ -44,6 +44,7 @@ services:
       - ACCEPT_EULA=Y
       - SEQ_FIRSTRUN_ADMINUSERNAME=${SEQ_ADMIN_USER}
       - SEQ_FIRSTRUN_ADMINPASSWORD=${SEQ_ADMIN_PASS}
+      - SERILOG_SEQ_URL=${SERILOG_SEQ_URL}
     volumes:
       - seq_data:/data
 

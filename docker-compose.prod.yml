@@ -126,7 +126,7 @@ services:
       - ConnectionStrings__DefaultConnection=Host=pgbouncer;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - ConnectionStrings__HangfireConnection=Host=pgbouncer;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=rabbitmq
-      - Serilog__WriteTo__1__Args__serverUrl=http://seq
+      - Serilog__WriteTo__1__Args__serverUrl=http://seq:5341
     networks:
       - internal_network
       - web
@@ -149,7 +149,7 @@ services:
       - ConnectionStrings__DefaultConnection=Host=pgbouncer;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - ConnectionStrings__HangfireConnection=Host=pgbouncer;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=rabbitmq
-      - Serilog__WriteTo__1__Args__serverUrl=http://seq
+      - Serilog__WriteTo__1__Args__serverUrl=http://seq:5341
     networks:
       - internal_network
       - web
