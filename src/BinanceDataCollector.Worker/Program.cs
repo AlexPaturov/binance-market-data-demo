@@ -122,26 +122,44 @@ public class Program
             Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
             #region Hangfire preferences
-
             builder.Services.AddHangfire(config => config
                 .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
                 .UseSimpleAssemblyNameTypeSerializer()
                 .UseRecommendedSerializerSettings()
-                .UsePostgreSqlStorage(connectionString =>
-                {
-                    connectionString.UseNpgsqlConnection(
-                        builder.Configuration.GetConnectionString("HangfireConnection"));
-                }, new PostgreSqlStorageOptions
-                {
-                    QueuePollInterval = TimeSpan.FromSeconds(15), // Как часто проверять очередь
-                    InvisibilityTimeout = TimeSpan.FromHours(4), // Увеличиваем до 4 часов
-                    UseNativeDatabaseTransactions = true, // Использовать нативные транзакции
-                    PrepareSchemaIfNecessary = true, // Автоматически создавать схему
-                    SchemaName = "hangfire", // Название схемы (опционально)
-                    JobExpirationCheckInterval = TimeSpan.FromHours(1), // Проверка истекших заданий
-                    CountersAggregateInterval = TimeSpan.FromMinutes(5), // Агрегация счетчиков
-                    TransactionSynchronisationTimeout = TimeSpan.FromMinutes(5) // Таймаут синхронизации
-                }));
+                .UsePostgreSqlStorage( options => options.UseNpgsqlConnection(
+                        builder.Configuration.GetConnectionString("HangfireConnection")),
+                    new PostgreSqlStorageOptions
+                    {
+                        QueuePollInterval = TimeSpan.FromSeconds(15),
+                        InvisibilityTimeout = TimeSpan.FromHours(4),
+                        UseNativeDatabaseTransactions = true,
+                        PrepareSchemaIfNecessary = true,
+                        SchemaName = "hangfire",
+                        JobExpirationCheckInterval = TimeSpan.FromHours(1),
+                        CountersAggregateInterval = TimeSpan.FromMinutes(5),
+                        TransactionSynchronisationTimeout = TimeSpan.FromMinutes(5)
+                    }));
+            
+            
+            // builder.Services.AddHangfire(config => config
+            //     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+            //     .UseSimpleAssemblyNameTypeSerializer()
+            //     .UseRecommendedSerializerSettings()
+            //     .UsePostgreSqlStorage(connectionString =>
+            //     {
+            //         connectionString.UseNpgsqlConnection(
+            //             builder.Configuration.GetConnectionString("HangfireConnection"));
+            //     }, new PostgreSqlStorageOptions
+            //     {
+            //         QueuePollInterval = TimeSpan.FromSeconds(15), // Как часто проверять очередь
+            //         InvisibilityTimeout = TimeSpan.FromHours(4), // Увеличиваем до 4 часов
+            //         UseNativeDatabaseTransactions = true, // Использовать нативные транзакции
+            //         PrepareSchemaIfNecessary = true, // Автоматически создавать схему
+            //         SchemaName = "hangfire", // Название схемы (опционально)
+            //         JobExpirationCheckInterval = TimeSpan.FromHours(1), // Проверка истекших заданий
+            //         CountersAggregateInterval = TimeSpan.FromMinutes(5), // Агрегация счетчиков
+            //         TransactionSynchronisationTimeout = TimeSpan.FromMinutes(5) // Таймаут синхронизации
+            //     }));
 
             // --- Сервер для быстрых, приоритетных задач ---
             builder.Services.AddHangfireServer(options =>

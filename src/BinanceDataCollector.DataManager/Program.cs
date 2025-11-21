@@ -102,7 +102,6 @@ public class Program
                 .UsePostgreSqlStorage(options => {
                     options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("HangfireConnection")); 
                 }));
-            //builder.Services.AddHangfireServer();
             #endregion
 
             PrintConfiguration(builder.Configuration); // TODO service information - dele
