@@ -41,7 +41,7 @@ jobs:
       - name: Deploy to Server
         run: |
           # 1. Копируем правильный compose-файл
-          cp ${{ github.workspace }}/docker-compose.prod.yml /opt/BinanceCollector/docker-compose.yml
+          cp ${{ github.workspace }}/docker-compose.prod.yml /opt/BinanceCollector/docker-compose.prod.yml
           
           # 2. Переходим в директорию деплоя
           cd /opt/BinanceCollector
