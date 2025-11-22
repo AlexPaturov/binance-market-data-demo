@@ -3,9 +3,10 @@
 # 'internal_network' - для связи между сервисами, полностью изолирована от внешнего мира.
 # 'web' - для связи с обратным прокси Traefik.
 networks:
-  internal_network:
-    driver: bridge
   web:
+    name: binancecollector_web # Явно задаем имя сети, чтобы не было путаницы
+    external: false
+  internal_network:
     driver: bridge
 
 services:
@@ -172,13 +173,6 @@ services:
       - "traefik.http.routers.datamanager.rule=Host(`datamanager.jahasim.com`)"
       - "traefik.http.routers.datamanager.entrypoints=web"
       - "traefik.http.services.datamanager.loadbalancer.server.port=7002"
-
-networks:
-  web:
-    name: binancecollector_web # Явно задаем имя сети, чтобы не было путаницы
-    external: false
-  internal_network:
-    driver: bridge
 
 volumes:
   postgres_data:
