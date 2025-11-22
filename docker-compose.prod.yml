@@ -59,7 +59,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      
+
   # --- СЕРВЕР ЛОГОВ ---
   seq:
     image: datalust/seq:latest
@@ -80,7 +80,7 @@ services:
       - "traefik.http.routers.seq.entrypoints=websecure"
       - "traefik.http.routers.seq.tls.certresolver=myresolver"
       - "traefik.http.services.seq.loadbalancer.server.port=80"
-  
+
   # --- БРОКЕР СООБЩЕНИЙ ---
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -138,7 +138,7 @@ services:
       - "traefik.http.services.hangfire.loadbalancer.server.port=7001"
 
   datamanager:
-    image: ghcr.io/alexpaturov/binancedatacollector/datamanager:latest 
+    image: ghcr.io/alexpaturov/binancedatacollector/datamanager:latest
     container_name: bdc_datamanager
     restart: always
     depends_on:
