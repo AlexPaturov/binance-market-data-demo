@@ -131,7 +131,7 @@ services:
       - web
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=web"
+      - "traefik.docker.network=binancecollector_web"
       - "traefik.http.routers.hangfire.rule=Host(`hangfire.jahasim.com`)"
       - "traefik.http.routers.hangfire.entrypoints=web"
       - "traefik.http.services.hangfire.loadbalancer.server.port=7001"
