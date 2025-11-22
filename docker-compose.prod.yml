@@ -14,6 +14,7 @@ services:
   traefik:
     image: traefik:v2.10
     container_name: traefik
+    hostname: traefik
     restart: always
     command:
       - "--api.insecure=true" # Включаем дашборд (для отладки)
@@ -35,6 +36,18 @@ services:
       - "letsencrypt_data:/letsencrypt"
     networks:
       - web # Traefik подключен к "внешней" сети
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: binance_tunnel
+    restart: always
+    command: tunnel run --protocol http2
+    environment:
+      - TUNNEL_TOKEN=eyJhIjoiY2JjY2Q0MDcyMTA5M2FmNjYxZGIxNDc4NmY0Y2M3M2YiLCJ0IjoiZDM2ZGE1YjQtYTgwOS00MWVhLWJhYmMtNGJlZTU3NWE5N2NhIiwicyI6ImxxYmhXbHNFeHpGT0ZWM1ZTNnJ2K0tiempLRko5TnphUXNNbWh6eGtuT1U9In0=
+    networks:
+      - web
+    depends_on:
+      - traefik
 
   # --- БАЗА ДАННЫХ ---
   db:
@@ -75,7 +88,7 @@ services:
       - web              # ...и через Traefik
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=web"
+      - "traefik.docker.network=binancecollector_web"
       - "traefik.http.routers.seq.rule=Host(`seq.jahasim.com`)"
       - "traefik.http.routers.seq.entrypoints=web"
       - "traefik.http.services.seq.loadbalancer.server.port=80"
@@ -155,20 +168,17 @@ services:
       - web
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=web"
+      - "traefik.docker.network=binancecollector_web"
       - "traefik.http.routers.datamanager.rule=Host(`datamanager.jahasim.com`)"
       - "traefik.http.routers.datamanager.entrypoints=web"
       - "traefik.http.services.datamanager.loadbalancer.server.port=7002"
 
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: binance_tunnel
-    restart: always
-    command: tunnel run --protocol http2
-    environment:
-      - TUNNEL_TOKEN=eyJhIjoiY2JjY2Q0MDcyMTA5M2FmNjYxZGIxNDc4NmY0Y2M3M2YiLCJ0IjoiZDM2ZGE1YjQtYTgwOS00MWVhLWJhYmMtNGJlZTU3NWE5N2NhIiwicyI6ImxxYmhXbHNFeHpGT0ZWM1ZTNnJ2K0tiempLRko5TnphUXNNbWh6eGtuT1U9In0=
-    networks:
-      - web
+networks:
+  web:
+    name: binancecollector_web # Явно задаем имя сети, чтобы не было путаницы
+    external: false
+  internal_network:
+    driver: bridge
 
 volumes:
   postgres_data:

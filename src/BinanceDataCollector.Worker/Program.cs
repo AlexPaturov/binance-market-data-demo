@@ -200,7 +200,6 @@ public class Program
 
             // Добавляем простой эндпоинт для проверки, что веб-сервер жив
             app.MapGet("/", () => "BinanceDataCollector is running.");
-            app.MapGet("/health", () => Results.Ok("Healthy"));
             Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
             Log.Information("Запуск хоста (app.Run)...");
