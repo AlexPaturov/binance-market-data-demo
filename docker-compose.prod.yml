@@ -44,8 +44,8 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=market_analytics
-      - POSTGRES_INITDB_ARGS=--auth-host=md5      
-      - POSTGRES_HOST_AUTH_METHOD=md5          
+      - POSTGRES_INITDB_ARGS=--auth-host=md5
+      - POSTGRES_HOST_AUTH_METHOD=md5
     volumes:
       - postgres_data:/var/lib/postgresql/data
     command:
