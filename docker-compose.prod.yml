@@ -75,9 +75,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=web"
-      - "traefik.http.routers.seq.rule=Host(`seq.jahasim.com`)" # <-- Заменить на ваш домен
-      - "traefik.http.routers.seq.entrypoints=websecure"
-      - "traefik.http.routers.seq.tls.certresolver=myresolver"
+      - "traefik.http.routers.seq.rule=Host(`seq.jahasim.com`)"
+      - "traefik.http.routers.seq.entrypoints=web"
       - "traefik.http.services.seq.loadbalancer.server.port=80"
 
   # --- БРОКЕР СООБЩЕНИЙ ---
@@ -133,8 +132,7 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=web"
       - "traefik.http.routers.hangfire.rule=Host(`hangfire.jahasim.com`)"
-      - "traefik.http.routers.hangfire.entrypoints=websecure"
-      - "traefik.http.routers.hangfire.tls.certresolver=myresolver"
+      - "traefik.http.routers.hangfire.entrypoints=web"
       - "traefik.http.services.hangfire.loadbalancer.server.port=7001"
 
   datamanager:
@@ -157,8 +155,7 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=web"
       - "traefik.http.routers.datamanager.rule=Host(`datamanager.jahasim.com`)"
-      - "traefik.http.routers.datamanager.entrypoints=websecure"
-      - "traefik.http.routers.datamanager.tls.certresolver=myresolver"
+      - "traefik.http.routers.datamanager.entrypoints=web"
       - "traefik.http.services.datamanager.loadbalancer.server.port=7002"
 
 volumes:
