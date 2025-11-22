@@ -128,10 +128,38 @@ sudo rm -rf /etc/pgbouncer
 - passw seq qw12qw12 24.10.2025
 - docker stop $(docker ps -q) -- остановка всех контейнеров
 - docker rm $(docker ps -aq)
-   
-   
 
+  ----------- заходим внутрь контейнера pgbouncer ---------------
+- # Запустите контейнер (если не запущен)
+docker compose up -d pgbouncer
 
+# Зайдите внутрь контейнера
+docker exec -it binance_pgbouncer sh
+
+# Найдите pgbouncer.ini
+find / -name "pgbouncer.ini" 2>/dev/null
+
+# Обычно он здесь:
+cat /etc/pgbouncer/pgbouncer.ini
+
+# Выйдите
+exit
+
+----------- заходим внутрь контейнера binance_postgres ---------------
+# Зайдите внутрь контейнера
+docker exec -it binance_postgres sh
+
+--------------------------
+show logs
+docker logs bdc_worker --tail 50
+
+-------------------------------------------------
+смотрим все сети докера
+docker network ls
+--------------------------------------------------
+посмотреть сети
+docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' bdc_worker
+----------------------------------------------------------------------------------------------------------
 
 # -------------------- Найти PID Worker
 pidof BinanceDataCollector.DataManager

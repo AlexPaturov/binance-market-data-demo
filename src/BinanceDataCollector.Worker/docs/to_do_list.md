@@ -21,6 +21,17 @@
 # TODO После docker-compose up -d у тебя по адресу http://localhost:15672 (логин/пароль: user/password) появится админка RabbitMQ
 # TODO
 # TODO
+
+Сделать 21.11.2025
+1. Security (Критично!): Настрой Cloudflare Zero Trust (Access) для доменов hangfire и seq. Не выставляй админки в интернет без защиты.
+2. Cloudflare Config: Пропиши ingress правила в конфиге туннеля, чтобы раскидать поддомены по портам контейнеров (Seq:80, App:8080).
+3. Code Architecture: Переведи Program.cs на HostApplicationBuilder.
+4. High Load: Реализуй System.Threading.Channels для буферизации данных между WebSocket и БД.
+5. Database: Используй NpgsqlBinaryImporter (Postgres COPY) или Bulk-библиотеки вместо обычного Add/SaveChanges.
+6. Resilience: Добавь .AddStandardResilienceHandler() к HttpClient (Binance API).
+7. Logging: Подключи Serilog → Seq. Убедись, что не логируешь API Secret Keys.
+8. Docker Resource: Пропиши limits: memory: 512M (или сколько не жалко) в compose-файле, чтобы OOM Killer не положил весь сервер.
+
 # TODO
 # TODO
 # TODO
