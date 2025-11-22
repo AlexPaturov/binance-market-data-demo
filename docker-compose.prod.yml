@@ -114,15 +114,13 @@ services:
     image: ghcr.io/alexpaturov/binancedatacollector/worker:latest
     container_name: bdc_worker
     restart: always
-    ports:
-      - "7001:7001"
     depends_on:
       pgbouncer:
         condition: service_started
       rabbitmq:
         condition: service_started
     environment:
-      - ASPNETCORE_URLS=http://0.0.0.0:7001
+      - ASPNETCORE_URLS=http://0.0.0.0:7001 # Слушаем внутри контейнера на всех интерфейсах
       - ASPNETCORE_ENVIRONMENT=Production
       - ConnectionStrings__DefaultConnection=Host=pgbouncer;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - ConnectionStrings__HangfireConnection=Host=pgbouncer;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
