@@ -185,6 +185,14 @@ Renewal Nov 01, 2026.
 jahasim.com
 # ----------------------------- app domain -----------------------------------------------
 
+# ----------------------------- Проверка проекта на сервере -----------------------------------------------
+
+# На сервере, в папке с проектом
+docker compose -f docker-compose.prod.yml up -d
+Проверка:
+Откройте в браузере https://hangfire.jahasim.com.
+Откройте https://seq.jahasim.com.
+Откройте https://datamanager.jahasim.com.
 
 
 
