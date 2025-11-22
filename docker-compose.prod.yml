@@ -114,6 +114,8 @@ services:
     image: ghcr.io/alexpaturov/binancedatacollector/worker:latest
     container_name: bdc_worker
     restart: always
+    ports:
+      - "7001:7001"
     depends_on:
       pgbouncer:
         condition: service_started
