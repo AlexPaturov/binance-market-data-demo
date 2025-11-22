@@ -74,6 +74,7 @@ services:
       - web              # ...и через Traefik
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=web"
       - "traefik.http.routers.seq.rule=Host(`seq.jahasim.com`)" # <-- Заменить на ваш домен
       - "traefik.http.routers.seq.entrypoints=websecure"
       - "traefik.http.routers.seq.tls.certresolver=myresolver"
@@ -130,6 +131,7 @@ services:
       - web
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=web"
       - "traefik.http.routers.hangfire.rule=Host(`hangfire.jahasim.com`)"
       - "traefik.http.routers.hangfire.entrypoints=websecure"
       - "traefik.http.routers.hangfire.tls.certresolver=myresolver"
@@ -153,6 +155,7 @@ services:
       - web
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=web"
       - "traefik.http.routers.datamanager.rule=Host(`datamanager.jahasim.com`)"
       - "traefik.http.routers.datamanager.entrypoints=websecure"
       - "traefik.http.routers.datamanager.tls.certresolver=myresolver"
