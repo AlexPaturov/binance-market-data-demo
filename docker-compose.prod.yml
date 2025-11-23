@@ -45,10 +45,7 @@ services:
     command: tunnel run --protocol http2
     environment:
       - TUNNEL_TOKEN=eyJhIjoiY2JjY2Q0MDcyMTA5M2FmNjYxZGIxNDc4NmY0Y2M3M2YiLCJ0IjoiZDM2ZGE1YjQtYTgwOS00MWVhLWJhYmMtNGJlZTU3NWE5N2NhIiwicyI6ImxxYmhXbHNFeHpGT0ZWM1ZTNnJ2K0tiempLRko5TnphUXNNbWh6eGtuT1U9In0=
-    networks:
-      - web
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    network_mode: host
     depends_on:
       - traefik
 
