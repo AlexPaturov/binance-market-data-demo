@@ -45,7 +45,7 @@ public class Program
         {
             Log.Information("Запускаем приложение...");
             //var builder = WebApplication.CreateBuilder(args);
-            
+            //
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
                 Args = args,
