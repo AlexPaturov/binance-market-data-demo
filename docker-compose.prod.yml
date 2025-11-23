@@ -42,7 +42,7 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: binance_tunnel
     restart: always
-    command: tunnel run --protocol http2 --loglevel debug
+    command: tunnel run --protocol http2 --loglevel debug --transport-loglevel debug
     environment:
       - TUNNEL_TOKEN=eyJhIjoiY2JjY2Q0MDcyMTA5M2FmNjYxZGIxNDc4NmY0Y2M3M2YiLCJ0IjoiZDM2ZGE1YjQtYTgwOS00MWVhLWJhYmMtNGJlZTU3NWE5N2NhIiwicyI6ImxxYmhXbHNFeHpGT0ZWM1ZTNnJ2K0tiempLRko5TnphUXNNbWh6eGtuT1U9In0=
     networks:
