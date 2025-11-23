@@ -4,13 +4,13 @@
 # 'web' - для связи с обратным прокси Traefik.
 networks:
   web:
-    name: binancecollector_web # Явно задаем имя сети, чтобы не было путаницы
-    external: false
-  internal_network:
+    name: binancecollector_web
     driver: bridge
     ipam:
       config:
         - subnet: 172.20.0.0/16
+  internal_network:
+    driver: bridge
 
 services:
   # --- ОБРАТНЫЙ ПРОКСИ ---
