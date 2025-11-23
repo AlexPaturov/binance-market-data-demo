@@ -29,12 +29,12 @@ public class HangfireJobsService : IHostedService
         _recurringJobManager.RemoveIfExists("update-symbols-history");
 
         // Вместо статического RecurringJob используем IRecurringJobManager из DI
-        _recurringJobManager.AddOrUpdate<SymbolUpdateWorker>(
-            "update-symbols",
-            worker => worker.ScanMarketAndUpdateSymbolsAsync(),
-            Cron.Daily(), // Запускать раз в день
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        );
+        // _recurringJobManager.AddOrUpdate<SymbolUpdateWorker>(
+        //     "update-symbols",
+        //     worker => worker.ScanMarketAndUpdateSymbolsAsync(),
+        //     Cron.Daily(), // Запускать раз в день
+        //     new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
+        // );
 
         // "historical-audit": Запускать ОДИН РАЗ В ДЕНЬ в 00:00 по киевскому времени (примерно 22:00 UTC)
         //_recurringJobManager.AddOrUpdate<HistoricalAuditorWorker>(
@@ -52,26 +52,26 @@ public class HangfireJobsService : IHostedService
         //    new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
         //);
 
-        _recurringJobManager.AddOrUpdate<AuditInitializationWorker>(
-            "audit-initializer",
-            worker => worker.CreateWatermarksForNewSymbolsAsync(),
-            Cron.Daily(), // Тоже раз в день
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        );
+        // _recurringJobManager.AddOrUpdate<AuditInitializationWorker>(
+        //     "audit-initializer",
+        //     worker => worker.CreateWatermarksForNewSymbolsAsync(),
+        //     Cron.Daily(), // Тоже раз в день
+        //     new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
+        // );
 
         // Агрегация свечей - каждую минуту
-        _recurringJobManager.AddOrUpdate<OhlcvAggregatorWorker>(
-            "ohlcv-aggregator",
-            worker => worker.AggregateNextBatchAsync(),
-            Cron.Minutely() // Каждую минуту
-        );
+        // _recurringJobManager.AddOrUpdate<OhlcvAggregatorWorker>(
+        //     "ohlcv-aggregator",
+        //     worker => worker.AggregateNextBatchAsync(),
+        //     Cron.Minutely() // Каждую минуту
+        // );
 
         // Расчет индикаторов - каждые 2 минуты
-        _recurringJobManager.AddOrUpdate<FeatureCalculatorWorker>(
-            "feature-calculator",
-            worker => worker.CalculateFeaturesAsync(),
-            "*/2 * * * *" // Каждые 2 минуты
-        );
+        // _recurringJobManager.AddOrUpdate<FeatureCalculatorWorker>(
+        //     "feature-calculator",
+        //     worker => worker.CalculateFeaturesAsync(),
+        //     "*/2 * * * *" // Каждые 2 минуты
+        // );
 
         _logger.LogInformation("Периодические задачи зарегистрированы.");
 
