@@ -142,8 +142,8 @@ services:
         condition: service_started
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=db;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__DefaultConnection=Host=pgbouncer;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=pgbouncer;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=rabbitmq
       - Serilog__WriteTo__1__Args__serverUrl=http://seq:5341
     networks:
@@ -177,7 +177,7 @@ services:
       - "traefik.docker.network=binancecollector_web"
       - "traefik.http.routers.datamanager.rule=Host(`datamanager.jahasim.com`)"
       - "traefik.http.routers.datamanager.entrypoints=web"
-      - "traefik.http.services.datamanager.loadbalancer.server.port=7002"
+      - "traefik.http.services.datamanager.loadbalancer.server.port=8080"
 
 volumes:
   postgres_data:
