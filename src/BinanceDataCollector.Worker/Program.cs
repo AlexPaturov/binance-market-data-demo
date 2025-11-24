@@ -44,16 +44,10 @@ public class Program
         try
         {
             Log.Information("Запускаем приложение...");
-            //var builder = WebApplication.CreateBuilder(args);
-            //
-            var builder = WebApplication.CreateBuilder(new WebApplicationOptions
-            {
-                Args = args,
-                EnvironmentName = Environments.Development
-            });
-            Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
+            var builder = WebApplication.CreateBuilder(args);
+            builder.WebHost.ConfigureKestrel(options => { options.ListenAnyIP(builder.Environment.IsDevelopment() ? 7001 : 8080); });
 
-            builder.WebHost.UseUrls("http://*:7001");
+            Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
             #region Logging preferences
             builder.Logging.ClearProviders();

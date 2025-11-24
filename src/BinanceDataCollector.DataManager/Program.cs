@@ -42,14 +42,8 @@ public class Program
         try {
             Log.Information("Start WebApplicationBuilder");
             
-            //var builder = WebApplication.CreateBuilder(args);
-            // TODO rewrite thish boolsheet
-            var builder = WebApplication.CreateBuilder(new WebApplicationOptions
-            {
-                Args = args,
-                EnvironmentName = Environments.Development
-            });
-            builder.WebHost.UseUrls("http://*:7002");
+            var builder = WebApplication.CreateBuilder(args);
+            builder.WebHost.ConfigureKestrel(options => { options.ListenAnyIP(builder.Environment.IsDevelopment() ? 7002 : 8080); });
             
             Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             #region Logging preferences
