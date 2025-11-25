@@ -91,8 +91,8 @@ services:
     volumes:
       - seq_data:/data
     networks:
-      - internal_network # Seq доступен только из внутренней сети...
       - web              # ...и через Traefik
+      - internal_network # Seq доступен только из внутренней сети...
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=binancecollector_web"
@@ -147,8 +147,8 @@ services:
       - RabbitMQ__HostName=rabbitmq
       - Serilog__WriteTo__1__Args__serverUrl=http://seq:5341
     networks:
-      - internal_network
       - web
+      - internal_network
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=binancecollector_web"
@@ -170,8 +170,8 @@ services:
       - RabbitMQ__HostName=rabbitmq
       - Serilog__WriteTo__1__Args__serverUrl=http://seq:5341
     networks:
-      - internal_network
       - web
+      - internal_network
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=binancecollector_web"
