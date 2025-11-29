@@ -111,19 +111,24 @@ sudo rm -rf /etc/pgbouncer
 
 
 ### ------------------ Docker commands
-1. docker ps -a   -- to show which containers was run
-2. docker logs binance_pgbouncer -- Проверить логи
-3. docker logs binance_postgres -- Проверить логи
-4. docker ps -a -- Посмотри, какие контейнеры есть
-5. docker stop <container_name> -- Останови контейнер
-6. docker rm <container_name> -- Удалить контейнер
-7. docker rmi datalust/seq -- Удали image, на котором он основан
-8. docker ps -a        # контейнеры
-9. docker images       # образы
-10. docker volume ls    # тома
-11. docker network ls   # сети 
-12. docker volume rm <volume_name> -- Удалить конкретный том
-13. 
+1. docker ps -a                    # to show which containers was run
+2. docker logs binance_pgbouncer   # Проверить логи
+3. docker logs binance_postgres    # Проверить логи
+4. docker ps -a                    # Посмотри, какие контейнеры есть
+5. docker stop <container_name>    # Останови контейнер
+6. docker rm <container_name>      # Удалить контейнер
+7. docker rmi datalust/seq         # Удали image, на котором он основан
+8. docker ps -a                    # контейнеры
+9. docker images                   # образы
+10. docker volume ls               # тома
+11. docker network ls                                                    # сети 
+12. docker volume rm <volume_name>                                       # Удалить конкретный том
+13. docker logs bdc_datamanager --timestamps --tail=500                  # Полный лог DataManager с начала
+14. docker logs bdc_datamanager --timestamps                             # Если нужно ещё больше:
+15. docker logs bdc_datamanager 2>&1 | egrep -i "err|fail|warn|critical" # Только ошибки / варнинги
+16. docker restart bdc_datamanager && sleep 2 && docker logs bdc_datamanager --timestamps --tail=200  # Перезапустить DataManager и сразу ловить свежие старт-логи
+17. docker logs -f bdc_datamanager                                       # Логи в реальном времени
+18. 
 
 - passw seq qw12qw12 24.10.2025
 - docker stop $(docker ps -q) -- остановка всех контейнеров
@@ -149,17 +154,20 @@ exit
 # Зайдите внутрь контейнера
 docker exec -it binance_postgres sh
 
---------------------------
+----------------------------------------------------------------------------------------------------------------
 show logs
 docker logs bdc_worker --tail 50
-
--------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
 смотрим все сети докера
 docker network ls
---------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
 посмотреть сети
 docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' bdc_worker
-----------------------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------
+Выгружаем структуру проекта относительно текущего каталога в виде дерева
+tree -L 10 -I 'wwwroot|obj|bin|Debug|Release|sqlScripts|.git' --charset utf-8 -o "$(basename "$PWD")_tree.txt"
+----------------------------------------------------------------------------------------------------------------
+
 
 # -------------------- Найти PID Worker
 pidof BinanceDataCollector.DataManager
