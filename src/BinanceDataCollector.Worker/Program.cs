@@ -107,7 +107,7 @@ public class Program
             builder.Services.AddSingleton<GapProcessingTracker>();
             // builder.Services.AddTransient<ArchiveDownloaderWorker>(); // must be deleted
             builder.Services.AddTransient<IArchiveDownloaderWorker, ArchiveDownloaderWorker>();
-            builder.Services.AddTransient<ArchiveUnpackerWorkerWorker>(); // 
+            builder.Services.AddTransient<ArchiveUnpackerWorker>(); // 
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
 
