@@ -75,10 +75,13 @@ public class Program
                 });
            
             builder.Services.AddSingleton<IPathProvider, PathProvider>();
+            
+            // TODO: [Refactor] переделать на polly -> RabbitMqStatusNotifier
+            // См. Issue #1
             builder.Services.AddSingleton<IStatusNotifier>(sp =>
             {
                 var configuration = sp.GetRequiredService<IConfiguration>();
-                return RabbitMqStatusNotifier.CreateAsync(configuration).GetAwaiter().GetResult();
+                return RabbitMqStatusNotifier.CreateAsync(configuration).GetAwaiter().GetResult(); 
             });
             builder.Services.AddScoped<ITradeRepository, TradeRepository>();
             builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();

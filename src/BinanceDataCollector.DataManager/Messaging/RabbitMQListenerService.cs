@@ -24,6 +24,8 @@ public class RabbitMQListenerService : BackgroundService
         _hubContext = hubContext;
     }
 
+    // TODO: [Refactor] переделать на polly CreateConnectionAsync() + политику на случай обрыва связи
+    // См. Issue #1
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("RabbitMQ Listener запускается.");

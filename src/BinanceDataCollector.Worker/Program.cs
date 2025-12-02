@@ -78,6 +78,9 @@ public class Program
                 });
 
             builder.Services.AddSingleton<IPathProvider, PathProvider>();
+            
+            // TODO: [Refactor] переделать на polly в наследниках IStatusNotifier
+            // См. Issue #1
             builder.Services.AddSingleton<IStatusNotifier>(sp =>
             {
                 var configuration = sp.GetRequiredService<IConfiguration>();

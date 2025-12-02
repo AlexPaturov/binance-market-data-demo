@@ -18,6 +18,8 @@ public class RabbitMqStatusNotifier : IStatusNotifier, IAsyncDisposable
         _channel = channel;
     }
 
+    // TODO: [Refactor] переделать на polly CreateConnectionAsync() + политику на случай обрыва связи
+    // См. Issue #1
     public static async Task<RabbitMqStatusNotifier> CreateAsync(IConfiguration configuration)
     {
         var factory = new ConnectionFactory() 
