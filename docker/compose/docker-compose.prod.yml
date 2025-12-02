@@ -1,0 +1,193 @@
+# --- СЕТИ ---
+# Объявляем сети, которые будут использовать наши сервисы.
+# 'internal_network' - для связи между сервисами, полностью изолирована от внешнего мира.
+# 'web' - для связи с обратным прокси Traefik.
+networks:
+  web:
+    name: binancecollector_web
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+  internal_network:
+    driver: bridge
+
+services:
+  # --- ОБРАТНЫЙ ПРОКСИ ---
+  # Единая точка входа для всего трафика. Управляет SSL и маршрутизацией.
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    hostname: traefik
+    restart: always
+    command:
+      - "--api.insecure=true" # Включаем дашборд (для отладки)
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false" # Явно указываем, какие сервисы выставлять наружу
+      - "--entrypoints.web.address=:80" # Открываем порт 80
+      - "--entrypoints.websecure.address=:443" # --- Здесь будут настройки для SSL, когда мы их добавим ---
+      - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}" # Передается из Secrets
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+      - "--accesslog=true" # Включаем логи
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080" # Дашборд будет доступен на порту 8080
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro" # Traefik читает метаданные Docker
+      - "letsencrypt_data:/letsencrypt"
+    networks:
+      web:
+        ipv4_address: 172.28.0.10
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: always
+    command: tunnel run --protocol http2
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - web
+    depends_on:
+      - traefik
+
+  # --- БАЗА ДАННЫХ ---
+  bdc_db:
+    image: postgres:16-alpine
+    container_name: bdc_db
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=market_analytics
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "password_encryption=md5"
+    networks:
+      - internal_network # База данных подключена ТОЛЬКО к внутренней сети
+    ports:
+      - "100.96.120.16:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d market_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- СЕРВЕР ЛОГОВ ---
+  bdc_seq:
+    image: datalust/seq:latest
+    container_name: bdc_seq
+    restart: always
+    environment:
+      - ACCEPT_EULA=Y
+      - SEQ_FIRSTRUN_ADMINUSERNAME=${SEQ_ADMIN_USER}
+      - SEQ_FIRSTRUN_ADMINPASSWORD=${SEQ_ADMIN_PASS}
+    volumes:
+      - seq_data:/data
+    networks:
+      - web              # ...и через Traefik
+      - internal_network # Seq доступен только из внутренней сети...
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=binancecollector_web"
+      - "traefik.http.routers.seq.rule=Host(`seq.jahasim.com`)"
+      - "traefik.http.routers.seq.entrypoints=web"
+      - "traefik.http.services.seq.loadbalancer.server.port=80"
+
+  # --- БРОКЕР СООБЩЕНИЙ ---
+  bdc_rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: bdc_rabbitmq
+    restart: always
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq/
+    networks:
+      - internal_network
+    # UI RabbitMQ не будем выставлять наружу для безопасности
+
+  bdc_pgbouncer:
+    image: edoburu/pgbouncer
+    container_name: bdc_pgbouncer
+    restart: always
+    depends_on:
+      - bdc_db
+    networks:
+      - internal_network # pgbouncer должен быть только во внутренней сети
+    environment:
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_HOST=bdc_db
+      - DB_PORT=5432
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=1000
+      - DEFAULT_POOL_SIZE=100
+      - MIN_POOL_SIZE=10
+      - RESERVE_POOL_SIZE=10
+      - AUTH_TYPE=scram-sha-256
+
+  bdc_worker:
+    image: ghcr.io/alexpaturov/binancedatacollector/worker:latest
+    container_name: bdc_worker
+    restart: always
+    depends_on:
+      bdc_pgbouncer:
+        condition: service_started
+      bdc_rabbitmq:
+        condition: service_started
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - RabbitMQ__HostName=bdc_rabbitmq
+      - Serilog__WriteTo__1__Args__serverUrl=http://bdc_seq:80
+    networks:
+      - web
+      - internal_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=binancecollector_web"
+      - "traefik.http.routers.hangfire.rule=Host(`hangfire.jahasim.com`)"
+      - "traefik.http.routers.hangfire.entrypoints=web"
+      - "traefik.http.services.hangfire.loadbalancer.server.port=8080"
+    volumes:
+      - bdc_data:/opt/bdc_data
+
+  bdc_datamanager:
+    image: ghcr.io/alexpaturov/binancedatacollector/datamanager:latest
+    container_name: bdc_datamanager
+    restart: always
+    depends_on:
+      bdc_pgbouncer:
+        condition: service_started
+      bdc_rabbitmq:
+        condition: service_started
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - RabbitMQ__HostName=bdc_rabbitmq
+      - Serilog__WriteTo__1__Args__serverUrl=http://bdc_seq:80
+    networks:
+      - web
+      - internal_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=binancecollector_web"
+      - "traefik.http.routers.datamanager.rule=Host(`datamanager.jahasim.com`)"
+      - "traefik.http.routers.datamanager.entrypoints=web"
+      - "traefik.http.services.datamanager.loadbalancer.server.port=8080"
+    volumes:
+      - bdc_data:/opt/bdc_data
+
+volumes:
+  postgres_data:     # для базы данных
+  seq_data:
+  rabbitmq_data:
+  letsencrypt_data:
+  bdc_data:          # для архивов и CSV

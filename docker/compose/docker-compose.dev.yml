@@ -1,0 +1,117 @@
+# docker-compose.dev.yml (DEV среда)
+
+services:
+  bdc_db:
+    image: postgres:16-alpine
+    container_name: bdc_db
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=market_analytics
+      - POSTGRES_INITDB_ARGS=--auth-host=md5
+      - POSTGRES_HOST_AUTH_METHOD=md5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  bdc_pgbouncer:
+    image: edoburu/pgbouncer
+    container_name: bdc_pgbouncer
+    restart: always
+    depends_on:
+      - bdc_db
+    ports:
+      - "6432:5432"
+    environment:
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_HOST=bdc_db
+      - DB_PORT=5432
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=1000
+      - DEFAULT_POOL_SIZE=100
+      - MIN_POOL_SIZE=10
+      - RESERVE_POOL_SIZE=10
+      - AUTH_TYPE=scram-sha-256
+
+  bdc_seq:
+    image: datalust/seq:latest
+    container_name: bdc_seq
+    restart: always
+    ports:
+      - "5341:80"
+    environment:
+      - ACCEPT_EULA=Y
+      - SEQ_FIRSTRUN_ADMINUSERNAME=${SEQ_ADMIN_USER}
+      - SEQ_FIRSTRUN_ADMINPASSWORD=${SEQ_ADMIN_PASS}
+      - SERILOG_SEQ_URL=${SERILOG_SEQ_URL}
+    volumes:
+      - bdc_seq_data:/data
+
+  bdc_rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: bdc_rabbitmq
+    restart: always
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - bdc_rabbitmq_data:/var/lib/rabbitmq
+
+  bdc_worker:
+    container_name: bdc_worker
+    build:
+      context: ../.. # корень проекта
+      dockerfile: docker/Dockerfile
+      target: worker
+    depends_on:
+      bdc_db:
+        condition: service_healthy
+      bdc_rabbitmq:
+        condition: service_healthy
+    ports:
+      - "7001:7001"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=bdc_db;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=bdc_db;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - RabbitMQ__HostName=bdc_rabbitmq
+      - Serilog__WriteTo__1__Args__serverUrl=http://bdc_seq:80
+    volumes:
+      - bdc_data:/opt/bdc_data
+
+  bdc_datamanager:
+    container_name: bdc_datamanager
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+      target: datamanager
+    depends_on:
+      bdc_pgbouncer:
+        condition: service_started
+      bdc_rabbitmq:
+        condition: service_healthy
+    ports:
+      - "7002:7002"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=bdc_db;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=bdc_db;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - RabbitMQ__HostName=bdc_rabbitmq
+      - Serilog__WriteTo__1__Args__serverUrl=http://bdc_seq:80
+    volumes:
+      - bdc_data:/opt/bdc_data
+
+volumes:
+  postgres_data:     # для базы
+  bdc_seq_data:
+  bdc_rabbitmq_data:
+  bdc_data:          # для архивов и CSV

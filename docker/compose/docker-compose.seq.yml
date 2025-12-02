@@ -1,0 +1,20 @@
+# docker-compose.seq.yml
+# Runs only Seq for log viewing in development
+
+services:
+  bdc_seq:
+    image: datalust/seq:latest
+    container_name: bdc_seq
+    restart: always
+    ports:
+      - "5341:80"   # expose Seq UI in dev
+    volumes:
+      - bdc_seq_data:/data
+    environment:
+      - ACCEPT_EULA=Y
+      - SEQ_FIRSTRUN_ADMINUSERNAME=${SEQ_ADMIN_USER}
+      - SEQ_FIRSTRUN_ADMINPASSWORD=${SEQ_ADMIN_PASS}
+      - SERILOG_SEQ_URL=${SERILOG_SEQ_URL}
+
+volumes:
+  bdc_seq_data:

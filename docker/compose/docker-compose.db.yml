@@ -1,0 +1,24 @@
+# docker-compose.db.yml
+# Only database and pgbouncer for development tools (e.g., DBeaver)
+
+services:
+  bdc_db:
+    container_name: bdc_db
+    ports:
+      - "5432:5432" # expose for external tools
+
+  bdc_pgbouncer:
+    container_name: bdc_pgbouncer
+    ports:
+      - "6432:5432" # pgbouncer external access for tests
+    environment:
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_HOST=bdc_db
+      - DB_PORT=5432
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=1000
+      - DEFAULT_POOL_SIZE=100
+      - MIN_POOL_SIZE=10
+      - RESERVE_POOL_SIZE=10
+      - AUTH_TYPE=scram-sha-256
