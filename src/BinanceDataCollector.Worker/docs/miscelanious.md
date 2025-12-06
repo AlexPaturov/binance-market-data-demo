@@ -111,7 +111,7 @@ sudo rm -rf /etc/pgbouncer
 
 
 ### ------------------ Docker commands
-- passw seq qw12qw12 24.10.2025
+- passw seq qw12qw12 6.12.2025
 - 
 
   ----------- заходим внутрь контейнера pgbouncer ---------------
@@ -138,8 +138,10 @@ docker exec -it binance_postgres sh
 Локальное тестирование контейнеров
 docker compose -f compose.yml -f dev-compose.yml up --build
 ----------------------------------------------------------------------------------------------------------------
-Выгружаем структуру проекта относительно текущего каталога в виде дерева
-tree -L 10 -I 'wwwroot|obj|bin|Debug|Release|sqlScripts|.git' --charset utf-8 -o "$(basename "$PWD")_tree.txt"
+
+### **Выгружаем структуру проекта относительно текущего каталога в виде дерева**
+
+ tree -L 10 -I 'wwwroot|obj|bin|Debug|Release|sqlScripts|ProjectSupport|docs|.git' --charset utf-8 -o "$(basename "$PWD")_tree.txt"
 ----------------------------------------------------------------------------------------------------------------
 
 # -------------------- Найти PID Worker
