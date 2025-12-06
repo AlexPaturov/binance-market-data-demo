@@ -13,10 +13,6 @@ COPY "src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructur
 COPY "src/BinanceDataCollector.MarketScreenService/BinanceDataCollector.MarketScreenService.csproj" "src/BinanceDataCollector.MarketScreenService/"
 COPY "src/BinanceDataCollector.Symbols/BinanceDataCollector.Symbols.csproj" "src/BinanceDataCollector.Symbols/"
 COPY "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj" "src/BinanceDataCollector.Worker/"
-COPY "tests/BinanceDataCollector.Application.Tests/BinanceDataCollector.Application.Tests.csproj" "tests/BinanceDataCollector.Application.Tests/"
-COPY "tests/BinanceDataCollector.Domain.Tests/BinanceDataCollector.Domain.Tests.csproj" "tests/BinanceDataCollector.Domain.Tests/"
-COPY "tests/BinanceDataCollector.Infrastructure.Tests/BinanceDataCollector.Infrastructure.Tests.csproj" "tests/BinanceDataCollector.Infrastructure.Tests/"
-COPY "tests/BinanceDataCollector.Worker.Tests/BinanceDataCollector.Worker.Tests.csproj" "tests/BinanceDataCollector.Worker.Tests/"
 
 RUN dotnet restore "BinanceDataCollector.sln"
 
@@ -28,10 +24,6 @@ COPY src/BinanceDataCollector.Worker/ ./src/BinanceDataCollector.Worker/
 COPY src/BinanceDataCollector.DataManager/ ./src/BinanceDataCollector.DataManager/
 COPY src/BinanceDataCollector.MarketScreenService/ ./src/BinanceDataCollector.MarketScreenService/
 COPY src/BinanceDataCollector.Symbols/ ./src/BinanceDataCollector.Symbols/
-COPY tests/BinanceDataCollector.Application.Tests/ ./tests/BinanceDataCollector.Application.Tests/
-COPY tests/BinanceDataCollector.Domain.Tests/ ./tests/BinanceDataCollector.Domain.Tests/
-COPY tests/BinanceDataCollector.Infrastructure.Tests/ ./tests/BinanceDataCollector.Infrastructure.Tests/
-COPY tests/BinanceDataCollector.Worker.Tests/ ./tests/BinanceDataCollector.Worker.Tests/
 
 # ================================================
 # Ступень 2: Публикация Worker
@@ -58,7 +50,7 @@ RUN dotnet publish "src/BinanceDataCollector.DataManager/BinanceDataCollector.Da
 # ================================================
 # Ступень 4: Финальный образ для Worker
 # ================================================
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS worker
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-bookworm-slim AS worker
 WORKDIR /app
 COPY --from=build-worker /app/worker .
 ENTRYPOINT ["dotnet", "BinanceDataCollector.Worker.dll"]
@@ -66,7 +58,30 @@ ENTRYPOINT ["dotnet", "BinanceDataCollector.Worker.dll"]
 # ================================================
 # Ступень 5: Финальный образ для DataManager
 # ================================================
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS datamanager
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-bookworm-slim AS datamanager
 WORKDIR /app
 COPY --from=build-datamanager /app/datamanager .
 ENTRYPOINT ["dotnet", "BinanceDataCollector.DataManager.dll"]
+
+# ================================================
+# Dev-образ для Worker (dotnet watch)
+# ================================================
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS worker-dev
+WORKDIR /app
+
+# Копируем проект целиком (в dev в любом случае будут volume из compose)
+COPY BinanceDataCollector.sln ./
+COPY src ./src
+
+ENTRYPOINT ["dotnet", "watch", "run", "--project", "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj", "--urls=http://0.0.0.0:7001", "--diagnostic-port", "5600"]
+
+# ================================================
+# Dev-образ для DataManager (dotnet watch)
+# ================================================
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS datamanager-dev
+WORKDIR /app
+
+COPY BinanceDataCollector.sln ./
+COPY src ./src
+
+ENTRYPOINT ["dotnet", "watch", "run", "--project", "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj", "--urls=http://0.0.0.0:7002", "--diagnostic-port", "5601"]

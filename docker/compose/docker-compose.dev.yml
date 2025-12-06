@@ -13,6 +13,13 @@ services:
       - POSTGRES_DB=market_analytics
       - POSTGRES_INITDB_ARGS=--auth-host=md5
       - POSTGRES_HOST_AUTH_METHOD=md5
+    healthcheck:
+      # Проверяем, готова ли база принимать соединения
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d market_analytics" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -20,15 +27,22 @@ services:
     image: edoburu/pgbouncer
     container_name: bdc_pgbouncer
     restart: always
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -h bdc_pgbouncer -p 6432 -U ${POSTGRES_USER}" ]
+      interval: 3s
+      timeout: 2s
+      retries: 10
     depends_on:
-      - bdc_db
+      bdc_db:
+        condition: service_healthy
     ports:
-      - "6432:5432"
+      - "6432:6432"
     environment:
       - DB_USER=${POSTGRES_USER}
       - DB_PASSWORD=${POSTGRES_PASSWORD}
       - DB_HOST=bdc_db
       - DB_PORT=5432
+      - LISTEN_PORT=6432
       - POOL_MODE=transaction
       - MAX_CLIENT_CONN=1000
       - DEFAULT_POOL_SIZE=100
@@ -69,46 +83,52 @@ services:
   bdc_worker:
     container_name: bdc_worker
     build:
-      context: ../.. # корень проекта
+      context: ../..
       dockerfile: docker/Dockerfile
-      target: worker
+      target: worker-dev
     depends_on:
-      bdc_db:
+      bdc_pgbouncer:
         condition: service_healthy
       bdc_rabbitmq:
         condition: service_healthy
-    ports:
-      - "7001:7001"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Host=bdc_db;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=bdc_db;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=bdc_rabbitmq
-      - Serilog__WriteTo__1__Args__serverUrl=http://bdc_seq:80
+      - Serilog__WriteTo__0__Name=Seq
+      - Serilog__WriteTo__0__Args__serverUrl=http://bdc_seq:5341
+    ports:
+      - "7001:7001"
+      - "5600:5600"
     volumes:
       - bdc_data:/opt/bdc_data
+      - ../../src:/app/src
 
   bdc_datamanager:
     container_name: bdc_datamanager
     build:
       context: ../..
       dockerfile: docker/Dockerfile
-      target: datamanager
+      target: datamanager-dev
     depends_on:
       bdc_pgbouncer:
-        condition: service_started
+        condition: service_healthy
       bdc_rabbitmq:
         condition: service_healthy
-    ports:
-      - "7002:7002"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Host=bdc_db;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=bdc_db;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=bdc_rabbitmq
-      - Serilog__WriteTo__1__Args__serverUrl=http://bdc_seq:80
+      - Serilog__WriteTo__0__Name=Seq
+      - Serilog__WriteTo__0__Args__serverUrl=http://bdc_seq:5341
+    ports:
+      - "7002:7002"
+      - "5601:5601"
     volumes:
       - bdc_data:/opt/bdc_data
+      - ../../src:/app/src
 
 volumes:
   postgres_data:     # для базы

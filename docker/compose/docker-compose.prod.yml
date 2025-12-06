@@ -115,15 +115,23 @@ services:
     image: edoburu/pgbouncer
     container_name: bdc_pgbouncer
     restart: always
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -h bdc_pgbouncer -p 6432 -U ${POSTGRES_USER}" ]
+      interval: 3s
+      timeout: 2s
+      retries: 10
     depends_on:
-      - bdc_db
+      - bdc_db  
     networks:
       - internal_network # pgbouncer должен быть только во внутренней сети
+    ports:
+      - "6432:6432"
     environment:
       - DB_USER=${POSTGRES_USER}
       - DB_PASSWORD=${POSTGRES_PASSWORD}
       - DB_HOST=bdc_db
       - DB_PORT=5432
+      - LISTEN_PORT=6432
       - POOL_MODE=transaction
       - MAX_CLIENT_CONN=1000
       - DEFAULT_POOL_SIZE=100
@@ -137,15 +145,16 @@ services:
     restart: always
     depends_on:
       bdc_pgbouncer:
-        condition: service_started
+        condition: service_healthy
       bdc_rabbitmq:
-        condition: service_started
+        condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=bdc_rabbitmq
-      - Serilog__WriteTo__1__Args__serverUrl=http://bdc_seq:80
+      - Serilog__WriteTo__0__Name=Seq
+      - Serilog__WriteTo__0__Args__serverUrl=http://bdc_seq:80
     networks:
       - web
       - internal_network
@@ -164,15 +173,16 @@ services:
     restart: always
     depends_on:
       bdc_pgbouncer:
-        condition: service_started
+        condition: service_healthy
       bdc_rabbitmq:
-        condition: service_started
+        condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=5432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=bdc_rabbitmq
-      - Serilog__WriteTo__1__Args__serverUrl=http://bdc_seq:80
+      - Serilog__WriteTo__0__Name=Seq
+      - Serilog__WriteTo__0__Args__serverUrl=http://bdc_seq:80
     networks:
       - web
       - internal_network
