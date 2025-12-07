@@ -108,7 +108,6 @@ services:
       - Serilog__WriteTo__0__Args__serverUrl=http://bdc_seq:5341
     ports:
       - "7001:7001"
-      - "5600:5600"
     volumes:
       - bdc_data:/opt/bdc_data
       - ../../src:/app/src
@@ -136,7 +135,6 @@ services:
       - Serilog__WriteTo__0__Args__serverUrl=http://bdc_seq:5341
     ports:
       - "7002:7002"
-      - "5601:5601"
     volumes:
       - bdc_data:/opt/bdc_data
       - ../../src:/app/src
