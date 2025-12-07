@@ -105,6 +105,11 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: bdc_rabbitmq
     restart: always
+    environment:
+      - RabbitMQ__HostName=${RABBITMQ_HOSTNAME}
+      - RabbitMQ__Port=${RABBITMQ_PORT}
+      - RabbitMQ__UserName=${RABBITMQ_USER}
+      - RabbitMQ__Password=${RABBITMQ_PASS}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
     networks:

@@ -77,6 +77,11 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    environment:
+      - RabbitMQ__HostName=${RABBITMQ_HOSTNAME}
+      - RabbitMQ__Port=${RABBITMQ_PORT}
+      - RabbitMQ__UserName=${RABBITMQ_USER}
+      - RabbitMQ__Password=${RABBITMQ_PASS}
     volumes:
       - bdc_rabbitmq_data:/var/lib/rabbitmq
 
