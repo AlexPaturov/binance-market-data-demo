@@ -1,0 +1,15 @@
+name: print-path
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-path:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print workspace
+        run: |
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "Listing:"
+          ls -al $GITHUB_WORKSPACE
