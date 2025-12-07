@@ -142,7 +142,21 @@ docker compose -f compose.yml -f dev-compose.yml up --build
 ### **Выгружаем структуру проекта относительно текущего каталога в виде дерева**
 
  tree -L 10 -I 'wwwroot|obj|bin|Debug|Release|sqlScripts|ProjectSupport|docs|.git' --charset utf-8 -o "$(basename "$PWD")_tree.txt"
-----------------------------------------------------------------------------------------------------------------
+
+---
+
+## Создал символическую ссылку docker-compose.yml на docker-compose.prod.yml
+
+```bash
+ln -sf docker-compose.prod.yml docker-compose.yml
+```
+
+Теперь CI будет работать так:
+ - Actions копирует новый docker-compose.prod.yml
+ - Наш docker-compose.yml ссылка всегда указывает на него
+ - И затем docker compose up -d работает автоматически
+
+---
 
 # -------------------- Найти PID Worker
 pidof BinanceDataCollector.DataManager
