@@ -7,7 +7,7 @@ on:
 jobs:
   build-and-deploy:
     runs-on: self-hosted
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -41,11 +41,11 @@ jobs:
       - name: Deploy to Server
         run: |
           # 1. Копируем правильный compose-файл
-          cp ${{ github.workspace }}/docker-compose.prod.yml /opt/BinanceCollector/docker-compose.yml
-          
+          cp ${{ github.workspace }}/docker/compose/docker-compose.prod.yml /opt/BinanceCollector/docker/compose/docker-compose.prod.yml
+
           # 2. Переходим в директорию деплоя
           cd /opt/BinanceCollector
-          
+
           # 3. Создаем .env файл с секретами
           cat > .env << EOF
           POSTGRES_USER=${{ secrets.DB_USER }}
@@ -55,11 +55,11 @@ jobs:
           SEQ_ADMIN_USER=lex
           SEQ_ADMIN_PASS=lex
           EOF
-          
+
           # 4. Проверяем содержимое .env (для отладки, потом можно удалить)
           echo "=== .env file created ==="
           cat .env | sed 's/PASSWORD=.*/PASSWORD=***HIDDEN***/'
-          
+
           # 5. Скачиваем свежие образы и перезапускаем сервисы
           docker compose pull
           docker compose up -d
