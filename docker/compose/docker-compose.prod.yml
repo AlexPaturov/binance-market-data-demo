@@ -145,7 +145,7 @@ services:
       - AUTH_TYPE=scram-sha-256
 
   bdc_worker:
-    image: ghcr.io/alexpaturov/binancedatacollector/worker:latest
+    image: ghcr.io/alexpaturov/binancedatacollector/worker:${APP_VERSION}
     container_name: bdc_worker
     restart: always
     depends_on:
@@ -176,7 +176,7 @@ services:
       - bdc_data:/opt/bdc_data
 
   bdc_datamanager:
-    image: ghcr.io/alexpaturov/binancedatacollector/datamanager:latest
+    image: ghcr.io/alexpaturov/binancedatacollector/datamanager:${APP_VERSION}
     container_name: bdc_datamanager
     restart: always
     depends_on:
