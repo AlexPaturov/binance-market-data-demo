@@ -14,7 +14,7 @@ COPY ../src/BinanceDataCollector.MarketScreenService/BinanceDataCollector.Market
 COPY ../src/BinanceDataCollector.Symbols/BinanceDataCollector.Symbols.csproj src/BinanceDataCollector.Symbols/
 COPY ../src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj src/BinanceDataCollector.Worker/
 
-RUN dotnet restore ../BinanceDataCollector.sln
+RUN dotnet restore BinanceDataCollector.sln
 
 # Копируем остальной код по папкам
 COPY ../src/BinanceDataCollector.Application/ ./src/BinanceDataCollector.Application/
