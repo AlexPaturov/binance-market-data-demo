@@ -70,8 +70,8 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS worker-dev
 WORKDIR /app
 
 # Копируем проект целиком (в dev в любом случае будут volume из compose)
-COPY BinanceDataCollector.sln ./
-COPY src ./src
+COPY ../BinanceDataCollector.sln ./
+COPY ../src ./src
 
 ENTRYPOINT ["dotnet", "watch", "run", "--project", "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj", "--urls=http://0.0.0.0:7001", "--diagnostic-port", "5600"]
 
