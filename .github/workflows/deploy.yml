@@ -29,31 +29,40 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and push Worker image
+        working-directory: ${{ github.workspace }}
         run: |
           docker build . --file Dockerfile --tag ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest --target worker
-          docker push ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest
+          docker push ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest
 
       - name: Build and push DataManager image
+        working-directory: ${{ github.workspace }}
         run: |
           docker build . --file Dockerfile --tag ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest --target datamanager
-          docker push ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest
+          docker push ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest
 
       - name: Deploy to Server
         run: |
           # 1. Копируем правильный compose-файл
           cp ${{ github.workspace }}/docker/compose/docker-compose.prod.yml /opt/BinanceCollector/docker/compose/docker-compose.prod.yml
 
+
           # 2. Переходим в директорию деплоя
-          cd /opt/BinanceCollector
+          cd /opt/BinanceCollector/docker/compose
 
           # 3. Создаем .env файл с секретами
           cat > .env << EOF
           POSTGRES_USER=${{ secrets.DB_USER }}
           POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}
+          POSTGRES_HOST=bdc_pgbouncer
+          POSTGRES_DB=market_analytics
           ACME_EMAIL=${{ secrets.ACME_EMAIL }}
           SERILOG_SEQ_URL=http://seq:5341
           SEQ_ADMIN_USER=lex
           SEQ_ADMIN_PASS=lex
+          RABBITMQ_USER=${{ secrets.RABBITMQ_USER }}
+          RABBITMQ_PASS=${{ secrets.RABBITMQ_PASS }}
+          RABBITMQ_PORT=5672
+          RABBITMQ_HOSTNAME=bdc_rabbitmq
           EOF
 
           # 4. Проверяем содержимое .env (для отладки, потом можно удалить)
