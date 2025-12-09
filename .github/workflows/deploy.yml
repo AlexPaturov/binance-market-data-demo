@@ -29,13 +29,13 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Build and push Worker image
-        working-directory: ${{ github.workspace }}
+        working-directory: ${{ github.workspace }}/docker
         run: |
           docker build . --file Dockerfile --tag ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest --target worker
           docker push ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest
 
       - name: Build and push DataManager image
-        working-directory: ${{ github.workspace }}
+        working-directory: ${{ github.workspace }}/docker
         run: |
           docker build . --file Dockerfile --tag ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest --target datamanager
           docker push ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest
