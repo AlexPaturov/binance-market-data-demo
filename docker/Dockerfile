@@ -5,25 +5,25 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS base-build
 WORKDIR /src
 
 # Копируем .csproj и .sln для восстановления зависимостей
-COPY ["BinanceDataCollector.sln", "./"]
-COPY "src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj" "src/BinanceDataCollector.Application/"
-COPY "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj" "src/BinanceDataCollector.DataManager/"
-COPY "src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj" "src/BinanceDataCollector.Domain/"
-COPY "src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj" "src/BinanceDataCollector.Infrastructure/"
-COPY "src/BinanceDataCollector.MarketScreenService/BinanceDataCollector.MarketScreenService.csproj" "src/BinanceDataCollector.MarketScreenService/"
-COPY "src/BinanceDataCollector.Symbols/BinanceDataCollector.Symbols.csproj" "src/BinanceDataCollector.Symbols/"
-COPY "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj" "src/BinanceDataCollector.Worker/"
+COPY ../BinanceDataCollector.sln ./
+COPY ../src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj src/BinanceDataCollector.Application/
+COPY ../src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj src/BinanceDataCollector.DataManager/
+COPY ../src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj src/BinanceDataCollector.Domain/
+COPY ../src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj src/BinanceDataCollector.Infrastructure/
+COPY ../src/BinanceDataCollector.MarketScreenService/BinanceDataCollector.MarketScreenService.csproj src/BinanceDataCollector.MarketScreenService/
+COPY ../src/BinanceDataCollector.Symbols/BinanceDataCollector.Symbols.csproj src/BinanceDataCollector.Symbols/
+COPY ../src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj src/BinanceDataCollector.Worker/
 
 RUN dotnet restore "BinanceDataCollector.sln"
 
 # Копируем остальной код по папкам
-COPY src/BinanceDataCollector.Application/ ./src/BinanceDataCollector.Application/
-COPY src/BinanceDataCollector.Domain/ ./src/BinanceDataCollector.Domain/
-COPY src/BinanceDataCollector.Infrastructure/ ./src/BinanceDataCollector.Infrastructure/
-COPY src/BinanceDataCollector.Worker/ ./src/BinanceDataCollector.Worker/
-COPY src/BinanceDataCollector.DataManager/ ./src/BinanceDataCollector.DataManager/
-COPY src/BinanceDataCollector.MarketScreenService/ ./src/BinanceDataCollector.MarketScreenService/
-COPY src/BinanceDataCollector.Symbols/ ./src/BinanceDataCollector.Symbols/
+COPY ../src/BinanceDataCollector.Application/ ./src/BinanceDataCollector.Application/
+COPY ../src/BinanceDataCollector.Domain/ ./src/BinanceDataCollector.Domain/
+COPY ../src/BinanceDataCollector.Infrastructure/ ./src/BinanceDataCollector.Infrastructure/
+COPY ../src/BinanceDataCollector.Worker/ ./src/BinanceDataCollector.Worker/
+COPY ../src/BinanceDataCollector.DataManager/ ./src/BinanceDataCollector.DataManager/
+COPY ../src/BinanceDataCollector.MarketScreenService/ ./src/BinanceDataCollector.MarketScreenService/
+COPY ../src/BinanceDataCollector.Symbols/ ./src/BinanceDataCollector.Symbols/
 
 # ================================================
 # Ступень 2: Публикация Worker
@@ -81,7 +81,7 @@ ENTRYPOINT ["dotnet", "watch", "run", "--project", "src/BinanceDataCollector.Wor
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS datamanager-dev
 WORKDIR /app
 
-COPY BinanceDataCollector.sln ./
-COPY src ./src
+COPY ../BinanceDataCollector.sln ./
+COPY ../src ./src
 
 ENTRYPOINT ["dotnet", "watch", "run", "--project", "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj", "--urls=http://0.0.0.0:7002", "--diagnostic-port", "5601"]
