@@ -42,6 +42,7 @@ services:
     networks:
       web:
         ipv4_address: 172.28.0.10
+      internal_network:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
