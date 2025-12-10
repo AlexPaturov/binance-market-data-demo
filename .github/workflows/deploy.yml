@@ -32,13 +32,13 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           docker build . --file docker/Dockerfile --tag ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest --target worker
-          docker push ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest
+          docker push ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest
 
       - name: Build and push DataManager image
         working-directory: ${{ github.workspace }}
         run: |
           docker build . --file docker/Dockerfile --tag ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest --target datamanager
-          docker push ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest
+          docker push ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest
 
       - name: Deploy to Server
         run: |
