@@ -51,6 +51,7 @@ jobs:
 
           # 3. Создаем .env файл с секретами
           cat > .env << EOF
+          APP_VERSION=latest
           POSTGRES_USER=${{ secrets.DB_USER }}
           POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}
           POSTGRES_HOST=bdc_pgbouncer
@@ -63,6 +64,7 @@ jobs:
           RABBITMQ_PASS=${{ secrets.RABBITMQ_PASS }}
           RABBITMQ_PORT=5672
           RABBITMQ_HOSTNAME=bdc_rabbitmq
+          CLOUDFLARE_TUNNEL_TOKEN=placeholder
           EOF
 
           # 4. Проверяем содержимое .env (для отладки, потом можно удалить)
