@@ -105,6 +105,12 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: bdc_rabbitmq
     restart: always
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     environment:
       - RabbitMQ__HostName=${RABBITMQ_HOSTNAME}
       - RabbitMQ__Port=${RABBITMQ_PORT}
@@ -114,7 +120,6 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq/
     networks:
       - internal_network
-    # UI RabbitMQ не будем выставлять наружу для безопасности
 
   bdc_pgbouncer:
     image: edoburu/pgbouncer
