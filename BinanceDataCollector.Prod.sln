@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{91E3C6E7-6819-4E0F-8F3B-D9C1C673DCE4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.DataManager", "src\BinanceDataCollector.DataManager\BinanceDataCollector.DataManager.csproj", "{366AEAAA-1CAD-4E72-89FB-255CA43D232D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Worker", "src\BinanceDataCollector.Worker\BinanceDataCollector.Worker.csproj", "{F93D5ACA-5EC7-4EA8-8B7A-3F932004893F}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{366AEAAA-1CAD-4E72-89FB-255CA43D232D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{366AEAAA-1CAD-4E72-89FB-255CA43D232D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{366AEAAA-1CAD-4E72-89FB-255CA43D232D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{366AEAAA-1CAD-4E72-89FB-255CA43D232D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F93D5ACA-5EC7-4EA8-8B7A-3F932004893F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F93D5ACA-5EC7-4EA8-8B7A-3F932004893F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F93D5ACA-5EC7-4EA8-8B7A-3F932004893F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F93D5ACA-5EC7-4EA8-8B7A-3F932004893F}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{366AEAAA-1CAD-4E72-89FB-255CA43D232D} = {91E3C6E7-6819-4E0F-8F3B-D9C1C673DCE4}
+		{F93D5ACA-5EC7-4EA8-8B7A-3F932004893F} = {91E3C6E7-6819-4E0F-8F3B-D9C1C673DCE4}
+	EndGlobalSection
+EndGlobal
