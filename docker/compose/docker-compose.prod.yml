@@ -162,6 +162,7 @@ services:
         condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://0.0.0.0:8080
       - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=${RABBITMQ_HOSTNAME}
@@ -193,6 +194,7 @@ services:
         condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://0.0.0.0:8080
       - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=${RABBITMQ_HOSTNAME}
