@@ -216,8 +216,18 @@ services:
       - bdc_data:/opt/bdc_data
 
 volumes:
-  postgres_data:     # для базы данных
+  postgres_data:
+    external: true
+    name: binancecollector_postgres_data
   seq_data:
+    external: true
+    name: binancecollector_seq_data
   rabbitmq_data:
+    external: true
+    name: binancecollector_rabbitmq_data
   letsencrypt_data:
-  bdc_data:          # для архивов и CSV
+    external: true
+    name: binancecollector_letsencrypt_data
+  bdc_data:
+    external: true
+    name: compose_bdc_data
