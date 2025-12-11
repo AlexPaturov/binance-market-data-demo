@@ -65,6 +65,8 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=market_analytics
+      - POSTGRES_INITDB_ARGS=--auth-host=md5
+      - POSTGRES_HOST_AUTH_METHOD=md5
     volumes:
       - postgres_data:/var/lib/postgresql/data
     command:
@@ -72,9 +74,9 @@ services:
       - "-c"
       - "password_encryption=md5"
     networks:
-      - internal_network # База данных подключена ТОЛЬКО к внутренней сети
+      - internal_network # База данных подключена к внутренней сети
     ports:
-      - "100.96.120.16:5432:5432"
+      - "100.96.120.16:5432:5432" # Проброс во внешнюю для dbeaver 
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d market_analytics"]
       interval: 10s
