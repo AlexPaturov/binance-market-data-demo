@@ -63,7 +63,7 @@ jobs:
 
           # 3. Создаем .env файл с секретами
           cat > .env << EOF
-          APP_VERSION=latest
+          APP_VERSION=${{ steps.version.outputs.APP_VERSION }}
           POSTGRES_USER=${{ secrets.DB_USER }}
           POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}
           POSTGRES_HOST=bdc_pgbouncer
