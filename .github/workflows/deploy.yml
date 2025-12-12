@@ -71,8 +71,13 @@ jobs:
           echo "=== .env file created ==="
           cat .env | sed 's/PASSWORD=.*/PASSWORD=***HIDDEN***/'
           
-          # 5. Гарантируем, что важные внешние тома существуют
-          # "|| true" нужно, чтобы команда не падала, если том уже есть
+          # 5. Создаем "Вечные" тома (Safety First!)
+          # " || true" - чтоб не падало с ошибкой, если том уже есть
+          echo "Ensuring persistent volumes exist..."
+          docker volume create binancecollector_postgres_data || true
+          docker volume create binancecollector_seq_data || true
+          docker volume create binancecollector_rabbitmq_data || true
+          docker volume create binancecollector_letsencrypt_data || true
           docker volume create binancecollector_bdc_data || true
 
           # 6. Скачиваем свежие образы и перезапускаем сервисы
