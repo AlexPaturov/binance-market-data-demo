@@ -138,7 +138,18 @@ services:
       - ../../src:/app/src
 
 volumes:
-  postgres_data:     # для базы
-  bdc_seq_data:
-  bdc_rabbitmq_data:
-  bdc_data:          # для архивов и CSV
+  postgres_data:
+    external: true
+    name: binancecollector_postgres_data
+  seq_data:
+    external: true
+    name: binancecollector_seq_data
+  rabbitmq_data:
+    external: true
+    name: binancecollector_rabbitmq_data
+  letsencrypt_data:
+    external: true
+    name: binancecollector_letsencrypt_data
+  bdc_data:
+    external: true
+    name: binancecollector_bdc_data # для архивов и CSV

@@ -230,4 +230,4 @@ volumes:
     name: binancecollector_letsencrypt_data
   bdc_data:
     external: true
-    name: compose_bdc_data
+    name: binancecollector_bdc_data
