@@ -12,6 +12,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Calculate app version
+        id: version
+        run: |
+          echo "APP_VERSION=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
       - name: List files for debugging
         run: ls -R
 
@@ -71,14 +76,17 @@ jobs:
           echo "=== .env file created ==="
           cat .env | sed 's/PASSWORD=.*/PASSWORD=***HIDDEN***/'
           
-          # 5. Создаем "Вечные" тома (Safety First!)
-          # " || true" - чтоб не падало с ошибкой, если том уже есть
+          # 5. Создаем контракты
           echo "Ensuring persistent volumes exist..."
           docker volume create binancecollector_postgres_data || true
           docker volume create binancecollector_seq_data || true
           docker volume create binancecollector_rabbitmq_data || true
           docker volume create binancecollector_letsencrypt_data || true
           docker volume create binancecollector_bdc_data || true
+          
+          echo "Ensuring persistent networks exist..."
+          docker network create binancecollector_web || true
+          docker network create internal_network || true
 
           # 6. Скачиваем свежие образы и перезапускаем сервисы
           docker compose pull
