@@ -36,20 +36,27 @@ jobs:
       - name: Build and push Worker image
         working-directory: ${{ github.workspace }}
         run: |
-          docker build . --file docker/Dockerfile --tag ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest --target worker
-          docker push ${{ steps.image_names.outputs.WORKER_IMAGE }}:latest
+          docker build . \
+            --file docker/Dockerfile \
+            --tag ${{ steps.image_names.outputs.WORKER_IMAGE }}:${{ steps.version.outputs.APP_VERSION }} \
+            --target worker
+  
+          docker push ${{ steps.image_names.outputs.WORKER_IMAGE }}:${{ steps.version.outputs.APP_VERSION }}
 
       - name: Build and push DataManager image
         working-directory: ${{ github.workspace }}
         run: |
-          docker build . --file docker/Dockerfile --tag ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest --target datamanager
-          docker push ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:latest
+          docker build . \
+            --file docker/Dockerfile \
+            --tag ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:${{ steps.version.outputs.APP_VERSION }} \
+            --target datamanager
+  
+          docker push ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:${{ steps.version.outputs.APP_VERSION }}
 
       - name: Deploy to Server
         run: |
           # 1. Копируем правильный compose-файл
           cp ${{ github.workspace }}/docker/compose/docker-compose.prod.yml /opt/BinanceCollector/docker/compose/docker-compose.prod.yml
-
 
           # 2. Переходим в директорию деплоя
           cd /opt/BinanceCollector/docker/compose
