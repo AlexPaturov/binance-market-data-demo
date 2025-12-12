@@ -70,7 +70,11 @@ jobs:
           # 4. Проверяем содержимое .env (для отладки, потом можно удалить)
           echo "=== .env file created ==="
           cat .env | sed 's/PASSWORD=.*/PASSWORD=***HIDDEN***/'
+          
+          # 5. Гарантируем, что важные внешние тома существуют
+          # "|| true" нужно, чтобы команда не падала, если том уже есть
+          docker volume create binancecollector_bdc_data || true
 
-          # 5. Скачиваем свежие образы и перезапускаем сервисы
+          # 6. Скачиваем свежие образы и перезапускаем сервисы
           docker compose pull
           docker compose up -d
