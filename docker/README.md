@@ -20,6 +20,45 @@ docker compose \
   -f compose/docker-compose.dev.yml \
   down
 ```
+---
+
+## 🧪 1.1 Запуск ТОЛЬКО инфраструктуры для локального запуска DataManager и Worker из IDE
+
+Используется для разработки и проверки health endpoints при запуске **DataManager и Worker напрямую из IDE**, без контейнеризации самих сервисов.
+
+Запускается только инфраструктура:
+- Postgres
+- PgBouncer
+- RabbitMQ
+- Seq
+
+```bash
+docker compose \
+  -f compose/docker-compose.yml \
+  -f compose/docker-compose.db.yml \
+  -f compose/docker-compose.rabbit.yml \
+  -f compose/docker-compose.seq.yml \
+  up -d
+```
+
+Остановка инфраструктуры:
+```bash
+docker compose \
+  -f compose/docker-compose.yml \
+  -f compose/docker-compose.db.yml \
+  -f compose/docker-compose.rabbit.yml \
+  -f compose/docker-compose.seq.yml \
+  down
+```
+Просмотр состояния инфраструктуры:
+```bash
+docker compose \
+  -f compose/docker-compose.yml \
+  -f compose/docker-compose.db.yml \
+  -f compose/docker-compose.rabbit.yml \
+  -f compose/docker-compose.seq.yml \
+  ps
+```
 
 ---
 ## 🗄 2. Запуск только базы данных (для DBeaver)
