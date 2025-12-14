@@ -101,8 +101,14 @@ public class Program
                     options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("HangfireConnection")); 
                 }));
             #endregion
-            builder.Services.AddHealthChecks();
-            PrintConfiguration(builder.Configuration); // TODO service information - delete
+            
+            builder.Services.AddHealthChecks()
+                .AddNpgSql(
+                    builder.Configuration.GetConnectionString("DefaultConnection")!,
+                    name: "pgbouncer",
+                    timeout: TimeSpan.FromSeconds(5)); 
+            
+            //PrintConfiguration(builder.Configuration); // TODO service information - delete
             var app = builder.Build();
             Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             app.UseMiddleware<MemoryUsageLoggingMiddleware>();

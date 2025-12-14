@@ -114,7 +114,11 @@ public class Program
             builder.Services.AddTransient<ArchiveUnpackerWorker>(); // 
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
-            builder.Services.AddHealthChecks(); // Мне кажется не совсем правильно - после сервисов которые должны иметь коннект к базе
+            builder.Services.AddHealthChecks()
+                .AddNpgSql(
+                    builder.Configuration.GetConnectionString("DefaultConnection")!,
+                    name: "pgbouncer",
+                    timeout: TimeSpan.FromSeconds(5)); 
             #endregion
 
             Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
@@ -137,27 +141,6 @@ public class Program
                         CountersAggregateInterval = TimeSpan.FromMinutes(5),
                         TransactionSynchronisationTimeout = TimeSpan.FromMinutes(5)
                     }));
-            
-            
-            // builder.Services.AddHangfire(config => config
-            //     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-            //     .UseSimpleAssemblyNameTypeSerializer()
-            //     .UseRecommendedSerializerSettings()
-            //     .UsePostgreSqlStorage(connectionString =>
-            //     {
-            //         connectionString.UseNpgsqlConnection(
-            //             builder.Configuration.GetConnectionString("HangfireConnection"));
-            //     }, new PostgreSqlStorageOptions
-            //     {
-            //         QueuePollInterval = TimeSpan.FromSeconds(15), // Как часто проверять очередь
-            //         InvisibilityTimeout = TimeSpan.FromHours(4), // Увеличиваем до 4 часов
-            //         UseNativeDatabaseTransactions = true, // Использовать нативные транзакции
-            //         PrepareSchemaIfNecessary = true, // Автоматически создавать схему
-            //         SchemaName = "hangfire", // Название схемы (опционально)
-            //         JobExpirationCheckInterval = TimeSpan.FromHours(1), // Проверка истекших заданий
-            //         CountersAggregateInterval = TimeSpan.FromMinutes(5), // Агрегация счетчиков
-            //         TransactionSynchronisationTimeout = TimeSpan.FromMinutes(5) // Таймаут синхронизации
-            //     }));
 
             // --- Сервер для быстрых, приоритетных задач ---
             builder.Services.AddHangfireServer(options =>
