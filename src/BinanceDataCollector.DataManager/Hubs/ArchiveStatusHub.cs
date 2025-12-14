@@ -11,12 +11,6 @@ public class ArchiveStatusHub : Hub
         await base.OnConnectedAsync();
     }
 
-    //public async Task SubscribeToGroup(string groupName)
-    //{
-    //    // Клиент сам скажет, в какую группу его добавить.
-    //    await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
-    //}
-
     // Метод OnDisconnectedAsync для очистки
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
