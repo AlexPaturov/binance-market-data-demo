@@ -32,9 +32,9 @@ public class RabbitMQListenerService : BackgroundService
 
         var factory = new ConnectionFactory()
         {
-            HostName = _configuration["RabbitMQ:HostName"]!,
+            HostName = _configuration["RabbitMQ:Host"]!,
             Port = Int32.Parse(_configuration["RabbitMQ:Port"]!),
-            UserName = _configuration["RabbitMQ:UserName"]!,
+            UserName = _configuration["RabbitMQ:User"]!,
             Password = _configuration["RabbitMQ:Password"]!,
             AutomaticRecoveryEnabled = true, // Автоматическое восстановление
             NetworkRecoveryInterval = TimeSpan.FromSeconds(10)
@@ -74,7 +74,6 @@ public class RabbitMQListenerService : BackgroundService
                     if (statusEvent?.ConnectionId != null)
                     {
                         _logger.LogDebug("Получено сообщение для ConnectionId {ConnectionId}", statusEvent.ConnectionId);
-                        // await _hubContext.Clients.Group(statusEvent.ConnectionId).SendAsync("ReceiveStatusUpdate", statusEvent.Message, stoppingToken);
                         await _hubContext.Clients.All.SendAsync("ReceiveStatusUpdate", $"[BROADCAST] {statusEvent.Message}");
                     }
                 }
