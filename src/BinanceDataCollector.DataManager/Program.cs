@@ -12,6 +12,7 @@ using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
 using Hangfire;
 using Hangfire.PostgreSql;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
 using Serilog.Enrichers.WithCaller;
 
@@ -100,8 +101,8 @@ public class Program
                     options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("HangfireConnection")); 
                 }));
             #endregion
-
-            PrintConfiguration(builder.Configuration); // TODO service information - dele
+            builder.Services.AddHealthChecks();
+            PrintConfiguration(builder.Configuration); // TODO service information - delete
             var app = builder.Build();
             Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             app.UseMiddleware<MemoryUsageLoggingMiddleware>();
@@ -120,6 +121,16 @@ public class Program
             app.MapHub<ArchiveStatusHub>("/archiveStatusHub");
             app.MapDefaultControllerRoute();
 
+            app.MapHealthChecks("/health/live", new HealthCheckOptions
+            {
+                Predicate = _ => false
+            });
+
+            app.MapHealthChecks("/health/ready", new HealthCheckOptions
+            {
+                Predicate = _ => true
+            });
+            
             #region logging
             Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             startupStopwatch.Stop();

@@ -14,6 +14,23 @@ networks:
     driver: bridge
 
 services:
+  
+  # --- UPTIME MONITORING ---
+  uptime_kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime_kuma
+    restart: always
+    volumes:
+      - uptime_kuma_data:/app/data
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=binancecollector_web"
+      - "traefik.http.routers.kuma.rule=Host(`status.jahasim.com`)"
+      - "traefik.http.routers.kuma.entrypoints=web"
+      - "traefik.http.services.kuma.loadbalancer.server.port=3001"
+  
   # --- ОБРАТНЫЙ ПРОКСИ ---
   # Единая точка входа для всего трафика. Управляет SSL и маршрутизацией.
   traefik:
@@ -231,3 +248,6 @@ volumes:
   bdc_data:
     external: true
     name: binancecollector_bdc_data
+  uptime_kuma_data:
+    external: true
+    name: binancecollector_uptime_kuma_data

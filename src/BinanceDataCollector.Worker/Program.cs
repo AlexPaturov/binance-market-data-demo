@@ -14,6 +14,7 @@ using BinanceDataCollector.Worker.Workers;
 using BinanceDataCollector.Worker.Workers.Archives;
 using Hangfire;
 using Hangfire.PostgreSql;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
 using Serilog.Enrichers.WithCaller;
 
@@ -113,7 +114,7 @@ public class Program
             builder.Services.AddTransient<ArchiveUnpackerWorker>(); // 
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
-
+            builder.Services.AddHealthChecks(); // Мне кажется не совсем правильно - после сервисов которые должны иметь коннект к базе
             #endregion
 
             Log.Information("Все сервисы зарегистрированы за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
@@ -195,6 +196,16 @@ public class Program
                 Authorization = new[] { new HangfireAuthorizationFilter() }
             });
 
+            app.MapHealthChecks("/health/live", new HealthCheckOptions
+            {
+                Predicate = _ => false
+            });
+
+            app.MapHealthChecks("/health/ready", new HealthCheckOptions
+            {
+                Predicate = _ => true
+            });
+            
             // Добавляем простой эндпоинт для проверки, что веб-сервер жив
             app.MapGet("/", () => "BinanceDataCollector is running.");
             Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
