@@ -106,6 +106,15 @@ public class Program
                 .AddNpgSql(
                     builder.Configuration.GetConnectionString("DefaultConnection")!,
                     name: "pgbouncer",
+                    timeout: TimeSpan.FromSeconds(5))
+                .AddRabbitMQ(
+                    new Uri(
+                        $"amqp://{builder.Configuration["RabbitMQ:User"]}:" +
+                        $"{builder.Configuration["RabbitMQ:Password"]}@" +
+                        $"{builder.Configuration["RabbitMQ:Host"]}:" +
+                        $"{builder.Configuration["RabbitMQ:Port"]}/"
+                    ),
+                    name: "rabbitmq",
                     timeout: TimeSpan.FromSeconds(5)); 
             
             //PrintConfiguration(builder.Configuration); // TODO service information - delete
