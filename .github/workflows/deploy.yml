@@ -90,6 +90,7 @@ jobs:
           docker volume create binancecollector_rabbitmq_data || true
           docker volume create binancecollector_letsencrypt_data || true
           docker volume create binancecollector_bdc_data || true
+          docker volume create binancecollector_uptime_kuma_data || true
           
           echo "Ensuring persistent networks exist..."
           docker network create binancecollector_web || true
