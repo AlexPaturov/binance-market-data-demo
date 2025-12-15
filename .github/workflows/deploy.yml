@@ -73,9 +73,9 @@ jobs:
           SEQ_ADMIN_USER=lex
           SEQ_ADMIN_PASS=lex
           RABBITMQ_USER=${{ secrets.RABBITMQ_USER }}
-          RABBITMQ_PASS=${{ secrets.RABBITMQ_PASS }}
+          RABBITMQ_PASSWORD=${{ secrets.RABBITMQ_PASS }}
           RABBITMQ_PORT=5672
-          RABBITMQ_HOSTNAME=bdc_rabbitmq
+          RABBITMQ_HOST=bdc_rabbitmq
           CLOUDFLARE_TUNNEL_TOKEN=${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
           EOF
 

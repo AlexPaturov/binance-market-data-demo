@@ -131,10 +131,10 @@ services:
       retries: 5
       start_period: 10s
     environment:
-      - RabbitMQ__HostName=${RABBITMQ_HOSTNAME}
+      - RabbitMQ__HostName=${RABBITMQ_HOST}
       - RabbitMQ__Port=${RABBITMQ_PORT}
       - RabbitMQ__UserName=${RABBITMQ_USER}
-      - RabbitMQ__Password=${RABBITMQ_PASS}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
     networks:
@@ -182,10 +182,10 @@ services:
       - ASPNETCORE_URLS=http://0.0.0.0:8080
       - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - RabbitMQ__HostName=${RABBITMQ_HOSTNAME}
+      - RabbitMQ__HostName=${RABBITMQ_HOST}
       - RabbitMQ__Port=${RABBITMQ_PORT}
       - RabbitMQ__UserName=${RABBITMQ_USER}
-      - RabbitMQ__Password=${RABBITMQ_PASS}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
       - Serilog__WriteTo__0__Name=Seq
       - Serilog__WriteTo__0__Args__serverUrl=http://bdc_seq:80
     networks:
@@ -217,10 +217,10 @@ services:
       - ASPNETCORE_URLS=http://0.0.0.0:8080
       - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - RabbitMQ__Host=${RABBITMQ_HOSTNAME}
+      - RabbitMQ__Host=${RABBITMQ_HOST}
       - RabbitMQ__Port=${RABBITMQ_PORT}
       - RabbitMQ__User=${RABBITMQ_USER}
-      - RabbitMQ__Password=${RABBITMQ_PASS}
+      - RabbitMQ__Password=${RABBITMQ_PASSWORD}
       - Serilog__WriteTo__0__Name=Seq
       - Serilog__WriteTo__0__Args__serverUrl=http://bdc_seq:80
     networks:
