@@ -54,9 +54,8 @@ services:
       - "/var/run/docker.sock:/var/run/docker.sock:ro" # Traefik читает метаданные Docker
       - "letsencrypt_data:/letsencrypt"
     networks:
-      web:
-        ipv4_address: 172.28.0.10
-      internal_network:
+      - web
+      - internal_network
 
   cloudflared:
     image: cloudflare/cloudflared:latest
