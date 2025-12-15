@@ -191,10 +191,10 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=binancecollector_web"
       - "traefik.http.routers.worker.rule=Host(`worker.jahasim.com`)"
-      - "traefik.http.routers.worker.entrypoints=web"
+      - "traefik.http.routers.worker.entrypoints=web,websecure"
       - "traefik.http.services.worker.loadbalancer.server.port=8080"
       - "traefik.http.routers.hangfire.rule=Host(`hangfire.jahasim.com`)"
-      - "traefik.http.routers.hangfire.entrypoints=web"
+      - "traefik.http.routers.hangfire.entrypoints=web,websecure"
       - "traefik.http.routers.hangfire.service=worker"
     volumes:
       - bdc_data:/opt/bdc_data
