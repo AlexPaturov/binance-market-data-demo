@@ -25,7 +25,7 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=binancecollector_web"
       - "traefik.http.routers.kuma.rule=Host(`status.jahasim.com`)"
-      - "traefik.http.routers.kuma.entrypoints=web"
+      - "traefik.http.routers.kuma.entrypoints=websecure"
       - "traefik.http.services.kuma.loadbalancer.server.port=3001"
   
   # --- ОБРАТНЫЙ ПРОКСИ ---
