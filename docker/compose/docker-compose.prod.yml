@@ -7,8 +7,8 @@ networks:
     external: true
     name: binancecollector_web
   internal_network:
+    external: true
     name: internal_network
-    driver: bridge
 
 services:
   
