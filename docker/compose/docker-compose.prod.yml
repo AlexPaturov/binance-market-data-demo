@@ -127,9 +127,9 @@ services:
       retries: 5
       start_period: 10s
     environment:
-      - RabbitMQ__HostName=${RABBITMQ_HOST}
+      - RabbitMQ__Host=${RABBITMQ_HOST}
       - RabbitMQ__Port=${RABBITMQ_PORT}
-      - RabbitMQ__UserName=${RABBITMQ_USER}
+      - RabbitMQ__User=${RABBITMQ_USER}
       - RabbitMQ__Password=${RABBITMQ_PASSWORD}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq/
@@ -226,7 +226,7 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=binancecollector_web"
       - "traefik.http.routers.datamanager.rule=Host(`datamanager.jahasim.com`)"
-      - "traefik.http.routers.datamanager.entrypoints=web"
+      - "traefik.http.routers.datamanager.entrypoints=web,websecure"
       - "traefik.http.services.datamanager.loadbalancer.server.port=8080"
     volumes:
       - bdc_data:/opt/bdc_data
