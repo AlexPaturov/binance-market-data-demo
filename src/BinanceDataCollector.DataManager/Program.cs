@@ -109,9 +109,9 @@ public class Program
                     timeout: TimeSpan.FromSeconds(5))
                 .AddRabbitMQ(
                     new Uri(
-                        $"amqp://{builder.Configuration["RabbitMQ:User"]}:" +
+                        $"amqp://{builder.Configuration["RabbitMQ:UserName"]}:" +
                         $"{builder.Configuration["RabbitMQ:Password"]}@" +
-                        $"{builder.Configuration["RabbitMQ:Host"]}:" +
+                        $"{builder.Configuration["RabbitMQ:HostName"]}:" +
                         $"{builder.Configuration["RabbitMQ:Port"]}/"
                     ),
                     name: "rabbitmq",
