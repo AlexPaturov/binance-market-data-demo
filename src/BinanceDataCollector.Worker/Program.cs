@@ -114,35 +114,11 @@ public class Program
             builder.Services.AddTransient<ArchiveUnpackerWorker>(); // 
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
-
-            #region logs for deleting
-            var rabbitUser = builder.Configuration["RabbitMQ:UserName"];
-            var rabbitPass = builder.Configuration["RabbitMQ:Password"];
-            var rabbitHost = builder.Configuration["RabbitMQ:HostName"];
-            var rabbitPort = builder.Configuration["RabbitMQ:Port"];
-
-            Log.Information(
-                "RabbitMQ config: User={User}, Host={Host}, Port={Port}, PassIsNull={PassIsNull}",
-                rabbitUser,
-                rabbitHost,
-                rabbitPort,
-                rabbitPass is null
-            );
-            #endregion
             
             builder.Services.AddHealthChecks()
                 .AddNpgSql(
                     builder.Configuration.GetConnectionString("DefaultConnection")!,
                     name: "pgbouncer",
-                    timeout: TimeSpan.FromSeconds(5))
-                .AddRabbitMQ(
-                    new Uri(
-                        $"amqp://{builder.Configuration["RabbitMQ:UserName"]}:" +
-                        $"{builder.Configuration["RabbitMQ:Password"]}@" +
-                        $"{builder.Configuration["RabbitMQ:HostName"]}:" +
-                        $"{builder.Configuration["RabbitMQ:Port"]}/"
-                    ),
-                    name: "rabbitmq",
                     timeout: TimeSpan.FromSeconds(5)); 
             #endregion
 
