@@ -116,9 +116,9 @@ public class Program
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
 
             #region logs for deleting
-            var rabbitUser = builder.Configuration["RabbitMQ:User"];
+            var rabbitUser = builder.Configuration["RabbitMQ:UserName"];
             var rabbitPass = builder.Configuration["RabbitMQ:Password"];
-            var rabbitHost = builder.Configuration["RabbitMQ:Host"];
+            var rabbitHost = builder.Configuration["RabbitMQ:HostName"];
             var rabbitPort = builder.Configuration["RabbitMQ:Port"];
 
             Log.Information(
