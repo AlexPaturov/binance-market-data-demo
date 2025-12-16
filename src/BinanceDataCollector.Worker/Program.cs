@@ -128,9 +128,6 @@ public class Program
                 rabbitPort,
                 rabbitPass is null
             );
-            
-            var uriString = $"amqp://{Uri.EscapeDataString(rabbitUser)}:{Uri.EscapeDataString(rabbitPass)}@{rabbitHost}:{rabbitPort}/";
-            Log.Information("amqp    " + uriString);
             #endregion
             
             builder.Services.AddHealthChecks()
