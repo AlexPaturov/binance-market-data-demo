@@ -110,6 +110,35 @@ public class Program
             
             //PrintConfiguration(builder.Configuration); // TODO service information - delete
             var app = builder.Build();
+            
+            //-- log begin
+            var serviceName = "bdc-datamanager";
+            var serviceRole = "api";
+
+            Log.Information(
+                "SERVICE STARTED",
+                new
+                {
+                    ServiceName = serviceName,
+                    ServiceRole = serviceRole,
+                    Environment = builder.Environment.EnvironmentName,
+                    Version = builder.Configuration["APP_VERSION"] ?? "unknown",
+                    MachineName = Environment.MachineName,
+                    ProcessId = Environment.ProcessId,
+                    StartedAtUtc = DateTime.UtcNow,
+
+                    ListeningUrls = builder.Configuration["ASPNETCORE_URLS"],
+                    BehindReverseProxy = true,
+                    TlsTermination = "Traefik/Cloudflare",
+
+                    HealthLiveEndpoint = "/health/live",
+                    HealthReadyEndpoint = "/health/ready",
+                    HealthReadyDependsOn = new[] { "PostgreSQL" },
+                    HealthIgnoredDependencies = new[] { "RabbitMQ" }
+                }
+            );
+            //-- log end 
+            
             Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             app.UseMiddleware<MemoryUsageLoggingMiddleware>();
             if (!app.Environment.IsDevelopment())

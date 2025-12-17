@@ -171,6 +171,35 @@ public class Program
 
             PrintConfiguration(builder.Configuration);
             var app = builder.Build();
+            
+            //-- log begin
+            var serviceName = "bdc-worker"; 
+            var serviceRole = "worker";
+
+            Log.Information(
+                "SERVICE STARTED",
+                new
+                {
+                    ServiceName = serviceName,
+                    ServiceRole = serviceRole,
+                    Environment = builder.Environment.EnvironmentName,
+                    Version = builder.Configuration["APP_VERSION"] ?? "unknown",
+                    MachineName = Environment.MachineName,
+                    ProcessId = Environment.ProcessId,
+                    StartedAtUtc = DateTime.UtcNow,
+
+                    ListeningUrls = builder.Configuration["ASPNETCORE_URLS"],
+                    BehindReverseProxy = true,
+                    TlsTermination = "Traefik/Cloudflare",
+
+                    HealthLiveEndpoint = "/health/live",
+                    HealthReadyEndpoint = "/health/ready",
+                    HealthReadyDependsOn = new[] { "PostgreSQL" },
+                    HealthIgnoredDependencies = new[] { "RabbitMQ" }
+                }
+            );
+            //-- log end 
+            
             Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
             // --- 5. Настройка веб-пайплайна (Middleware) ---
