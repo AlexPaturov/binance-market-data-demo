@@ -112,7 +112,7 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=binancecollector_web"
       - "traefik.http.routers.seq.rule=Host(`seq.jahasim.com`)"
-      - "traefik.http.routers.seq.entrypoints=web"
+      - "traefik.http.routers.seq.entrypoints=web,websecure"
       - "traefik.http.services.seq.loadbalancer.server.port=80"
 
   # --- БРОКЕР СООБЩЕНИЙ ---
