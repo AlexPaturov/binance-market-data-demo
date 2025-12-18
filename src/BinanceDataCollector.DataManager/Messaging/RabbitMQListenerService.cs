@@ -32,9 +32,9 @@ public class RabbitMQListenerService : BackgroundService
 
         var factory = new ConnectionFactory()
         {
-            HostName = _configuration["RabbitMQ:Host"]!,
+            HostName = _configuration["RabbitMQ:HostName"]!,
             Port = Int32.Parse(_configuration["RabbitMQ:Port"]!),
-            UserName = _configuration["RabbitMQ:User"]!,
+            UserName = _configuration["RabbitMQ:UserName"]!,
             Password = _configuration["RabbitMQ:Password"]!,
             AutomaticRecoveryEnabled = true, // Автоматическое восстановление
             NetworkRecoveryInterval = TimeSpan.FromSeconds(10)
