@@ -116,7 +116,7 @@ public class Program
             var serviceRole = "api";
 
             Log.Information(
-                "SERVICE STARTED",
+                "SERVICE STARTED {@Service}",
                 new
                 {
                     ServiceName = serviceName,

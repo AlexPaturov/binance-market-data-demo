@@ -177,7 +177,7 @@ public class Program
             var serviceRole = "worker";
 
             Log.Information(
-                "SERVICE STARTED",
+                "SERVICE STARTED {@Service}",
                 new
                 {
                     ServiceName = serviceName,
