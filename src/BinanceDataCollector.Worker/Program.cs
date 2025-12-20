@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Net;
+using System.Reflection;
 using BinanceDataCollector.Application.Analytics;
 using BinanceDataCollector.Application.Analytics.MarketScreeners.Services;
 using BinanceDataCollector.Application.Archives.Interfaces;
@@ -181,7 +182,8 @@ public class Program
                     ServiceName = builder.Environment.ApplicationName.Substring(builder.Environment.ApplicationName.LastIndexOf('.') + 1),
                     ServiceRole = builder.Configuration["SERVICE_ROLE"] ?? "unknown",
                     Environment = builder.Environment.EnvironmentName,
-                    Version = builder.Configuration["APP_VERSION"] ?? "unknown",
+                    // Version = builder.Configuration["APP_VERSION"] ?? "unknown",GetFormattedAppVersion()
+                    Version = GetFormattedAppVersion(),
                     MachineName = Environment.MachineName,
                     ProcessId = Environment.ProcessId,
                     StartedAtUtc = DateTime.UtcNow,
@@ -245,5 +247,34 @@ public class Program
         }
 
         Console.WriteLine("--- End Configuration Debug View ---");
+    }
+    
+    static string GetFormattedAppVersion()
+    {
+        var infoVer = Assembly.GetEntryAssembly()
+            ?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+
+        if (string.IsNullOrEmpty(infoVer)) return "v0.0.0 (unknown)";
+
+        // Стандартный формат в .NET 8+: "1.0.0+79428a83425..."
+        var plusIndex = infoVer.IndexOf('+');
+
+        if (plusIndex >= 0)
+        {
+            // Берем часть ДО плюса (версию)
+            var version = infoVer[..plusIndex]; 
+        
+            // Берем часть ПОСЛЕ плюса (хеш)
+            var fullHash = infoVer[(plusIndex + 1)..];
+        
+            // Отрезаем 7 символов от хеша
+            var shortHash = fullHash.Length >= 7 ? fullHash[..7] : fullHash;
+
+            return $"v{version} ({shortHash})";
+        }
+
+        // Если плюса нет (например, локально без git), просто возвращаем версию с 'v'
+        return $"v{infoVer}";
     }
 }
