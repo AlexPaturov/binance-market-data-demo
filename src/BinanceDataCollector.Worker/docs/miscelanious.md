@@ -2,14 +2,16 @@ https://192.168.0.200:9090/system  - терминал сервера
 http://localhost:5341/#/events?range=1d - локальный лог
 http://100.96.120.16:5341  - лог сервера (admin, as34zx67)
 
-# старт стоп контейнер с приложением
-# cd /opt/BinanceCollector
-# sudo docker compose stop binance_collector_app
-# sudo docker compose start binance_collector_app
-# sudo systemctl restart docker - рестарт докера при переходе на новый источник wi-fi/lan
+
 
 ## ---- как выполнять долгие команды с использованием виртуальных терминалов начало -------------------------------------------------------------------
-# 1. Подключаемся по SSH терминалу
+
+### 
+1. Подключаемся по SSH терминалу
+```bash
+  ssh -p 2237 lex@192.168.0.200
+  ssh -p 2237 lex@analserver
+```
 # 2. Заходим в папку с docker контейнером в котором находится наша база данных
 # 3. Запускаем новую сессию screen и даем ей имя, например - vacuum_session
 screen -S vacuum_session
@@ -29,66 +31,72 @@ CREATE INDEX CONCURRENTLY IX_Trades_TradeTime_Desc ON public."Trades" ("TradeTim
 screen -r vacuum_session
 ## ---- как выполнять долгие команды с использованием виртуальных терминалов окончание -----------------------------------------------------------------
 
-## ------------- выгрузка схемы базы данных начало ----------------------------
-# 1. Устанавливаем пароль в переменную окружения
+### **Выгрузка схемы базы данных**
+```bash
 $env:PGPASSWORD="dt_hfgd_yyyd"
 pg_dump -U bindatacoll -h localhost -p 5432 --schema-only --schema=public -d market_analytics -f "D:\pg_script\market_analytics_dev.sql"
 pg_dump -U bindatacoll -h localhost -p 5432 --schema-only --schema=hangfire -d market_analytics_jobs_dev -f "D:\pg_script\market_analytics_jobs_dev.sql"
-## ------------- выгрузка схемы базы данных окончание -------------------------
+```
 
-## ----------------- полная очистка базы перед загрузкой новых данных начало ---------------------------------------------------------------------------
--- Отключаем триггеры (если они есть), чтобы ускорить удаление
-SET session_replication_role = 'replica';
+---
+### **Полная очистка базы перед загрузкой новых данных**
 
--- Очищаем все таблицы с бизнес-данными.
--- TRUNCATE работает гораздо быстрее, чем DELETE, так как не сканирует строки.
-TRUNCATE TABLE public."Trades" RESTART IDENTITY CASCADE;
-TRUNCATE TABLE public."Ohlcv_1min" RESTART IDENTITY CASCADE;
-TRUNCATE TABLE public."Ohlcv_Features" RESTART IDENTITY CASCADE;
-TRUNCATE TABLE public."Audit_Blocks" RESTART IDENTITY CASCADE;
-TRUNCATE TABLE public."HistoricalAudit_Watermarks" RESTART IDENTITY CASCADE;
+Отключаем триггеры (если они есть), чтобы ускорить удаление
+```bash 
+  SET session_replication_role = 'replica';
+```
 
--- Возвращаем триггеры в нормальный режим
-SET session_replication_role = 'origin';
+Очищаем все таблицы с бизнес-данными.
+```bash
+  TRUNCATE TABLE public."Trades" RESTART IDENTITY CASCADE;
+  TRUNCATE TABLE public."Ohlcv_1min" RESTART IDENTITY CASCADE;
+  TRUNCATE TABLE public."Ohlcv_Features" RESTART IDENTITY CASCADE;
+  TRUNCATE TABLE public."Audit_Blocks" RESTART IDENTITY CASCADE;
+  TRUNCATE TABLE public."HistoricalAudit_Watermarks" RESTART IDENTITY CASCADE;
+```
 
--- Сообщаем об успехе
-SELECT 'Таблицы с данными успешно очищены.' AS status;
+Возвращаем триггеры в нормальный режим
+```bash
+  SET session_replication_role = 'origin';
+```
 
-### -- Очищаем таблицы Hangfire. Порядок важен из-за внешних ключей.
-TRUNCATE TABLE hangfire."jobparameter" CASCADE;
-TRUNCATE TABLE hangfire."jobqueue" CASCADE;
-TRUNCATE TABLE hangfire."state" CASCADE;
-TRUNCATE TABLE hangfire."list" CASCADE;
-TRUNCATE TABLE hangfire."hash" CASCADE;
-TRUNCATE TABLE hangfire."set" CASCADE;
-TRUNCATE TABLE hangfire."counter" CASCADE;
-TRUNCATE TABLE hangfire."aggregatedcounter" CASCADE;
-TRUNCATE TABLE hangfire."job" CASCADE;
-TRUNCATE TABLE hangfire."server" CASCADE;
-
-SELECT 'Таблицы Hangfire успешно очищены.' AS status;
-
-
-## ----------------- полная очистка базы перед загрузкой новых данных окончание -------------------------------------------------------------------------
-
-## ---------------- установка ватермарок начало ---------------------------------------------------------------------------------------------------------
-DO $$
-DECLARE
-    -- УСТАНОВИ ЗДЕСЬ ДАТУ, С КОТОРОЙ НАЧНЕТСЯ ТВОЯ ИСТОРИЯ
-    start_date_literal TEXT := '2025-01-01'; -- <-- ИЗМЕНИ ЗДЕСЬ
+---
+### **Очищаем таблицы Hangfire. Порядок важен из-за внешних ключей**
+```bash
+    TRUNCATE TABLE hangfire."jobparameter" CASCADE;
+    TRUNCATE TABLE hangfire."jobqueue" CASCADE;
+    TRUNCATE TABLE hangfire."state" CASCADE;
+    TRUNCATE TABLE hangfire."list" CASCADE;
+    TRUNCATE TABLE hangfire."hash" CASCADE;
+    TRUNCATE TABLE hangfire."set" CASCADE;
+    TRUNCATE TABLE hangfire."counter" CASCADE;
+    TRUNCATE TABLE hangfire."aggregatedcounter" CASCADE;
+    TRUNCATE TABLE hangfire."job" CASCADE;
+    TRUNCATE TABLE hangfire."server" CASCADE;
     
-    start_date TIMESTAMP := to_timestamp(start_date_literal, 'YYYY-MM-DD') AT TIME ZONE 'UTC';
-    start_timestamp BIGINT;
-BEGIN
-    start_timestamp := (EXTRACT(EPOCH FROM start_date) * 1000)::BIGINT;
-
-    INSERT INTO public."Processing_Watermarks" ("ProcessName", "LastProcessedTimestamp", "Status", "LastUpdate_UTC")
-    VALUES
-    ('OhlcvAggregator', start_timestamp, 'Idle', NOW()),
-    ('FeatureCalculator', start_timestamp, 'Idle', NOW());
-    -- ON CONFLICT ... (оставляем)
-END $$;
-## ---------------- установка ватермарок окончание -------------------------------------------------------------------------------------------------------
+    SELECT 'Таблицы Hangfire успешно очищены.' AS status;
+```
+---
+### **Установка ватермарок**
+```bash
+    DO $$
+    DECLARE
+        -- УСТАНОВИ ЗДЕСЬ ДАТУ, С КОТОРОЙ НАЧНЕТСЯ ТВОЯ ИСТОРИЯ
+        start_date_literal TEXT := '2025-01-01'; -- <-- ИЗМЕНИ ЗДЕСЬ
+        
+        start_date TIMESTAMP := to_timestamp(start_date_literal, 'YYYY-MM-DD') AT TIME ZONE 'UTC';
+        start_timestamp BIGINT;
+    BEGIN
+        start_timestamp := (EXTRACT(EPOCH FROM start_date) * 1000)::BIGINT;
+    
+        INSERT INTO public."Processing_Watermarks" ("ProcessName", "LastProcessedTimestamp", "Status", "LastUpdate_UTC")
+        VALUES
+        ('OhlcvAggregator', start_timestamp, 'Idle', NOW()),
+        ('FeatureCalculator', start_timestamp, 'Idle', NOW());
+        -- ON CONFLICT ... (оставляем)
+    END $$;
+```
+---
 
 ## ---------------- RabbitMQ начало ----------------------------------------------------------------------------------------------------------------------
 # By default user name: guest, password: guest
@@ -140,15 +148,14 @@ docker compose -f compose.yml -f dev-compose.yml up --build
 ----------------------------------------------------------------------------------------------------------------
 
 ### **Выгружаем структуру проекта относительно текущего каталога в виде дерева**
-
- tree -L 10 -I 'wwwroot|obj|bin|Debug|Release|sqlScripts|ProjectSupport|docs|.git' --charset utf-8 -o "$(basename "$PWD")_tree.txt"
-
+```bash
+  tree -L 10 -I 'wwwroot|obj|bin|Debug|Release|sqlScripts|ProjectSupport|docs|.git' --charset utf-8 -o "$(basename "$PWD")_tree.txt"
+```
 ---
-
-## Создал символическую ссылку docker-compose.yml на docker-compose.prod.yml
+### **Создал символическую ссылку на сервере docker-compose.yml на docker-compose.prod.yml**
 
 ```bash
-ln -sf docker-compose.prod.yml docker-compose.yml
+  ln -sf docker-compose.prod.yml docker-compose.yml
 ```
 
 Теперь CI будет работать так:
@@ -197,11 +204,11 @@ sudo ufw allow 5433/tcp
 # Для RabbitMQ (клиентский порт)
 sudo ufw allow 5672/tcp
 
-# Для админки RabbitMQ
-sudo ufw allow 15672/tcp
+### Для админки RabbitMQ
+`sudo ufw allow 15672/tcp`
 
-# Для админки Seq (уже есть, но повторить не вредно)
-sudo ufw allow 5341/tcp
+### Для админки Seq (уже есть, но повторить не вредно) 
+`sudo ufw allow 5341/tcp`
 # ----------------------------- firewall end -----------------------------------------------
 
 # ----------------------------- app domain -----------------------------------------------
