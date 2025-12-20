@@ -167,6 +167,16 @@ public class Program
                 Predicate = _ => true
             });
             
+            Log.Information(
+                "SERVICE READY {@Ready}",
+                new
+                {
+                    ServiceName = builder.Environment.ApplicationName.Substring(builder.Environment.ApplicationName.LastIndexOf('.') + 1),
+                    ReadyAtUtc = DateTime.UtcNow,
+                    ReadyDependsOn = new[] { "PostgreSQL" }
+                }
+            );
+            
             #region logging
             Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             startupStopwatch.Stop();

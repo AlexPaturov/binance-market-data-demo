@@ -182,8 +182,7 @@ public class Program
                     ServiceName = builder.Environment.ApplicationName.Substring(builder.Environment.ApplicationName.LastIndexOf('.') + 1),
                     ServiceRole = builder.Configuration["SERVICE_ROLE"] ?? "unknown",
                     Environment = builder.Environment.EnvironmentName,
-                    // Version = builder.Configuration["APP_VERSION"] ?? "unknown",GetFormattedAppVersion()
-                    Version = GetFormattedAppVersion(),
+                    Version = builder.Configuration["APP_VERSION"] ?? "unknown",
                     MachineName = Environment.MachineName,
                     ProcessId = Environment.ProcessId,
                     StartedAtUtc = DateTime.UtcNow,
@@ -219,6 +218,16 @@ public class Program
                 Predicate = _ => true
             });
             
+            Log.Information(
+                "SERVICE READY {@Ready}",
+                new
+                {
+                    ServiceName = builder.Environment.ApplicationName.Substring(builder.Environment.ApplicationName.LastIndexOf('.') + 1),
+                    ReadyAtUtc = DateTime.UtcNow,
+                    ReadyDependsOn = new[] { "PostgreSQL" }
+                }
+            );
+            
             // Добавляем простой эндпоинт для проверки, что веб-сервер жив
             app.MapGet("/", () => "BinanceDataCollector is running.");
             Log.Information("Веб-пайплайн настроен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
@@ -249,6 +258,7 @@ public class Program
         Console.WriteLine("--- End Configuration Debug View ---");
     }
     
+    // TODO не забыть использовать на стадии добавления версии
     static string GetFormattedAppVersion()
     {
         var infoVer = Assembly.GetEntryAssembly()
