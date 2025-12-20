@@ -112,6 +112,7 @@ public class Program
             var app = builder.Build();
             
             //-- log begin
+            
             // var serviceName = "bdc-datamanager";
             // var serviceRole = "api"; 
 
