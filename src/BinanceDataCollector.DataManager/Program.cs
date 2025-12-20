@@ -113,7 +113,7 @@ public class Program
             
             //-- log begin
             // var serviceName = "bdc-datamanager";
-            // var serviceRole = "api";
+            // var serviceRole = "api"; 
 
             Log.Information(
                 "SERVICE STARTED {@Service}",
