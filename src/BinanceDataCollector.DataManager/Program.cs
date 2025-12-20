@@ -112,15 +112,15 @@ public class Program
             var app = builder.Build();
             
             //-- log begin
-            var serviceName = "bdc-datamanager";
-            var serviceRole = "api";
+            // var serviceName = "bdc-datamanager";
+            // var serviceRole = "api";
 
             Log.Information(
                 "SERVICE STARTED {@Service}",
                 new
                 {
-                    ServiceName = serviceName,
-                    ServiceRole = serviceRole,
+                    ServiceName = builder.Environment.ApplicationName.Substring(builder.Environment.ApplicationName.LastIndexOf('.') + 1),
+                    ServiceRole = builder.Configuration["SERVICE_ROLE"] ?? "unknown",
                     Environment = builder.Environment.EnvironmentName,
                     Version = builder.Configuration["APP_VERSION"] ?? "unknown",
                     MachineName = Environment.MachineName,
