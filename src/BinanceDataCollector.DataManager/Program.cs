@@ -12,16 +12,17 @@ using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
 using Hangfire;
 using Hangfire.PostgreSql;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Serilog;
 using Serilog.Enrichers.WithCaller;
 
 namespace BinanceDataCollector.DataManager;
 
-public class Program
-{
-    public static void Main(string[] args)
-    {
+public class Program {
+    public static void Main(string[] args) {
         var startupStopwatch = Stopwatch.StartNew();
         
         #region Минимальный "загрузочный" логгер - записать в консоль ошибку, если .Build() упадет.
@@ -60,6 +61,31 @@ public class Program
             #region Регистрация сервисов
             builder.Services.AddControllersWithViews();
             builder.Services.AddSignalR();
+            
+            // === Authentication (OIDC + Cookies) begin ===
+            builder.Services
+                .AddAuthentication(options => {
+                    options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+                    options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
+                })
+                .AddCookie()
+                .AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options => {
+                    options.Authority = builder.Configuration["Authentication:B2C:Authorities:SignUpSignIn"];
+                    options.ClientId = builder.Configuration["Authentication:B2C:ClientId"];
+                    options.ClientSecret = builder.Configuration["Authentication:B2C:ClientSecret"];
+                    options.ResponseType = OpenIdConnectResponseType.Code;
+                    options.SaveTokens = true;
+                    options.CallbackPath = builder.Configuration["Authentication:B2C:CallbackPath"] ?? "/signin-oidc";
+                    options.SignedOutCallbackPath = builder.Configuration["Authentication:B2C:SignedOutCallbackPath"] ?? "/signout-callback-oidc";
+                    options.Scope.Clear();
+                    foreach (var scope in builder.Configuration.GetSection("Authentication:B2C:Scopes").Get<string[]>() ?? Array.Empty<string>()) {
+                        options.Scope.Add(scope);
+                    }
+                });
+
+            builder.Services.AddAuthorization();
+            // === Authentication (OIDC + Cookies) end ===
+            
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
             builder.Services.AddHttpClient("BinanceArchive", client =>
                 {
@@ -79,8 +105,7 @@ public class Program
             
             // TODO: [Refactor] переделать на polly -> RabbitMqStatusNotifier
             // См. Issue #1
-            builder.Services.AddSingleton<IStatusNotifier>(sp =>
-            {
+            builder.Services.AddSingleton<IStatusNotifier>(sp => {
                 var configuration = sp.GetRequiredService<IConfiguration>();
                 return RabbitMqStatusNotifier.CreateAsync(configuration).GetAwaiter().GetResult(); 
             });
@@ -109,13 +134,9 @@ public class Program
                     timeout: TimeSpan.FromSeconds(5)); 
             
             //PrintConfiguration(builder.Configuration); // TODO service information - delete
+            
             var app = builder.Build();
             
-            //-- log begin
-            
-            // var serviceName = "bdc-datamanager";
-            // var serviceRole = "api"; 
-
             Log.Information(
                 "SERVICE STARTED {@Service}",
                 new
@@ -138,12 +159,10 @@ public class Program
                     HealthIgnoredDependencies = new[] { "RabbitMQ" }
                 }
             );
-            //-- log end 
             
             Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             app.UseMiddleware<MemoryUsageLoggingMiddleware>();
-            if (!app.Environment.IsDevelopment())
-            {
+            if (!app.Environment.IsDevelopment()) {
                 app.UseExceptionHandler("/Home/Error");
                 app.UseHsts();
             }
@@ -151,19 +170,19 @@ public class Program
             //app.UseHttpsRedirection();
             app.UseStaticFiles();
 
+            // Middleware pipeline
+            app.UseRouting();
+            app.UseAuthentication();
             app.UseAuthorization();
 
             app.MapHangfireDashboard("/hangfire", new DashboardOptions { Authorization = new[] { new AllowAllConnectionsFilter() } });
             app.MapHub<ArchiveStatusHub>("/archiveStatusHub");
             app.MapDefaultControllerRoute();
 
-            app.MapHealthChecks("/health/live", new HealthCheckOptions
-            {
+            app.MapHealthChecks("/health/live", new HealthCheckOptions {
                 Predicate = _ => false
             });
-
-            app.MapHealthChecks("/health/ready", new HealthCheckOptions
-            {
+            app.MapHealthChecks("/health/ready", new HealthCheckOptions {
                 Predicate = _ => true
             });
             
