@@ -64,6 +64,15 @@ public class Program {
             builder.Services.AddSignalR();
             
             // === Authentication (OIDC + Cookies) begin ===
+            
+            // 1. Настраиваем политики кук (Важно для OIDC в Docker)
+            builder.Services.Configure<CookiePolicyOptions>(options =>
+            {
+                options.CheckConsentNeeded = context => true;
+                options.MinimumSameSitePolicy = SameSiteMode.None;
+                options.Secure = CookieSecurePolicy.Always; // Всегда Secure, так как у нас Cloudflare
+            });
+            
             builder.Services
                 .AddAuthentication(options => {
                     options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
@@ -92,6 +101,18 @@ public class Program {
 
             builder.Services.AddAuthorization();
             // === Authentication (OIDC + Cookies) end ===
+            
+            // Настройка заголовков для Traefik/Cloudflare
+            builder.Services.Configure<ForwardedHeadersOptions>(options =>
+            {
+                options.ForwardedHeaders =
+                    ForwardedHeaders.XForwardedFor |
+                    ForwardedHeaders.XForwardedProto |
+                    ForwardedHeaders.XForwardedHost;
+                // Очищаем, чтобы доверять заголовкам из Docker-сети
+                options.KnownNetworks.Clear();
+                options.KnownProxies.Clear();
+            });
             
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
             builder.Services.AddHttpClient("BinanceArchive", client =>
@@ -141,19 +162,18 @@ public class Program {
                     timeout: TimeSpan.FromSeconds(5)); 
             
             //PrintConfiguration(builder.Configuration); // TODO service information - delete
-            
-            builder.Services.Configure<ForwardedHeadersOptions>(options =>
-            {
-                options.ForwardedHeaders =
-                    ForwardedHeaders.XForwardedFor |
-                    ForwardedHeaders.XForwardedProto |
-                    ForwardedHeaders.XForwardedHost;
-                options.KnownNetworks.Clear();
-                options.KnownProxies.Clear();
-            });
-            
+
             var app = builder.Build();
             app.UseForwardedHeaders();
+            
+            // ЖЕСТКИЙ ФИКС ДЛЯ ЦИКЛИЧЕСКОГО РЕДИРЕКТА
+            // Заставляем приложение думать, что оно работает по HTTPS (так как SSL снял Cloudflare/Traefik)
+            app.Use(async (context, next) =>
+            {
+                context.Request.Scheme = "https";
+                await next();
+            });
+            // ========================================
             
             Log.Information(
                 "SERVICE STARTED {@Service}",
@@ -190,6 +210,7 @@ public class Program {
 
             // Middleware pipeline
             app.UseRouting();
+            app.UseCookiePolicy(); // Активируем политики кук ПЕРЕД аутентификацией
             app.UseAuthentication();
             app.UseAuthorization();
 
