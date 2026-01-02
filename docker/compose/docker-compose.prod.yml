@@ -219,8 +219,8 @@ services:
       - RabbitMQ__Password=${RABBITMQ_PASSWORD}
       - Serilog__WriteTo__0__Name=Seq
       - Serilog__WriteTo__0__Args__serverUrl=http://bdc_seq:80
-      - Authentication__B2C__ClientId=${Auth_B2C_ClientId}
-      - Authentication__B2C__ClientSecret=${Auth_B2C_ClientSecret}
+      - Authentication__B2C__ClientId=${AUTH_B2C_CLIENTID}
+      - Authentication__B2C__ClientSecret=${AUTH_B2C_CLIENT_SECRET}
     networks:
       - web
       - internal_network
