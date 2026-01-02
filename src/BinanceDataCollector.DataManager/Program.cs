@@ -15,6 +15,7 @@ using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Serilog;
 using Serilog.Enrichers.WithCaller;
@@ -135,7 +136,16 @@ public class Program {
             
             //PrintConfiguration(builder.Configuration); // TODO service information - delete
             
+            builder.Services.Configure<ForwardedHeadersOptions>(options =>
+            {
+                options.ForwardedHeaders =
+                    ForwardedHeaders.XForwardedFor |
+                    ForwardedHeaders.XForwardedProto |
+                    ForwardedHeaders.XForwardedHost;
+            });
+            
             var app = builder.Build();
+            app.UseForwardedHeaders();
             
             Log.Information(
                 "SERVICE STARTED {@Service}",
