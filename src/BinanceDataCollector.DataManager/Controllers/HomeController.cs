@@ -3,10 +3,12 @@ using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Models;
 using Hangfire;
 using Hangfire.Storage;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BinanceDataCollector.DataManager.Controllers
 {
+    [Authorize]
     public class HomeController : Controller
     {
         private readonly ILogger<HomeController> _logger;
