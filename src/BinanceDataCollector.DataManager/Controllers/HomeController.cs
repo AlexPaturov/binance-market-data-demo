@@ -32,6 +32,14 @@ namespace BinanceDataCollector.DataManager.Controllers
 
         public async Task<IActionResult> Index()
         {
+            _logger.LogInformation(
+                "REQUEST CONTEXT {@Ctx}",
+                new {
+                    Scheme = HttpContext.Request.Scheme,
+                    Host = HttpContext.Request.Host.Value,
+                    PathBase = HttpContext.Request.PathBase.Value
+                });
+            
             _logger.LogInformation("Начало обработки запроса Index...");
             var stopwatch = new Stopwatch();
             stopwatch.Start();
