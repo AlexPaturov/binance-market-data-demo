@@ -74,7 +74,7 @@ public class Program {
                     options.ClientId = builder.Configuration["Authentication:B2C:ClientId"];
                     options.ClientSecret = builder.Configuration["Authentication:B2C:ClientSecret"];
                     options.ResponseType = OpenIdConnectResponseType.Code;
-                    options.SaveTokens = true;
+                    options.SaveTokens = false;
                     options.CallbackPath = builder.Configuration["Authentication:B2C:CallbackPath"] ?? "/signin-oidc";
                     options.SignedOutCallbackPath = builder.Configuration["Authentication:B2C:SignedOutCallbackPath"] ?? "/signout-callback-oidc";
                     options.Scope.Clear();
