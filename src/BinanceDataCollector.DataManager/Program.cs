@@ -148,6 +148,8 @@ public class Program {
                     ForwardedHeaders.XForwardedFor |
                     ForwardedHeaders.XForwardedProto |
                     ForwardedHeaders.XForwardedHost;
+                options.KnownNetworks.Clear();
+                options.KnownProxies.Clear();
             });
             
             var app = builder.Build();
