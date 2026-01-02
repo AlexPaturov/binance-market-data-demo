@@ -83,7 +83,7 @@ public class Program {
                     options.ResponseType = OpenIdConnectResponseType.Code;
                     options.SaveTokens = false;
                     options.CallbackPath = builder.Configuration["Authentication:B2C:CallbackPath"] ?? "/signin-oidc";
-                    options.SignedOutCallbackPath = builder.Configuration["Authentication:B2C:SignedOutCallbackPath"] ?? "/signout-callback-oidc";
+                    //options.SignedOutCallbackPath = builder.Configuration["Authentication:B2C:SignedOutCallbackPath"] ?? "/signout-callback-oidc";
                     options.Scope.Clear();
                     foreach (var scope in builder.Configuration.GetSection("Authentication:B2C:Scopes").Get<string[]>() ?? Array.Empty<string>()) {
                         options.Scope.Add(scope);
