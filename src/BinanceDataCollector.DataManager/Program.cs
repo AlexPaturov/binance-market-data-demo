@@ -14,6 +14,7 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -162,7 +163,16 @@ public class Program {
                     timeout: TimeSpan.FromSeconds(5)); 
             
             //PrintConfiguration(builder.Configuration); // TODO service information - delete
+            
+            #region Общее место для хранения ключей
+            var keysPath = builder.Environment.IsProduction()
+                ? "/opt/bdc_data/keys"
+                : Path.Combine(builder.Environment.ContentRootPath, "keys");
 
+            builder.Services.AddDataProtection()
+                .PersistKeysToFileSystem(new DirectoryInfo(keysPath))
+                .SetApplicationName("BinanceDataCollector.DataManager");
+            #endregion
             var app = builder.Build();
             app.UseForwardedHeaders();
             
