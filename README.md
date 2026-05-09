@@ -17,38 +17,53 @@
 
 ## 📚 Документация
 
-Полная документация по проекту, включая описание архитектуры, структуры базы данных, настройки сервера и процесса развертывания, находится в папке [`/docs`](./docs/01_overview.md).
+Полная карта документации — **[docs/INDEX.md](./docs/INDEX.md)**. Там навигация по всем разделам и подсказки «с чего начать».
 
-- **[01 - Обзор проекта](./docs/mds/01_overview.md)**
-- **[02 - Архитектура приложения](./docs/mds/02_architecture.md)**
-- **[03 - База данных (PostgreSQL)](./docs/mds/03_database.md)**
-- **[04 - Развертывание и CI/CD](./docs/mds/04_deployment.md)**
-- **[05 - Настройка Сервера (Ubuntu Server)](./docs/mds/05_setup.md)**
+Основные документы:
+
+- **Общее (актуально для всех окружений):**
+  - [Обзор проекта](./docs/common/01_overview.md)
+  - [Архитектура приложения](./docs/common/02_architecture.md)
+  - [База данных (PostgreSQL)](./docs/common/03_database.md)
+- **Разработка:**
+  - [Архитектура DEV-окружения](./docs/dev/ARCHITECTURE_DEV.md) — Windows + VirtualBox VM, shared folder, IDE-режим
+- **Эксплуатация:**
+  - [Архитектура PROD-окружения](./docs/prod/ARCHITECTURE_PROD.md)
+  - [Развертывание и CI/CD](./docs/prod/04_deployment.md)
+  - [Настройка прод-сервера](./docs/prod/05_setup.md)
+  - [Сеть и безопасность сервера](./docs/Server_Network_Config.md)
 
 ---
 
 ## 🚀 Технологический стек
 
 - **Бэкенд:** C# / .NET 8
-- **База данных:** PostgreSQL 16
+- **База данных:** PostgreSQL 16 (+ PgBouncer)
+- **Брокер сообщений:** RabbitMQ
+- **Фоновые задачи:** Hangfire (отдельная БД `market_analytics_jobs`)
+- **Логи:** Seq (централизованный сбор через Serilog)
 - **Среда выполнения:** Docker / Docker Compose
-- **CI/CD:** GitHub Actions (Self-hosted Runner)
+- **CI/CD:** GitHub Actions (Self-hosted Runner) + GHCR
 - **Основная ОС сервера:** Ubuntu Server 22.04 LTS
+
+**Только в PROD:**
+
+- **Reverse proxy:** Traefik (TLS-терминация, маршрутизация)
+- **Внешний доступ:** Cloudflare Tunnel (без проброса портов)
+- **Мониторинг:** Uptime Kuma
 
 ---
 
 ## 🔧 Установка и запуск
 
-Проект спроектирован для работы в Docker-контейнерах. Для локальной разработки и запуска на "боевом" сервере используется `docker-compose`.
-
 ### 1. Локальная разработка
-1.  Убедитесь, что у вас установлен Docker Desktop.
-2.  Запустите локальный экземпляр PostgreSQL (см. [документацию по настройке](./docs/05_setup.md)).
-3.  Создайте файл `appsettings.Development.json` с вашей строкой подключения.
-4.  Запустите проект `BinanceDataCollector.Worker` из вашей IDE.
+
+DEV-окружение состоит из Windows-хоста (IDE и .NET-приложения) и VirtualBox VM с Ubuntu, в которой в Docker крутится инфраструктура (Postgres, PgBouncer, RabbitMQ, Seq). Worker и DataManager запускаются из IDE на Windows как обычные .NET-процессы.
+
+Полная инструкция и схема — **[docs/dev/ARCHITECTURE_DEV.md](./docs/dev/ARCHITECTURE_DEV.md)**.
 
 ### 2. Развертывание на сервере
-Развертывание полностью автоматизировано.
-1.  Подготовьте сервер согласно [инструкции по настройке](./docs/05_setup.md).
-2.  Сделайте `git push` в `master` ветку.
-3.  GitHub Actions сделает все остальное.
+
+Развертывание полностью автоматизировано: `git push` в `master` запускает CI/CD пайплайн, который собирает образы, пушит их в GHCR и перезапускает прод через self-hosted runner на сервере.
+
+Подробности — **[docs/prod/04_deployment.md](./docs/prod/04_deployment.md)**.

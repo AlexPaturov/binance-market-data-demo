@@ -4,7 +4,9 @@
 
 ## 1. Архитектурный подход
 
-Система построена на **микро-воркерной архитектуре** на базе .NET `BackgroundService`. Все приложение работает как единый процесс, но внутри него параллельно и независимо функционируют четыре "воркера", каждый из которых отвечает за свою, четко определенную задачу.
+Система состоит из двух .NET-приложений: **`bdc_worker`** (содержит четыре фоновых воркера через `BackgroundService`) и **`bdc_datamanager`** (ASP.NET MVC + SignalR — backoffice и UI). Оба приложения работают с одной и той же бизнес-БД `market_analytics` через PgBouncer, обмениваются сообщениями через RabbitMQ и пишут логи в Seq.
+
+Внутри `bdc_worker` параллельно и независимо функционируют четыре воркера, каждый со своей зоной ответственности.
 
 Такой подход обеспечивает:
 - **Разделение ответственности (Separation of Concerns):** Каждый воркер легко понять, протестировать и модифицировать, не затрагивая остальные.
@@ -64,48 +66,65 @@
 ```mermaid
 graph TD
     subgraph "CI/CD Pipeline (GitHub Actions)"
-        A[git push] --> B{Build & Push Docker Image};
-        B --> C{Deploy to Server};
+        A[git push] --> B{Build & Push Docker Image to GHCR}
+        B --> C{Deploy to Server}
     end
 
-    subgraph "Server (Ubuntu + Docker)"
-        D[docker-compose up] --> E[Container: app];
-        D --> F[Container: db (PostgreSQL)];
+    subgraph "Server (Docker Compose)"
+        D[docker compose up -d]
+        D --> E[bdc_worker]
+        D --> DM[bdc_datamanager]
+        D --> PB[bdc_pgbouncer]
+        D --> RMQ[bdc_rabbitmq]
+        D --> SEQ[bdc_seq]
+        D --> F[bdc_db PostgreSQL]
     end
-    
-    subgraph "Container: app (BinanceDataCollector.Worker)"
+
+    subgraph "bdc_worker — Background Workers"
         G[SymbolUpdateWorker]
         H[BinanceTradesWorker]
         I[DataAuditorWorker]
         J[OhlcvAggregatorWorker]
-        
+
         K[MarketScreener]
         L[DataSyncService]
         M[IBinanceService]
         N[ITradeRepository]
         O[ITrackedSymbolRepository]
-        
-        G -- вызывает --> K;
-        K -- вызывает --> M;
-        G -- вызывает --> O;
-        
-        H -- вызывает --> O;
-        H -- создает и запускает --> L;
-        
-        I -- вызывает --> O;
-        I -- вызывает --> N;
-        I -- вызывает --> M;
-        
-        J -- вызывает --> N;
-        
-        L -- вызывает --> M;
-        L -- вызывает --> N;
+
+        G -- вызывает --> K
+        K -- вызывает --> M
+        G -- вызывает --> O
+
+        H -- вызывает --> O
+        H -- создает и запускает --> L
+
+        I -- вызывает --> O
+        I -- вызывает --> N
+        I -- вызывает --> M
+
+        J -- вызывает --> N
+
+        L -- вызывает --> M
+        L -- вызывает --> N
     end
-    
-    M -- HTTP --> Binance_API[Binance REST API];
-    M -- WebSocket --> Binance_WS[Binance WebSocket];
-    N -- SQL --> F;
-    O -- SQL --> F;
+
+    subgraph "bdc_datamanager — Backoffice / UI"
+        UI[ASP.NET MVC + SignalR]
+        DMR[Repositories]
+        UI -- читает/пишет --> DMR
+    end
+
+    M -- HTTP --> Binance_API[Binance REST API]
+    M -- WebSocket --> Binance_WS[Binance WebSocket]
+    N -- через PgBouncer --> PB
+    O -- через PgBouncer --> PB
+    DMR -- через PgBouncer --> PB
+    PB -- SQL --> F
+    E -- логи --> SEQ
+    DM -- логи --> SEQ
+    E -. сообщения .-> RMQ
+    DM -. сообщения .-> RMQ
 ```
 
 ---
@@ -115,6 +134,9 @@ graph TD
 При штатной работе системы вы будете наблюдать следующую картину:
 
 ### 4.1. Логи приложения
+
+Логи Worker'а и DataManager'а отправляются в Seq через Serilog.
+
 - **Постоянный поток сообщений** от `DataSyncService`:
   > `[BTCUSDT] Сохраняем 25 сделок...`
 - **Периодические сообщения** от других воркеров:
