@@ -189,3 +189,65 @@ Worker и DataManager стартуют **на Windows**, а БД и брокер
 - Считать, что Worker/DataManager доступны изнутри VM по `localhost:7001/7002` — они работают на Windows-хосте.
 - Хранить ценные данные в DEV-volume'ах: пересоздание VM или контейнеров — рутина.
 - Трогать `docker-compose.override.yml` — оставлен как есть, разберёмся отдельной задачей.
+
+## 10. Диагностика: VM недоступна по сети с Windows
+
+Симптом: `ssh dev` (или подключение к портам Postgres/RabbitMQ/Seq на `192.168.56.101`) падает с ошибкой:
+
+```
+ssh: connect to host 192.168.56.101 port 2237: Connection timed out
+```
+
+При этом **внутрь VM можно зайти через консоль VirtualBox**, и `ip a` показывает, что `enp0s3` поднят и имеет IP `192.168.56.101`.
+
+`Connection timed out` означает, что SYN-пакеты уходят, но ответов нет — либо они не доходят до VM, либо ответы теряются по дороге. Самая частая причина в Host-Only сети VirtualBox — **рассинхрон ARP/DHCP** после suspend/resume VM или после долгого простоя: Windows держит устаревший ARP-маппинг IP → MAC, и пакеты улетают "в пустоту".
+
+### Быстрая проверка и фикс
+
+На Windows (PowerShell, не обязательно от админа):
+
+```powershell
+# 1. Посмотреть ARP-запись для IP виртуалки
+arp -a 192.168.56.101
+```
+
+Если в выводе:
+- запись `incomplete`, **или**
+- MAC отличается от MAC интерфейса `enp0s3` внутри VM (его смотрим командой `ip a show enp0s3` → строка `link/ether ...`)
+
+→ это ARP-проблема. Чистим кэш:
+
+```powershell
+# 2. Удалить устаревшую ARP-запись (требует админских прав)
+arp -d 192.168.56.101
+```
+
+После этого пингуем `192.168.56.101` и пробуем `ssh dev` заново — связность должна восстановиться в течение нескольких секунд.
+
+### Если не помогло
+
+Проверяем по порядку:
+
+1. **Windows Defender Firewall профиль для Host-Only адаптера.** После переподключений к Wi-Fi Windows иногда переклассифицирует адаптер в `Public`, и фаервол режет трафик:
+
+   ```powershell
+   Get-NetConnectionProfile
+   # Если для VirtualBox Host-Only Ethernet Adapter NetworkCategory: Public:
+   Set-NetConnectionProfile -InterfaceAlias "Ethernet 3" -NetworkCategory Private
+   ```
+   (Имя интерфейса — то, что показывает `ipconfig` для VirtualBox Host-Only Adapter; у меня это `Ethernet 3`.)
+
+2. **Маршрут на `192.168.56.0/24` перехвачен VPN/Tailscale.** Проверка:
+
+   ```powershell
+   Get-NetRoute -DestinationPrefix "192.168.56.0/24"
+   ```
+   `ifIndex` должен указывать на VirtualBox Host-Only адаптер, а не на Tailscale/VPN-интерфейс.
+
+3. **Адаптер выключен в Windows.** `Win+R` → `ncpa.cpl` → `VirtualBox Host-Only Network` → Disable/Enable.
+
+4. **Host-Only сеть в VirtualBox потеряла настройки** (бывает после обновления VirtualBox). VirtualBox → `File` → `Tools` → `Network Manager` → проверить, что Host-Only сеть существует, IPv4 = `192.168.56.1/24`, DHCP включён и его диапазон включает `.101`.
+
+### Профилактика
+
+Если проблема повторяется регулярно после suspend/resume VM — проще зафиксировать IP `192.168.56.101` статически в netplan VM (вместо DHCP), это уберёт класс проблем с переарендой адресов.
