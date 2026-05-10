@@ -379,3 +379,4 @@ FodyWeavers.xsd
 docker-compose.override.yml
 .env
 .vscode/
+/BinanceDataCollector_tree.txt

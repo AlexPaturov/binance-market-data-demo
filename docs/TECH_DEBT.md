@@ -1,0 +1,109 @@
+# Технический долг проекта BinanceDataCollector
+
+> Документ фиксирует известные проблемы, расхождения и подозрения,
+> найденные в процессе ревизии проекта (май 2026).
+> 
+> **Принцип:** записываем, потом разбираемся. Не лезем в работающее без понимания зачем оно так сделано.
+
+---
+
+## 1. CI/CD и deploy.yml
+
+### Безопасность (требует разбора, не срочно если прод стоит)
+
+- **Пароль Seq захардкожен в `deploy.yml`:** `SEQ_ADMIN_USER=lex`, `SEQ_ADMIN_PASS=lex`. Должны быть в GitHub Secrets.
+- **`pull_request` триггер запускает деплой на прод** — `on:` содержит и `push`, и `pull_request` в `master`. Любой PR → авто-деплой. Возможно артефакт из шаблона, нужно решить осознанно.
+- **Утечка секретов в логи Actions:** `sed` маскирует только `PASSWORD=*`, но `CLOUDFLARE_TUNNEL_TOKEN`, `AUTH_B2C_CLIENT_SECRET` попадают в лог открытым текстом.
+
+### Конфигурация (статус "нужно проверить, прежде чем менять")
+
+- **`docker compose pull/up -d` без `-f` флагов** — Compose может брать конфиги не оттуда, откуда мы думаем. Может на сервере есть `docker-compose.override.yml` который меняет картину.
+- **Нет `:latest` тэга образов** — откат только ручной через правку `APP_VERSION`. Возможно сделано намеренно (детерминированность).
+- **`SERILOG_SEQ_URL=http://seq:5341`** в workflow — имя контейнера в проде `bdc_seq`, не `seq`. Возможно перебивается на уровне переменных окружения Worker'а (`http://bdc_seq:80`), и тогда переменная просто не используется.
+- **Шаг `List files for debugging: ls -R`** засоряет лог. Возможно остался от первой настройки.
+- **Нет `dotnet test` в pipeline** — тесты в репо есть, но в CI не запускаются.
+- **`runs-on: self-hosted` без labels** — если будет несколько раннеров, поведение станет недетерминированным.
+
+### Вопросы которые надо проверить на сервере
+
+- Что лежит в `/opt/BinanceCollector/docker/compose/` — правда ли там только `docker-compose.prod.yml` или есть `docker-compose.yml` / `docker-compose.override.yml`?
+- Какой реально файл подцепляется при `docker compose up -d` в этой директории?
+- Какие переменные окружения реально доходят до Worker'а (есть ли пересечения с конфигами в образе)?
+
+---
+
+## 2. SQL-схема и репозиторий
+
+### Расхождения между прод-БД и репо
+
+- **`sp_aggregate_trades_to_ohlcv(BIGINT, BIGINT)`** существует на проде, но её DDL **нет ни в одном коммите**. Тело найдено только в untracked-файле `sqlScripts/prod_schema_2026-05-09.sql`.
+- **`Processing_Watermarks` имеет 4 колонки** (`ProcessName`, `LastProcessedTimestamp`, `Status`, `LastUpdate_UTC`), но в `tests/schema.sql` — только 2.
+- **`Audit_Blocks`** удалена с прода, но DDL и обвязка в коде остались.
+- **`sp_find_trade_id_gaps_in_window`** вызывается из `HistoricalAuditRepository`, но её определения нет в `sqlScripts/`.
+- **Индекс `ix_trades_tradetime_desc`** существует на проде, но не в репо.
+- **`sqlScripts/ddl/dbFromScratch.sql` устарел** — не содержит `ProcessingStatus`, новых таблиц, новых индексов. Запуск на живой БД откатит схему.
+
+### Мёртвый код в репозитории
+
+Подтверждено что не используется (включая проверку с раскомментированным `BinanceCollectorWorker`):
+
+- Таблица `Audit_Blocks`
+- Методы `AuditRepository.{GenerateNewAuditBlocks, GetBlocksToProcess, UpdateBlockStatus}Async`
+- `AnalysisRepository.GetDataQualityStatsAsync` + соответствующая SQL-функция
+- `TradeRepository.GetGapsForSymbolDayAsync` (только в тестах)
+- `TradeRepository.GetTradeIdsInWindowAsync`
+- SQL-функция `sp_get_data_quality_stats`
+- SQL-функция `sp_claim_new_ohlcv_for_features` (заменена на raw SQL в `OhlcvRepository`)
+- SQL-функции `sp_find_gaps_in_window`, `sp_find_trade_gaps` (в `sqlScripts/`, нет вызовов из C#)
+
+### Подозрения требующие проверки
+
+- **`Processing_Watermarks`: 2 vs 4 колонки** — какая версия фактически на dev/prod? Проверить через `\d "Processing_Watermarks"` на каждом сервере отдельно.
+- Поведение `sp_aggregate_trades_to_ohlcv` после переписывания — `Volume` теперь `EXCLUDED.Volume` (полный пересчёт), раньше было суммирование. Возможен баг в краевых случаях с задержкой тиков.
+
+---
+
+## 3. Hangfire конфигурация
+
+- **Гонка при создании схемы:** только Worker настроен с явными `PostgreSqlStorageOptions` (`PrepareSchemaIfNecessary = true`, `SchemaName = "hangfire"`). DataManager берёт дефолты. Если на чистой БД случайно стартанёт первым DataManager — схема создастся с дефолтными параметрами.
+- **Hangfire Dashboard в DataManager использует `AllowAllConnectionsFilter`** — буквально пропускает всех. В проде защита должна быть на уровне Traefik/Cloudflare. Если эта защита не настроена — дашборд открыт публично.
+
+---
+
+## 4. Состояние BinanceCollectorWorker
+
+- **Закомментирован в `Program.cs:117`** — сейчас realtime-сбор тиков отключён. Тики поступают только через Hangfire-джобы (`OnlineArchiveImportWorker`, `CsvImportWorker`, `FillGapWorker`).
+- Намеренно ли это? Когда планируется включить обратно?
+
+---
+
+## 5. Структура репозитория
+
+- **`docker-compose.override.yml`** — единственная копия в локальном бэкапе, в активном репо отсутствует. Решено пока не трогать. **(Решение от 2026-05-09)**
+- **`sqlScripts/`** — устаревший. Реально работающая схема только в `sqlScripts/prod_schema_2026-05-09.sql` (untracked) и в живой прод-БД.
+- **`tests/BinanceDataCollector.Infrastructure.Tests/schema.sql`** — последний раз обновлялся 14 ноября 2025, устарел минимум на 6 месяцев.
+- **`postgres-config/custom.conf`** — пустой файл, артефакт.
+- **Ветки `origin/docker-refactor` и `origin/test/ci`** — обе полностью смерджены в master, отстают на 49+ коммитов. Ничего нового не содержат, можно удалить.
+
+---
+
+## 6. План разбора (когда дойдут руки)
+
+Приоритеты не выставлены — расставим когда будет нужно действовать.
+
+- [ ] Зафиксировать `prod_schema_2026-05-09.sql` в master (закоммитить)
+- [ ] Восстановить dev-БД из `prod_schema_2026-05-09.sql`
+- [ ] Обновить `tests/schema.sql` под актуальную прод-схему
+- [ ] Привести `sqlScripts/` в соответствие с прод-схемой
+- [ ] Удалить мёртвый код (после восстановления окружения и проверки что прод реально без него работает)
+- [ ] Проверить и поправить `deploy.yml` (безопасность)
+- [ ] Решить судьбу `BinanceCollectorWorker` (включить / удалить)
+- [ ] Удалить устаревшие ветки `docker-refactor`, `test/ci`
+- [ ] Решить судьбу `docker-compose.override.yml` (восстановить из бэкапа или нет)
+- [ ] Удалить пустой `postgres-config/custom.conf`
+
+---
+
+## История ревизий
+
+- **2026-05-09:** первичный анализ при переезде с Ubuntu на Windows + VirtualBox. Восстановление dev-окружения с нуля. Полная ревизия документации (см. `docs/INDEX.md`). Снят `pg_dump` с прода как baseline.

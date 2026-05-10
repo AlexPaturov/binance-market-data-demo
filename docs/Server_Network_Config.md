@@ -1,8 +1,19 @@
 # Документация по настройке сети и безопасности сервера (analserver)
 
-**Дата:** 20.12.2025  
-**ОС:** Ubuntu 24.04 (ThinkPad)  
-**Роль:** Docker Host (RabbitMQ, Postgres, .NET Workers, Cloudflare Tunnel)
+**Последнее обновление:** май 2026  
+**Сервер:** `analserver` — GMKtec G2 (Intel N150), Ubuntu 24.04 LTS  
+**Роль:** Docker host для всего prod-стэка проекта BinanceDataCollector  
+**Внешний доступ:** только через Cloudflare Tunnel (без проброса портов на роутере)
+
+> Связанные документы:
+> - `docs/prod/ARCHITECTURE_PROD.md` — общая архитектура прода и состав сервисов.
+> - `docs/prod/04_deployment.md` — CI/CD и процесс деплоя.
+> - `docs/prod/05_setup.md` — первичная настройка чистого сервера.
+> - `docs/TECH_DEBT.md` — известные проблемы инфраструктуры.
+
+Стэк, который крутится на сервере (см. `docker/compose/docker-compose.prod.yml`):
+`traefik`, `cloudflared`, `bdc_db`, `bdc_pgbouncer`, `bdc_rabbitmq`, `bdc_seq`,
+`bdc_worker`, `bdc_datamanager`, `uptime_kuma`.
 
 ---
 
@@ -25,8 +36,18 @@
 | **Tailscale Network** | `100.64.0.0/10` | Any | `Tailscale Network` | Полный доступ к сервисам через VPN интерфейс `tailscale0`. |
 | **Cloudflare** | *См. список IP* | Any | `CF IP Range ...` | Разрешает входящий трафик от серверов Cloudflare. Критично для работы сайта при смене IP (Wi-Fi <-> Кабель). |
 
+### Зачем эти правила
+
+- **`2237/tcp`** — кастомный SSH-порт. Стандартный 22 закрыт, см. `docs/prod/05_setup.md` (раздел 2.1).
+- **`192.168.0.0/24`** — домашняя локалка. Нужна, чтобы с ноутбука/ПК ходить на сервер по локальному IP (включая Cockpit, прямой `docker compose ps` через SSH из локалки и т.п.).
+- **`172.16.0.0/12`** — диапазон Docker bridge-сетей. **Без этого правила контейнеры теряют связность через UFW** (Worker не может достучаться до RabbitMQ/Postgres/Seq, в логах будет `Connection refused`). UFW по умолчанию режет трафик между bridge-интерфейсами.
+- **`41641/udp` + `100.64.0.0/10`** — Tailscale: первый порт нужен для P2P-соединений (минуя DERP-реле), второй открывает доступ ко всем сервисам через VPN-интерфейс `tailscale0`. См. раздел 3.
+- **Cloudflare-диапазоны** — для входящего туннельного трафика. Cloudflare Tunnel проксирует HTTPS на сервер именно с этих подсетей. Без правил при смене провайдера/маршрутизатора `cloudflared` начинает биться об UFW.
+
 ### Список IP-диапазонов Cloudflare (Allow List)
-Эти подсети добавлены в Allow, чтобы туннель не блокировался фаерволом:
+
+Эти подсети добавлены в Allow, чтобы туннель не блокировался фаерволом. Список поддерживается отдельно — актуальную версию можно сверить с официальным фидом Cloudflare:
+
 *   `198.41.128.0/17`
 *   `173.245.48.0/20`
 *   `103.21.244.0/22`
@@ -42,34 +63,33 @@
 *   `172.64.0.0/13`
 *   `131.0.72.0/22`
 
-### Полезные команды
-```bash
-# Просмотр правил с номерами
-sudo ufw status numbered
+---
 
-# Перезагрузка правил
-sudo ufw reload
-
-# Смотрим в реальном времени логи
-sudo journalctl -f
-```
 ## 2. Автоматизация смены сети (NetworkManager Dispatcher)
-Проблема: При переключении с Wi-Fi на Кабель меняется интерфейс и IP шлюза. Контейнер cloudflared теряет связь и висит (ошибка 1033), пока его не перезапустят.
 
-Решение: Скрипт, который автоматически перезапускает контейнер туннеля при поднятии любого физического интерфейса.
+**Проблема:** При переключении с Wi-Fi на Кабель меняется интерфейс и IP шлюза.
+Контейнер `cloudflared` (см. `docker-compose.prod.yml`, имя контейнера —
+`cloudflared`, не системный сервис) теряет связь и висит (ошибка 1033),
+пока его не перезапустят.
 
-Файл: /etc/NetworkManager/dispatcher.d/99-restart-cloudflared
+**Решение:** Скрипт, который автоматически перезапускает контейнер туннеля
+при поднятии любого физического интерфейса. Актуально для GMKtec G2:
+сервер стоит дома и периодически меняет канал связи с роутером.
 
-Права: 755 (chmod +x)
+**Файл:** `/etc/NetworkManager/dispatcher.d/99-restart-cloudflared`
+
+**Права:** `755` (chmod +x)
+
 ```bash
-
 # Даём права
 sudo chmod +x /etc/NetworkManager/dispatcher.d/99-restart-cloudflared
 
-# Проверка прав
+# Проверка владельца
 sudo chown root:root /etc/NetworkManager/dispatcher.d/99-restart-cloudflared
 ```
-Содержимое скрипта:
+
+**Содержимое скрипта:**
+
 ```bash
 #!/bin/bash
 
@@ -93,3 +113,130 @@ if [ "$STATUS" = "up" ] || [ "$STATUS" = "vpn-up" ]; then
     /usr/bin/docker restart cloudflared || logger "Failed to restart cloudflared"
 fi
 ```
+
+---
+
+## 3. Tailscale
+
+Tailscale используется как admin-VPN для доступа к серверу с ноутбука вне дома
+и для прямого подключения к Postgres из DBeaver.
+
+- **Tailscale IP сервера:** `100.96.120.16`
+- **Используется для:**
+  - SSH-доступа (`ssh prod` — алиас, описан в `~/.ssh/config` ноутбука).
+  - Прямого подключения DBeaver к Postgres: `100.96.120.16:5432`. Это
+    единственная легальная точка прямого доступа к БД — изнутри LAN порт
+    `5432` забинден **только** на этот Tailscale-IP (см. `docker-compose.prod.yml`).
+  - Доступа к Cockpit (если включён): `https://100.96.120.16:9090`.
+
+**Команды:**
+
+```bash
+# Статус узлов в tailnet
+tailscale status
+
+# IP-адреса этого узла (IPv4 + IPv6)
+tailscale ip
+
+# Поднять/опустить Tailscale-интерфейс на этом узле
+sudo tailscale up
+sudo tailscale down
+```
+
+> ⚠️ Tailscale IP `100.96.120.16` **захардкожен в `docker-compose.prod.yml`** —
+> на нём биндится `5432` контейнера `bdc_db`:
+> `ports: - "100.96.120.16:5432:5432"`. Если IP в Tailscale изменится
+> (например, после re-auth или пересоздания узла), `docker compose up`
+> упадёт с ошибкой биндинга. Зафиксировано в `docs/TECH_DEBT.md`.
+
+---
+
+## 4. Команды быстрой диагностики
+
+Все команды read-only, ничего не меняют. Запускать на самом сервере (после `ssh prod`).
+
+```bash
+# --- UFW ---
+sudo ufw status numbered
+sudo ufw status verbose
+
+# --- Активные слушающие порты ---
+sudo ss -tlnp
+# Только интересные порты стэка (SSH/Postgres/PgBouncer/RabbitMQ/Seq/HTTP/Cockpit)
+sudo ss -tlnp | grep -E ':(2237|5432|6432|5672|15672|5341|80|443|8080|9090)'
+
+# --- Docker сети ---
+docker network ls
+docker network inspect binancecollector_web
+docker network inspect internal_network
+
+# --- Контейнеры и проброс портов ---
+cd /opt/BinanceCollector/docker/compose
+docker compose ps
+docker port bdc_db          # должен быть забинден на 100.96.120.16:5432
+docker port bdc_pgbouncer   # 6432 на всех интерфейсах
+docker port traefik         # 80, 443, 8080
+
+# --- Tailscale ---
+tailscale status
+tailscale ip
+
+# --- Cloudflare Tunnel: статус последних логов ---
+docker logs cloudflared --tail 50
+
+# --- Fail2Ban (что забанил по SSH) ---
+sudo fail2ban-client status sshd
+
+# --- Системные сетевые интерфейсы ---
+ip addr show
+ip route show
+```
+
+**Что фактически слушает хост-машина** (по `docker-compose.prod.yml`):
+
+| Порт хоста | Куда биндится | Куда ведёт                                 |
+|------------|---------------|---------------------------------------------|
+| `2237/tcp` | все интерфейсы | SSH демон (системный, не Docker)            |
+| `80/tcp`   | все интерфейсы | `traefik` — HTTP entrypoint                 |
+| `443/tcp`  | все интерфейсы | `traefik` — HTTPS entrypoint                |
+| `8080/tcp` | все интерфейсы | `traefik` — внутренний дашборд (`api.insecure=true`) |
+| `5432/tcp` | **только** `100.96.120.16` (Tailscale) | `bdc_db` (PostgreSQL)              |
+| `6432/tcp` | все интерфейсы | `bdc_pgbouncer` (connection pool)           |
+
+Остальные сервисы (`bdc_rabbitmq`, `bdc_seq`, `bdc_worker`, `bdc_datamanager`,
+`uptime_kuma`, `cloudflared`) портов на хост **не пробрасывают** — они доступны
+только через Docker-сети `binancecollector_web`/`internal_network` или через
+Traefik по доменам `*.jahasim.com`.
+
+---
+
+## 5. UFW: дополнительные команды
+
+```bash
+# Просмотр всех правил с номерами
+sudo ufw status numbered
+
+# Удалить правило по номеру
+sudo ufw delete <номер>
+
+# Перезагрузить правила без перезапуска сервиса
+sudo ufw reload
+
+# Включить / выключить
+sudo ufw enable
+sudo ufw disable
+
+# Журнал блокировок в реальном времени
+sudo journalctl -f -u ufw
+sudo tail -f /var/log/ufw.log
+```
+
+---
+
+## 6. Известные проблемы
+
+Сетевые / инфраструктурные проблемы и долги — в `docs/TECH_DEBT.md`.
+Из относящихся к этому документу:
+
+- Tailscale IP `100.96.120.16` захардкожен в `docker-compose.prod.yml`
+  (биндинг порта Postgres). Уязвимое место — при смене IP compose сломается.
