@@ -35,6 +35,7 @@
 	<ItemGroup>
         <!-- Не копировать appsettings из других проектов -->
         <Content Remove="../**/appsettings*.json" />
+        <Content Include="appsettings.Development.json" />
 
         <!-- Но оставить свой -->
         <Content Include="appsettings.json">
