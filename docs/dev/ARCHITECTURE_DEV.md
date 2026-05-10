@@ -148,26 +148,31 @@ Host prod
 
 ---
 
-## 7. Connection strings (`appsettings.Development.json`)
+## 7. Connection strings (`launchSettings.json`)
 
 Worker и DataManager стартуют **на Windows**, а БД и брокер — **в VM**. Поэтому в строках подключения указывается Host-Only IP VM, а не `localhost`.
 
+Конфигурация задаётся через переменные окружения в `Properties/launchSettings.json` — IDE (Rider / VS) читает этот файл и передаёт переменные процессу при запуске. Механизм аналогичен `environment:` в docker-compose, вложенность обозначается через `__`.
+
+> **`launchSettings.json` добавлен в `.gitignore`** — файл содержит учётные данные и не должен попадать в репозиторий. При клонировании или пересоздании окружения его нужно создать вручную.
+
 ```json
 {
-  "ConnectionStrings": {
-    "DefaultConnection":  "Host=192.168.56.101;Port=6432;Database=market_analytics;Username=...;Password=...",
-    "HangfireConnection": "Host=192.168.56.101;Port=6432;Database=market_analytics_jobs;Username=...;Password=..."
-  },
-  "RabbitMQ": {
-    "HostName": "192.168.56.101",
-    "Port": 5672,
-    "UserName": "...",
-    "Password": "..."
-  },
-  "Serilog": {
-    "WriteTo": [
-      { "Name": "Seq", "Args": { "serverUrl": "http://192.168.56.101:5341" } }
-    ]
+  "profiles": {
+    "WorkerProf": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ConnectionStrings__DefaultConnection":  "Host=192.168.56.101;Port=6432;Database=market_analytics;Username=...;Password=...",
+        "ConnectionStrings__HangfireConnection": "Host=192.168.56.101;Port=6432;Database=market_analytics_jobs;Username=...;Password=...",
+        "RabbitMQ__Host": "192.168.56.101",
+        "RabbitMQ__Port": "5672",
+        "RabbitMQ__User": "...",
+        "RabbitMQ__Password": "...",
+        "Serilog__WriteTo__1__Name": "Seq",
+        "Serilog__WriteTo__1__Args__serverUrl": "http://192.168.56.101:5341"
+      }
+    }
   }
 }
 ```
