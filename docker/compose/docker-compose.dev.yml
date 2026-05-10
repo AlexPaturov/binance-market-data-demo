@@ -60,7 +60,7 @@ services:
       - SEQ_FIRSTRUN_ADMINPASSWORD=${SEQ_ADMIN_PASS}
       - SERILOG_SEQ_URL=${SERILOG_SEQ_URL}
     volumes:
-      - bdc_seq_data:/data
+      - seq_data:/data
 
   bdc_rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -81,7 +81,7 @@ services:
       - RabbitMQ__UserName=${RABBITMQ_USER}
       - RabbitMQ__Password=${RABBITMQ_PASS}
     volumes:
-      - bdc_rabbitmq_data:/var/lib/rabbitmq
+      - rabbitmq_data:/var/lib/rabbitmq
 
   bdc_worker:
     container_name: bdc_worker
@@ -97,7 +97,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=${RABBITMQ_HOSTNAME}
       - RabbitMQ__Port=${RABBITMQ_PORT}
       - RabbitMQ__UserName=${RABBITMQ_USER}
@@ -124,7 +124,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=${RABBITMQ_HOSTNAME}
       - RabbitMQ__Port=${RABBITMQ_PORT}
       - RabbitMQ__UserName=${RABBITMQ_USER}
