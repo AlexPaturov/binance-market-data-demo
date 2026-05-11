@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace BinanceDataCollector.DataManager.Controllers
 {
-    [Authorize]
+    //[Authorize]
     public class HomeController : Controller
     {
         private readonly ILogger<HomeController> _logger;
