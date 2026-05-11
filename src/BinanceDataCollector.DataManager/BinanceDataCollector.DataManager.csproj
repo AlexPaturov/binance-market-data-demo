@@ -28,6 +28,7 @@
 		<PackageReference Include="Serilog.Enrichers.WithCaller" Version="1.3.0" />
 		<PackageReference Include="Serilog.Exceptions" Version="8.4.0" />
 		<PackageReference Include="Serilog.Sinks.Async" Version="2.1.0" />
+		<PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
 		<PackageReference Include="Serilog.Sinks.Seq" Version="9.0.0" />
 	</ItemGroup>
 

@@ -53,13 +53,20 @@ public class Program
 
             #region Logging preferences
             builder.Logging.ClearProviders();
-            builder.Host.UseSerilog((context, loggerConfiguration) => loggerConfiguration
-                .ReadFrom.Configuration(context.Configuration)
-                .Enrich.FromLogContext()
-                .Enrich.WithProcessId()
-                .Enrich.WithThreadId()
-                .Enrich.With<EnrichWithSourceClass>()
-                .Enrich.WithCaller());
+            builder.Host.UseSerilog((context, loggerConfiguration) => {
+                loggerConfiguration
+                    .ReadFrom.Configuration(context.Configuration)
+                    .Enrich.FromLogContext()
+                    .Enrich.WithProcessId()
+                    .Enrich.WithThreadId()
+                    .Enrich.With<EnrichWithSourceClass>()
+                    .Enrich.WithCaller();
+                if (context.HostingEnvironment.IsDevelopment())
+                    loggerConfiguration.WriteTo.File(
+                        path: $"logs/app-{DateTime.Now:yyyyMMdd_HHmmss}.log",
+                        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{ThreadId}] {SourceContext:l}[{MemberName}] {Message:lj}{NewLine}{Exception}",
+                        retainedFileCountLimit: 14);
+            });
             #endregion
 
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
