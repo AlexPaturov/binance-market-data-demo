@@ -24,7 +24,10 @@ public class RabbitMqStatusNotifier : IStatusNotifier, IAsyncDisposable
     {
         var factory = new ConnectionFactory() 
         { 
-            HostName = configuration["RabbitMQ:HostName"] 
+            HostName = configuration["RabbitMQ:HostName"],
+            UserName = configuration["RabbitMQ:UserName"],
+            Password = configuration["RabbitMQ:Password"],
+            Port = int.Parse(configuration["RabbitMQ:Port"] ?? "5672")
         };
         var connection = await factory.CreateConnectionAsync();
         var channel = await connection.CreateChannelAsync();
