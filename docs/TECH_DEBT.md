@@ -87,6 +87,12 @@
 
 ---
 
+## 7. Конфигурация запуска (DataManager и Worker)
+
+- **`ConfigureKestrel` конфликтует с `ASPNETCORE_URLS`:** в обоих `Program.cs` явно вызывается `builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(...))`. Kestrel при этом игнорирует `applicationUrl` из `launchSettings.json` и `ASPNETCORE_URLS` из docker-compose, выдавая warning при каждом старте: `Overriding address(es) 'http://localhost:7002'`. Нужно убрать `ConfigureKestrel` — в dev порт задаётся через `applicationUrl` в launchSettings, в проде через `ASPNETCORE_URLS` в docker-compose (уже настроено).
+
+---
+
 ## 6. План разбора (когда дойдут руки)
 
 Приоритеты не выставлены — расставим когда будет нужно действовать.
@@ -101,6 +107,7 @@
 - [ ] Удалить устаревшие ветки `docker-refactor`, `test/ci`
 - [ ] Решить судьбу `docker-compose.override.yml` (восстановить из бэкапа или нет)
 - [ ] Удалить пустой `postgres-config/custom.conf`
+- [ ] Убрать `ConfigureKestrel` из `DataManager/Program.cs` и `Worker/Program.cs` (см. п. 7)
 
 ---
 
