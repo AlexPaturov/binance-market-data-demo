@@ -10,7 +10,7 @@ public interface IAuditRepository
     /// Получает текущее состояние (вотермарку) для процесса агрегации свечей.
     /// </summary>
     /// <returns>Объект ProcessWatermark с последним состоянием.</returns>
-    Task<ProcessWatermark> GetAggregationWatermarkAsync();
+    Task<ProcessWatermark?> GetAggregationWatermarkAsync();
 
     // <summary>
     /// Обновляет состояние (вотермарку) для процесса агрегации свечей.

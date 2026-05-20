@@ -138,9 +138,7 @@ public class AuditRepository : IAuditRepository
             WHERE ""ProcessName"" = 'OhlcvAggregator';
         ";
         
-        // Используем QuerySingleAsync, так как мы ожидаем, что запись ВСЕГДА существует.
-        // Если ее нет, это будет исключением, что правильно.
-        return await db.QuerySingleAsync<ProcessWatermark>(sql);
+        return await db.QuerySingleOrDefaultAsync<ProcessWatermark?>(sql);
     }
 
     public async Task UpdateAggregationWatermarkAsync(long lastProcessedTimestamp, string status)
