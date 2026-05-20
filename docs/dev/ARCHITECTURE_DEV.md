@@ -127,6 +127,21 @@ services:
 
 Никогда не использовать `postgres_data:` как named volume — данные уйдут на `/var/lib/docker/volumes/` и заполнят системный раздел при объёмных импортах.
 
+### Настройка внешнего диска (при пересоздании VM)
+
+1. Подключить диск через VirtualBox USB Passthrough (Devices → USB → выбрать диск).
+2. В VM:
+
+```bash
+sudo mkdir -p /mnt/ext
+sudo blkid /dev/sdb1          # узнать UUID раздела
+# добавить в /etc/fstab:
+echo 'UUID=<uuid> /mnt/ext ext4 defaults 0 2' | sudo tee -a /etc/fstab
+sudo mount -a                 # проверка
+```
+
+3. Postgres данные уже лежат на диске в `/mnt/ext/postgres_data` — контейнер подхватит их сразу.
+
 ---
 
 ## 4. SSH-доступ
