@@ -386,3 +386,4 @@ docker-compose.override.yml
 # Contains credentials for local dev (VM connection strings, RabbitMQ, Seq)
 **/Properties/launchSettings.json
 /postgres_data
+/pgdata.img
