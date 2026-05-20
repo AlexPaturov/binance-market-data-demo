@@ -6,6 +6,8 @@ services:
     container_name: bdc_db
     ports:
       - "5432:5432" # expose for external tools
+    volumes:
+      - /opt/bdc/postgres_data:/var/lib/postgresql/data
 
   bdc_pgbouncer:
     container_name: bdc_pgbouncer
