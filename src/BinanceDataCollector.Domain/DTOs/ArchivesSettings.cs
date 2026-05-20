@@ -17,6 +17,13 @@ public class ArchivesSettings
     // ------------------------------------------
     
     /// <summary>
+    /// Абсолютный корневой путь к директории с данными.
+    /// Prod: /opt/bdc_data (монтируется как Docker volume).
+    /// Dev: локальный путь, например C:\bdc_data.
+    /// </summary>
+    public string BasePath { get; set; } = "/opt/bdc_data";
+
+    /// <summary>
     /// Имя корневой директории приложения в папке с данными (LocalApplicationData).
     /// </summary>
     public string RootDirectoryName { get; set; } = "BinanceDataCollector";

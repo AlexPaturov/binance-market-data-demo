@@ -8,9 +8,6 @@ public class PathProvider : IPathProvider
 {
     private readonly ArchivesSettings _settings;
 
-    // Абсолютный серверный путь (монтируется как volume в docker-compose)
-    private const string ServerBasePath = "/opt/bdc_data";
-
     public PathProvider(IOptions<ArchivesSettings> settings)
     {
         _settings = settings.Value;
@@ -18,7 +15,7 @@ public class PathProvider : IPathProvider
 
     private string Map(string relativePath)
     {
-        return Path.Combine(ServerBasePath, relativePath);
+        return Path.Combine(_settings.BasePath, relativePath);
     }
 
     public string GetTradeArchivesPath() => Map(_settings.TradeArchivesRelativePath);

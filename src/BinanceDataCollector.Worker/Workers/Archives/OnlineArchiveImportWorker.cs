@@ -56,12 +56,12 @@ public class OnlineArchiveImportWorker
             if (_batch.Any())
                 await FlushBatch(symbol);
 
-            _logger.LogInformation("[{Symbol}] Вставлено {TotalCount} сделок за {Date}.", symbol, _totalInserted, date);
+            _logger.LogInformation("[{Symbol}] Inserted {TotalCount} trades for {Date}.", symbol, _totalInserted, date);
         }
         finally
         {
             _tracker.MarkArchiveAsCompleted(symbol, date); // Снимаем блокировку
-            _logger.LogInformation("[{Symbol}] Обработка архива за {Date} завершена, блокировка снята.", symbol, date);
+            _logger.LogInformation("[{Symbol}] Archive processing for {Date} completed, lock released.", symbol, date);
         }
     }
 
@@ -88,13 +88,13 @@ public class OnlineArchiveImportWorker
                 if (_batch.Any())
                     await FlushBatch(symbol);
 
-                _logger.LogInformation("[{Symbol}] Вставлено {TotalCount} сделок за {Date}.", symbol, _totalInserted, date);
+                _logger.LogInformation("[{Symbol}] Inserted {TotalCount} trades for {Date}.", symbol, _totalInserted, date);
             }
         }
         finally
         {
             _tracker.MarkArchiveAsCompleted(symbol, date); // Снимаем блокировку
-            _logger.LogInformation("[{Symbol}] Обработка архива за {Date} завершена, блокировка снята.", symbol, date);
+            _logger.LogInformation("[{Symbol}] Archive processing for {Date} completed, lock released.", symbol, date);
         }
     }
 
@@ -120,7 +120,7 @@ public class OnlineArchiveImportWorker
             }
         }
 
-        _logger.LogWarning("Не удалось распарсить имя файла с помощью Regex: {FileName}", fileName);
+        _logger.LogWarning("Failed to parse file name using Regex: {FileName}", fileName);
         return ("UNKNOWN", DateOnly.MinValue);
     }
 
@@ -128,7 +128,7 @@ public class OnlineArchiveImportWorker
     {
         await _tradeRepo.BulkInsertAsync(_batch);
         _totalInserted += _batch.Count;
-        _logger.LogDebug("[{Symbol}] Вставлена пачка из {Count} сделок...", symbol, _batch.Count);
+        _logger.LogDebug("[{Symbol}] Inserted batch of {Count} trades...", symbol, _batch.Count);
         _batch.Clear();
 
         // Каждые 20 батчей агрессивная очистка

@@ -28,7 +28,7 @@ public class RabbitMQListenerService : BackgroundService
     // Issue #1
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("RabbitMQ Listener запускается.");
+        _logger.LogInformation("RabbitMQ Listener starting.");
 
         var factory = new ConnectionFactory()
         {
@@ -58,7 +58,7 @@ public class RabbitMQListenerService : BackgroundService
                 cancellationToken: stoppingToken)
                 ).QueueName;
 
-            _logger.LogInformation("Создана временная очередь: {QueueName}", queueName);
+            _logger.LogInformation("Temporary queue created: {QueueName}", queueName);
 
             await channel.QueueBindAsync(queue: queueName,
                                        exchange: "status_updates_exchange",
@@ -74,17 +74,17 @@ public class RabbitMQListenerService : BackgroundService
                     var statusEvent = JsonSerializer.Deserialize<StatusUpdateEvent>(body);
                     if (statusEvent?.ConnectionId != null)
                     {
-                        _logger.LogDebug("Получено сообщение для ConnectionId {ConnectionId}", statusEvent.ConnectionId);
+                        _logger.LogDebug("Message received for ConnectionId {ConnectionId}", statusEvent.ConnectionId);
                         await _hubContext.Clients.All.SendAsync("ReceiveStatusUpdate", $"[BROADCAST] {statusEvent.Message}");
                     }
                 }
                 catch (JsonException jsonEx)
                 {
-                    _logger.LogError(jsonEx, "Ошибка десериализации сообщения из RabbitMQ.");
+                    _logger.LogError(jsonEx, "Failed to deserialize RabbitMQ message.");
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Ошибка при обработке сообщения из RabbitMQ.");
+                    _logger.LogError(ex, "Error processing RabbitMQ message.");
                 }
             };
 
@@ -102,13 +102,13 @@ public class RabbitMQListenerService : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("Это нормальное исключение при остановке сервиса. Игнорируем.");
+            _logger.LogInformation("Expected cancellation on service shutdown. Ignoring.");
         }
         catch (Exception ex)
         {
-            _logger.LogCritical(ex, "RabbitMQ Listener упал с критической ошибкой.");
+            _logger.LogCritical(ex, "RabbitMQ Listener crashed with a critical error.");
         }
 
-        _logger.LogInformation("RabbitMQ Listener останавливается.");
+        _logger.LogInformation("RabbitMQ Listener stopping.");
     }
 }

@@ -41,15 +41,15 @@ public class ArchiveUnpackerWorker : IArchiveUnpackerWorker
         var zipFilePath = Path.Combine(_downloadPath, zipFileName);
         var destinationDirectory = Path.Combine(_destinationPath, Path.GetFileNameWithoutExtension(zipFileName));
 
-        _logger.LogInformation("Начинаю распаковку архива: {FileName}", zipFileName);
-        await _notifier.SendStatusUpdateAsync(connectionId, $"Начинаю распаковку архива: {zipFileName}...");
+        _logger.LogInformation("Starting archive extraction: {FileName}", zipFileName);
+        await _notifier.SendStatusUpdateAsync(connectionId, $"Starting archive extraction: {zipFileName}...");
 
         try
         {
             if (!File.Exists(zipFilePath))
             {
-                _logger.LogWarning("ZIP-файл {FileName} не найден для распаковки.", zipFileName);
-                await _notifier.SendStatusUpdateAsync(connectionId, $"ZIP-файл {zipFileName} не найден для распаковки.");
+                _logger.LogWarning("ZIP file {FileName} not found for extraction.", zipFileName);
+                await _notifier.SendStatusUpdateAsync(connectionId, $"ZIP file {zipFileName} not found for extraction.");
                 return;
             }
 
@@ -58,29 +58,29 @@ public class ArchiveUnpackerWorker : IArchiveUnpackerWorker
             {
                 if (zipToTest.Entries.Count == 0 || zipToTest.Entries.All(e => e.Length == 0))
                 {
-                    throw new InvalidDataException("Архив пуст или не содержит данных.");
+                    throw new InvalidDataException("Archive is empty or contains no data.");
                 }
             }
-            _logger.LogDebug("Проверка целостности для {FileName} пройдена.", zipFileName);
-            await _notifier.SendStatusUpdateAsync(connectionId, $"Проверка целостности для {zipFileName} пройдена.");
+            _logger.LogDebug("Integrity check passed for {FileName}.", zipFileName);
+            await _notifier.SendStatusUpdateAsync(connectionId, $"Integrity check passed for {zipFileName}.");
 
             // 2. Распаковка (с перезаписью, если папка уже существует)
             if (Directory.Exists(destinationDirectory))
             {
                 Directory.Delete(destinationDirectory, true);
-                _logger.LogDebug("Существующая директория {Directory} удалена перед распаковкой.", destinationDirectory);
-                await _notifier.SendStatusUpdateAsync(connectionId, $"Существующая директория {destinationDirectory} удалена перед распаковкой.");
+                _logger.LogDebug("Existing directory {Directory} deleted before extraction.", destinationDirectory);
+                await _notifier.SendStatusUpdateAsync(connectionId, $"Existing directory {destinationDirectory} deleted before extraction.");
             }
 
             ZipFile.ExtractToDirectory(zipFilePath, destinationDirectory);
-            _logger.LogInformation("Архив {FileName} успешно распакован в {Directory}.", zipFileName, destinationDirectory);
-            await _notifier.SendStatusUpdateAsync(connectionId, $"Архив {zipFileName} успешно распакован в {destinationDirectory}.");
+            _logger.LogInformation("Archive {FileName} extracted successfully to {Directory}.", zipFileName, destinationDirectory);
+            await _notifier.SendStatusUpdateAsync(connectionId, $"Archive {zipFileName} extracted successfully to {destinationDirectory}.");
 
             // 3. Запуск следующего этапа - импорта
             var csvFile = Directory.GetFiles(destinationDirectory, "*.csv").FirstOrDefault();
             if (csvFile == null)
             {
-                throw new FileNotFoundException("CSV-файл не найден в распакованном архиве.");
+                throw new FileNotFoundException("CSV file not found in extracted archive.");
             }
 
             // Ставим задачу на импорт
@@ -88,18 +88,18 @@ public class ArchiveUnpackerWorker : IArchiveUnpackerWorker
                 worker => worker.ImportFromCsvAsync(csvFile, connectionId, JobCancellationToken.Null)
             );
 
-            _logger.LogInformation("Задача на импорт файла {CsvFile} поставлена в очередь.", Path.GetFileName(csvFile));
-            await _notifier.SendStatusUpdateAsync(connectionId, $"Задача на импорт файла {Path.GetFileName(csvFile)} поставлена в очередь.");
+            _logger.LogInformation("Import job for file {CsvFile} queued.", Path.GetFileName(csvFile));
+            await _notifier.SendStatusUpdateAsync(connectionId, $"Import job for file {Path.GetFileName(csvFile)} queued.");
 
             // 4. (Опционально) Удаление ZIP-файла после успешной распаковки
             File.Delete(zipFilePath);
-            _logger.LogInformation("Исходный ZIP-файл {FileName} удален.", zipFileName);
-            await _notifier.SendStatusUpdateAsync(connectionId, $"Исходный ZIP-файл {zipFileName} удален.");
+            _logger.LogInformation("Source ZIP file {FileName} deleted.", zipFileName);
+            await _notifier.SendStatusUpdateAsync(connectionId, $"Source ZIP file {zipFileName} deleted.");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка при распаковке архива {FileName}", zipFileName);
-            await _notifier.SendStatusUpdateAsync(connectionId, $"<b style='color:red;'>Ошибка</b> при распаковке архива  {zipFileName}: {ex.Message}");
+            _logger.LogError(ex, "Error extracting archive {FileName}", zipFileName);
+            await _notifier.SendStatusUpdateAsync(connectionId, $"<b style='color:red;'>Error</b> extracting archive {zipFileName}: {ex.Message}");
             // Перевыбрасываем, чтобы Hangfire пометил задачу как Failed
             throw;
         }

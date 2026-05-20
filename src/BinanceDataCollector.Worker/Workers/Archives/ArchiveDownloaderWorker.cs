@@ -47,12 +47,12 @@ public class ArchiveDownloaderWorker : IArchiveDownloaderWorker
                     var fileInfo = new FileInfo(filePath);
                     if (fileInfo.Length > 0)
                     {
-                        _logger.LogInformation("Архив {FileName} уже существует и не пустой. Скачивание пропущено.", fileName);
-                        await _notifier.SendStatusUpdateAsync(connectionId, $"Архив {fileName} уже существует и не пустой. Скачивание пропущено.");
+                        _logger.LogInformation("Archive {FileName} already exists and is non-empty. Download skipped.", fileName);
+                        await _notifier.SendStatusUpdateAsync(connectionId, $"Archive {fileName} already exists and is non-empty. Download skipped.");
                         return;
                     }
-                    _logger.LogWarning("Найден пустой файл-артефакт {FileName}. Попытка перезаписать.", fileName);
-                    await _notifier.SendStatusUpdateAsync(connectionId, $"Найден пустой файл-артефакт {fileName}. Попытка перезаписать.");
+                    _logger.LogWarning("Found empty artifact file {FileName}. Attempting to overwrite.", fileName);
+                    await _notifier.SendStatusUpdateAsync(connectionId, $"Found empty artifact file {fileName}. Attempting to overwrite.");
                 }
 
                 Directory.CreateDirectory(_downloadPath);
@@ -71,14 +71,14 @@ public class ArchiveDownloaderWorker : IArchiveDownloaderWorker
                     var downloadedFileInfo = new FileInfo(filePath);
                     if (downloadedFileInfo.Length == 0)
                     {
-                        _logger.LogWarning("Скачанный архив {FileName} оказался пустым. Удаляем.", fileName);
-                        await _notifier.SendStatusUpdateAsync(connectionId, $"Скачанный архив {fileName} оказался пустым. Удаляем.");
+                        _logger.LogWarning("Downloaded archive {FileName} is empty. Deleting.", fileName);
+                        await _notifier.SendStatusUpdateAsync(connectionId, $"Downloaded archive {fileName} is empty. Deleting.");
                         downloadedFileInfo.Delete();
                     }
                     else
                     {
-                        _logger.LogInformation("Архив {FileName} успешно скачан и сохранен ({Size} KB).", fileName, (downloadedFileInfo.Length / 1024.0).ToString("F2"));
-                        await _notifier.SendStatusUpdateAsync(connectionId, $"Архив {fileName} успешно скачан и сохранен ({(downloadedFileInfo.Length / 1024.0).ToString("F2")} KB).");
+                        _logger.LogInformation("Archive {FileName} downloaded and saved successfully ({Size} KB).", fileName, (downloadedFileInfo.Length / 1024.0).ToString("F2"));
+                        await _notifier.SendStatusUpdateAsync(connectionId, $"Archive {fileName} downloaded and saved successfully ({(downloadedFileInfo.Length / 1024.0).ToString("F2")} KB).");
                     }
                     // ------------------------------------
                 }
@@ -86,8 +86,8 @@ public class ArchiveDownloaderWorker : IArchiveDownloaderWorker
                 {
                     // Если !success (была ошибка 404), то файл, созданный FileStream,
                     // остался пустым. Удалим его.
-                    _logger.LogDebug("Удаляем пустой файл-артефакт {FileName} после неудачного скачивания (404).", fileName);
-                    await _notifier.SendStatusUpdateAsync(connectionId, $"Удаляем пустой файл-артефакт {fileName} после неудачного скачивания (404).");
+                    _logger.LogDebug("Deleting empty artifact file {FileName} after failed download (404).", fileName);
+                    await _notifier.SendStatusUpdateAsync(connectionId, $"Deleting empty artifact file {fileName} after failed download (404).");
                     if (File.Exists(filePath))
                     {
                         File.Delete(filePath);
@@ -96,8 +96,8 @@ public class ArchiveDownloaderWorker : IArchiveDownloaderWorker
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Критическая ошибка при скачивании архива для {Symbol} за {Date}", symbol, date);
-                await _notifier.SendStatusUpdateAsync(connectionId, $"Удаляем пустой файл-артефакт {fileName} после неудачного скачивания (404).");
+                _logger.LogError(ex, "Critical error downloading archive for {Symbol} on {Date}", symbol, date);
+                await _notifier.SendStatusUpdateAsync(connectionId, $"Deleting empty artifact file {fileName} after failed download (404).");
 
                 // Очистка: удаляем потенциально недокачанный или пустой файл
                 if (File.Exists(filePath))
@@ -109,7 +109,7 @@ public class ArchiveDownloaderWorker : IArchiveDownloaderWorker
                     }
                     catch (Exception cleanupEx)
                     {
-                        _logger.LogWarning(cleanupEx, "Не удалось удалить артефактный файл {FileName}", fileName);
+                        _logger.LogWarning(cleanupEx, "Failed to delete artifact file {FileName}", fileName);
                     }
                 }
 

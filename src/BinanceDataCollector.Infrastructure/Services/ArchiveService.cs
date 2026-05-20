@@ -39,7 +39,7 @@ public class ArchiveService : IArchiveService
     public async IAsyncEnumerable<Trade> DownloadAndParseTradesAsync(string symbol, DateOnly date, CancellationToken cancellationToken)
     {
         var url = $"https://data.binance.vision/data/spot/daily/trades/{symbol}/{symbol}-trades-{date:yyyy-MM-dd}.zip";
-        _logger.LogInformation("Скачиваем архив: {Url}", url);
+        _logger.LogInformation("Downloading archive: {Url}", url);
 
         using var httpClient = _httpClientFactory.CreateClient("BinanceArchive");
         await using var zipStream = await httpClient.GetStreamAsync(url, cancellationToken);
@@ -77,14 +77,14 @@ public class ArchiveService : IArchiveService
     public async Task<bool> DownloadArchiveToStreamAsync(string symbol, DateOnly date, Stream fileStream, CancellationToken none)
     {
         var url = $"https://data.binance.vision/data/spot/daily/trades/{symbol}/{symbol}-trades-{date:yyyy-MM-dd}.zip";
-        _logger.LogInformation("Скачиваем архив: {Url}", url);
+        _logger.LogInformation("Downloading archive: {Url}", url);
 
         using var httpClient = _httpClientFactory.CreateClient("BinanceArchive");
         using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, none);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
-            _logger.LogWarning("Архив не найден (404) по адресу: {Url}", url);
+            _logger.LogWarning("Archive not found (404) at: {Url}", url);
             return false; // Возвращаем false, не бросаем исключение
         }
 
@@ -99,7 +99,7 @@ public class ArchiveService : IArchiveService
         var directory = new DirectoryInfo(_archivesPath);
         if (!directory.Exists)
         {
-            _logger.LogWarning("Директория для архивов не найдена по пути: {Path}", _archivesPath);
+            _logger.LogWarning("Archive directory not found at path: {Path}", _archivesPath);
             return Task.FromResult(new List<ArchivedFileInfo>());
         }
 
@@ -122,7 +122,7 @@ public class ArchiveService : IArchiveService
 
     public async IAsyncEnumerable<Trade> ParseTradesFromLocalZipAsync(string zipFilePath, string symbol, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Парсим локальный архив: {Path}", zipFilePath);
+        _logger.LogInformation("Parsing local archive: {Path}", zipFilePath);
 
         await using var zipStream = File.OpenRead(zipFilePath); // <-- Открываем локальный файл
         using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);

@@ -40,7 +40,7 @@ namespace BinanceDataCollector.DataManager.Controllers
                     PathBase = HttpContext.Request.PathBase.Value
                 });
             
-            _logger.LogInformation("Начало обработки запроса Index...");
+            _logger.LogInformation("Processing Index request...");
             var stopwatch = new Stopwatch();
             stopwatch.Start();
 
@@ -78,13 +78,13 @@ namespace BinanceDataCollector.DataManager.Controllers
                 };
 
                 stopwatch.Stop();
-                _logger.LogInformation("Завершение обработки запроса Index за {TotalElapsed} мс.", stopwatch.ElapsedMilliseconds);
+                _logger.LogInformation("Index request completed in {TotalElapsed} ms.", stopwatch.ElapsedMilliseconds);
 
                 return View(viewModel);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при загрузке данных для главной страницы.");
+                _logger.LogError(ex, "Error loading data for the home page.");
                 // Возвращаем пустую ViewModel с сообщением об ошибке
                 var errorViewModel = new HomeViewModel
                 {

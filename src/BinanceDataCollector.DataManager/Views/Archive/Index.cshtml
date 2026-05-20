@@ -55,9 +55,12 @@
             
             <div class="card shadow-sm border-0 mb-1" style="border-radius: 12px; overflow: hidden;">
                 <div class="list-group list-group-flush">
-                    <div class="list-group-item border-0 p-3">
-                        <button type="button" id="btn-download" class="btn w-100 border-0 fw-semibold text-white" style="border-radius: 10px; padding: 12px; background-color: #007AFF;">
+                    <div class="list-group-item border-0 p-3 d-flex gap-2">
+                        <button type="button" id="btn-download" class="btn flex-fill border-0 fw-semibold text-white" style="border-radius: 10px; padding: 12px; background-color: #007AFF;">
                             <i class="bi bi-download me-2"></i>Начать скачивание новых архивов
+                        </button>
+                        <button type="button" id="btn-update-symbols" class="btn border-0 fw-semibold text-white" style="border-radius: 10px; padding: 12px; background-color: #34C759;" title="Обновить список символов с Binance">
+                            <i class="bi bi-arrow-repeat me-2"></i>Обновить символы
                         </button>
                     </div>
                 </div>
@@ -291,6 +294,26 @@
                     error: (xhr) => {
                         logMessage(`<b style="color: red;">Ошибка!</b> ${xhr.responseText}`);
                         alert(`Произошла ошибка: ${xhr.responseText}`);
+                    }
+                });
+            });
+
+            // 4. Для кнопки "Обновить символы"
+            $('#btn-update-symbols').click(function () {
+                const btn = $(this);
+                btn.prop('disabled', true);
+                logMessage("Запрос на обновление символов отправлен...");
+                $.ajax({
+                    url: '@Url.Action("TriggerSymbolUpdate", "Archive")',
+                    type: 'POST',
+                    headers: { 'RequestVerificationToken': token },
+                    success: (response) => {
+                        logMessage(`<b>Сервер ответил:</b> ${response.message}`);
+                        btn.prop('disabled', false);
+                    },
+                    error: (xhr) => {
+                        logMessage(`<b style="color: red;">Ошибка!</b> ${xhr.responseText}`);
+                        btn.prop('disabled', false);
                     }
                 });
             });

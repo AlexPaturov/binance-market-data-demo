@@ -48,21 +48,21 @@ public class CsvImportWorker
     [AutomaticRetry(Attempts = 3)]
     public async Task ImportFromCsvAsync(string csvFilePath, string connectionId, IJobCancellationToken cancellationToken)
     {
-        _logger.LogInformation("Начинаю импорт из CSV-файла: {FileName}", Path.GetFileName(csvFilePath));
-        await _notifier.SendStatusUpdateAsync(connectionId, $"Начинаю импорт из CSV-файла: {Path.GetFileName(csvFilePath)}...");
+        _logger.LogInformation("Starting import from CSV file: {FileName}", Path.GetFileName(csvFilePath));
+        await _notifier.SendStatusUpdateAsync(connectionId, $"Starting import from CSV file: {Path.GetFileName(csvFilePath)}...");
 
         if (!File.Exists(csvFilePath))
         {
-            _logger.LogError("CSV-файл {Path} не найден для импорта.", csvFilePath);
-            await _notifier.SendStatusUpdateAsync(connectionId, $"CSV-файл {Path.GetFileName(csvFilePath)} не найден для импорта");
+            _logger.LogError("CSV file {Path} not found for import.", csvFilePath);
+            await _notifier.SendStatusUpdateAsync(connectionId, $"CSV file {Path.GetFileName(csvFilePath)} not found for import");
             throw new FileNotFoundException("CSV file not found for import.", csvFilePath);
         }
 
         var (symbol, date) = ParseDetailsFromCsvPath(csvFilePath);
         if (symbol == "UNKNOWN")
         {
-            _logger.LogError("Не удалось определить символ и дату из пути: {Path}", csvFilePath);
-            await _notifier.SendStatusUpdateAsync(connectionId, $"Не удалось определить символ и дату из пути: {csvFilePath}");
+            _logger.LogError("Could not determine symbol and date from path: {Path}", csvFilePath);
+            await _notifier.SendStatusUpdateAsync(connectionId, $"Could not determine symbol and date from path: {csvFilePath}");
             throw new ArgumentException("Could not parse symbol and date from file path.", csvFilePath);
         }
 
@@ -81,8 +81,8 @@ public class CsvImportWorker
                 {
                     await _tradeRepo.BulkInsertAsync(batch);
                     totalInserted += batch.Count;
-                    _logger.LogDebug("[{Symbol}] Вставлена пачка из {Count} сделок...", symbol, batch.Count);
-                    await _notifier.SendStatusUpdateAsync(connectionId, $"[{symbol}] Вставлена пачка из {batch.Count} сделок...");
+                    _logger.LogDebug("[{Symbol}] Inserted batch of {Count} trades...", symbol, batch.Count);
+                    await _notifier.SendStatusUpdateAsync(connectionId, $"[{symbol}] Inserted batch of {batch.Count} trades...");
                     batch.Clear();
                 }
             }
@@ -93,22 +93,22 @@ public class CsvImportWorker
                 totalInserted += batch.Count;
             }
 
-            _logger.LogInformation("Импорт из файла {FileName} успешно завершен. Всего вставлено {TotalCount} сделок.", Path.GetFileName(csvFilePath), totalInserted);
-            await _notifier.SendStatusUpdateAsync(connectionId, $"Импорт из файла {Path.GetFileName(csvFilePath)} успешно завершен. Всего вставлено {totalInserted} сделок.");
+            _logger.LogInformation("Import from file {FileName} completed successfully. Total inserted: {TotalCount} trades.", Path.GetFileName(csvFilePath), totalInserted);
+            await _notifier.SendStatusUpdateAsync(connectionId, $"Import from file {Path.GetFileName(csvFilePath)} completed successfully. Total inserted: {totalInserted} trades.");
 
             // (Опционально) Очистка после успешного импорта
             var parentDirectory = Directory.GetParent(csvFilePath)?.FullName;
             if (parentDirectory != null && Directory.Exists(parentDirectory))
             {
                 Directory.Delete(parentDirectory, true);
-                _logger.LogInformation("Папка {Directory} с обработанным CSV удалена.", parentDirectory);
-                await _notifier.SendStatusUpdateAsync(connectionId, $"Папка {parentDirectory} с обработанным CSV удалена.");
+                _logger.LogInformation("Directory {Directory} with processed CSV deleted.", parentDirectory);
+                await _notifier.SendStatusUpdateAsync(connectionId, $"Directory {parentDirectory} with processed CSV deleted.");
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка при импорте из файла {FileName}", Path.GetFileName(csvFilePath));
-            await _notifier.SendStatusUpdateAsync(connectionId, $"Ошибка при импорте из файла {Path.GetFileName(csvFilePath)}");
+            _logger.LogError(ex, "Error importing from file {FileName}", Path.GetFileName(csvFilePath));
+            await _notifier.SendStatusUpdateAsync(connectionId, $"Error importing from file {Path.GetFileName(csvFilePath)}");
             throw; // Перевыбрасываем для Hangfire
         }
     }

@@ -259,6 +259,12 @@ public class Program {
             Log.Information("Запуск хоста (app.Run)...");
             #endregion
 
+            if (app.Environment.IsDevelopment())
+            {
+                app.Lifetime.ApplicationStarted.Register(() =>
+                    Process.Start(new ProcessStartInfo("http://localhost:7002/hangfire") { UseShellExecute = true }));
+            }
+
             app.Run();
         }
         catch (Exception ex) {

@@ -19,23 +19,23 @@ public class ArchiveDeletionWorker
     public Task DeleteFileAsync(string fileName)
     {
         var filePath = Path.Combine(_archivesPath, fileName);
-        _logger.LogInformation("Начинаю удаление файла: {FileName}", fileName);
+        _logger.LogInformation("Starting deletion of file: {FileName}", fileName);
 
         try
         {
             if (File.Exists(filePath))
             {
                 File.Delete(filePath);
-                _logger.LogInformation("Файл {FileName} успешно удален.", fileName);
+                _logger.LogInformation("File {FileName} deleted successfully.", fileName);
             }
             else
             {
-                _logger.LogWarning("Файл {FileName} не найден для удаления.", fileName);
+                _logger.LogWarning("File {FileName} not found for deletion.", fileName);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка при удалении файла {FileName}", fileName);
+            _logger.LogError(ex, "Error deleting file {FileName}", fileName);
             // Перевыбрасываем, чтобы Hangfire пометил задачу как Failed
             throw;
         }

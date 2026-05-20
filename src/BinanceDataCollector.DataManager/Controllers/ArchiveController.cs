@@ -11,17 +11,20 @@ public class ArchiveController : Controller
     private readonly ITrackedSymbolRepository _symbolRepo;
     private readonly ILogger<ArchiveController> _logger;
     private readonly IBackgroundJobClient _backgroundJobClient;
+    private readonly IRecurringJobManager _recurringJobManager;
     private readonly IArchiveService _archiveService;
 
     public ArchiveController(
-        ITrackedSymbolRepository symbolRepo, 
+        ITrackedSymbolRepository symbolRepo,
         ILogger<ArchiveController> logger,
         IBackgroundJobClient backgroundJobClient,
+        IRecurringJobManager recurringJobManager,
         IArchiveService archiveService)
     {
         _symbolRepo = symbolRepo;
         _logger = logger;
         _backgroundJobClient = backgroundJobClient;
+        _recurringJobManager = recurringJobManager;
         _archiveService = archiveService;
     }
 
@@ -43,7 +46,7 @@ public class ArchiveController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> DownloadArchives([FromBody] DownloadArchivesRequest request)
     {
-        _logger.LogInformation("Получен запрос на скачивание архивов для {Symbol} с {Start} по {End}",
+        _logger.LogInformation("Download request received for {Symbol} from {Start} to {End}",
             request.Symbol, request.StartDate.ToShortDateString(), request.EndDate.ToShortDateString());
 
         // 1. Генерируем список дат в диапазоне
@@ -55,7 +58,7 @@ public class ArchiveController : Controller
 
         if (!datesToDownload.Any())
         {
-            return BadRequest("Некорректный диапазон дат.");
+            return BadRequest("Invalid date range.");
         }
 
         List<string> symbolsToProcess;
@@ -73,7 +76,7 @@ public class ArchiveController : Controller
         }
         else
         {
-            return BadRequest("Не выбран символ или опция 'Скачать для всех'.");
+            return BadRequest("No symbol selected and 'Download all' is not checked.");
         }
 
 
@@ -89,7 +92,7 @@ public class ArchiveController : Controller
             }
         }
 
-        return Ok(new { Message = $"Запланировано скачивание {totalJobs} архивов. Следите за логом." });
+        return Ok(new { Message = $"{totalJobs} archive download jobs queued." });
     }
 
     [HttpPost]
@@ -98,7 +101,7 @@ public class ArchiveController : Controller
     {
         if (request?.FileNames == null || !request.FileNames.Any())
         {
-            return BadRequest("Не выбраны файлы для обработки.");
+            return BadRequest("No files selected for processing.");
         }
 
         foreach (var fileName in request.FileNames)
@@ -110,7 +113,16 @@ public class ArchiveController : Controller
         }
 
         // Возвращаем успешный ответ, который JavaScript сможет обработать
-        return Ok(new { Message = $"Запланирована обработка {request.FileNames.Count} архивов. Следите за логом." });
+        return Ok(new { Message = $"Processing of {request.FileNames.Count} archives scheduled." });
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public IActionResult TriggerSymbolUpdate()
+    {
+        _recurringJobManager.Trigger("update-symbols");
+        _logger.LogInformation("Manual symbol update job queued.");
+        return Ok(new { Message = "Обновление символов поставлено в очередь." });
     }
 
     [HttpPost]
@@ -119,7 +131,7 @@ public class ArchiveController : Controller
     {
         if (request?.FileNames == null || !request.FileNames.Any())
         {
-            return BadRequest("Не выбраны файлы для удаления.");
+            return BadRequest("No files selected for deletion.");
         }
 
         foreach (var fileName in request.FileNames)
@@ -130,7 +142,7 @@ public class ArchiveController : Controller
             );
         }
 
-        return Ok(new { Message = $"Запланировано удаление {request.FileNames.Count} архивов." });
+        return Ok(new { Message = $"Deletion of {request.FileNames.Count} archives scheduled." });
     }
 
 
