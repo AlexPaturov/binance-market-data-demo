@@ -21,7 +21,7 @@ namespace BinanceDataCollector.Worker.Workers.Archives;
 [Queue("archive_import")]
 // Этот атрибут очень важен! Он предотвратит одновременную массовую вставку
 // данных в БД из нескольких файлов, что может вызвать блокировки или тайм-ауты.
-[DisableConcurrentExecution(timeoutInSeconds: 6 * 60 * 60)] // 6 часов — покрывает очередь из ~40 символов за одну дату
+[DisableConcurrentExecution(timeoutInSeconds: 60 * 60)] // Один час на импорт одного файла
 public class CsvImportWorker
 {
     private readonly ILogger<CsvImportWorker> _logger;
