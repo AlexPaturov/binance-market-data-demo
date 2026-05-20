@@ -48,7 +48,7 @@ public class FillGapWorker
 
         try
         {
-            using (_logger.TimedOperation(LogLevel.Warning, "[{Symbol}] Заполнение дыры в {Count} сделок с ID {StartId} по {EndId}", 
+            using (_logger.TimedOperation(LogLevel.Warning, "[{Symbol}] Filling gap of {Count} trades from ID {StartId} to {EndId}",
                 symbol, tradesToFetch, currentFromId, gapEndId))
             {
                 while (currentFromId <= gapEndId && !token.IsCancellationRequested)
@@ -63,7 +63,7 @@ public class FillGapWorker
                         case FetchStatus.Success:
                             if (!fetchResult.Data.Any())
                             {
-                                _logger.LogError("[{Symbol}] Binance не вернул данные для ID >= {FromId}, хотя должен был. Заполнение дыры прервано.", symbol, currentFromId);
+                                _logger.LogError("[{Symbol}] Binance returned no data for ID >= {FromId} when it should have. Gap filling aborted.", symbol, currentFromId);
                                 // Выбрасываем исключение, чтобы Hangfire повторил попытку
                                 throw new InvalidOperationException($"Binance API returned no data for a presumed gap starting at {currentFromId} for {symbol}.");
                             }
@@ -76,7 +76,7 @@ public class FillGapWorker
                             var startTime = DateTimeOffset.FromUnixTimeMilliseconds(firstTrade.TradeTime).ToString("yyyy-MM-dd HH:mm:ss");
                             var endTime = DateTimeOffset.FromUnixTimeMilliseconds(lastTrade.TradeTime).ToString("yyyy-MM-dd HH:mm:ss");
 
-                            _logger.LogInformation("[{Symbol}] [АУДИТ] Успешно заполнено {Count} сделок. (ID: {StartId}-{EndId}, Время: {StartTime} - {EndTime})",
+                            _logger.LogInformation("[{Symbol}] [AUDIT] Successfully filled {Count} trades. (ID: {StartId}-{EndId}, Time: {StartTime} - {EndTime})",
                             symbol, fetchResult.Data.Count, firstTrade.TradeId, lastTrade.TradeId, startTime, endTime);
                             #endregion
 
@@ -87,12 +87,12 @@ public class FillGapWorker
                             break;
 
                         case FetchStatus.ApiLimit:
-                            _logger.LogError("[{Symbol}] [API LIMIT] Превышен лимит. Задача будет повторена Hangfire.", symbol);
+                            _logger.LogError("[{Symbol}] [API LIMIT] Rate limit exceeded. Job will be retried by Hangfire.", symbol);
                             // Выбрасываем исключение, чтобы Hangfire автоматически поставил задачу на повтор с задержкой
                             throw new Exception("Binance API rate limit reached.");
 
                         case FetchStatus.GeneralError:
-                            _logger.LogError("[{Symbol}] Ошибка API при заполнении дыры. Задача будет повторена Hangfire.", symbol);
+                            _logger.LogError("[{Symbol}] API error while filling gap. Job will be retried by Hangfire.", symbol);
                             throw new Exception($"Binance API general error while fetching from ID {currentFromId}.");
                     }
                 }

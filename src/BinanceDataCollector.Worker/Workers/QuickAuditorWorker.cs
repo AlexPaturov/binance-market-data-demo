@@ -36,7 +36,7 @@ public class QuickAuditorWorker
 
     public async Task CheckAndFillRecentGapsAsync()
     {
-        _logger.LogInformation("--- Начинаем быстрый аудит за последние {TotalHours} часов ---", _totalWindow.TotalHours);
+        _logger.LogInformation("--- Starting quick audit for the last {TotalHours} hours ---", _totalWindow.TotalHours);
 
         var activeSymbols = await _trackedSymbolRepository.GetActiveSymbolsAsync();
 
@@ -48,15 +48,15 @@ public class QuickAuditorWorker
             // В цикле идем "назад" во времени маленькими шагами
             while (windowStart > DateTime.UtcNow - _totalWindow)
             {
-                _logger.LogDebug("[{Symbol}] Проверяем часовое окно: {Start} -> {End}", symbol, windowStart, windowEnd);
+                _logger.LogDebug("[{Symbol}] Checking hourly window: {Start} -> {End}", symbol, windowStart, windowEnd);
 
                 // 1. Ищем дыры в МАЛЕНЬКОМ окне
                 var gaps = await _tradeRepository.FindGapsInTimeWindowAsync(symbol, windowStart, windowEnd);
 
                 if (gaps.Any())
                 {
-                    _logger.LogWarning("[{Symbol}] В окне [{Start}] - [{End}] найдено {Count} дыр.", 
-                        symbol, windowStart.ToString("yyyy-MM-dd HH:mm:ss"), windowEnd.ToString("yyyy-MM-dd HH:mm:ss"), gaps.Count);
+                    _logger.LogWarning("[{Symbol}] Found {Count} gaps in window [{Start}] - [{End}].",
+                        symbol, gaps.Count, windowStart.ToString("yyyy-MM-dd HH:mm:ss"), windowEnd.ToString("yyyy-MM-dd HH:mm:ss"));
                     foreach (var gap in gaps)
                     {
                         // 2. Ставим задачи на заполнение
@@ -70,7 +70,7 @@ public class QuickAuditorWorker
                         else
                         {
                             // Эта дыра уже в обработке, игнорируем.
-                            _logger.LogDebug("[{Symbol}] Дыра {gap} уже находится в обработке. Пропускаем.", symbol, gap);
+                            _logger.LogDebug("[{Symbol}] Gap {gap} is already being processed. Skipping.", symbol, gap);
                         }
                     }
                 }

@@ -40,7 +40,7 @@ public class FeatureCalculatorWorker
     [DisableConcurrentExecution(30 * 60)] // Даем 20 минут на расчет
     public async Task CalculateFeaturesAsync()
     {
-        using (_logger.TimedOperation("Плановый расчет признаков"))
+        using (_logger.TimedOperation("Scheduled feature calculation"))
         {
             try
             {
@@ -49,11 +49,11 @@ public class FeatureCalculatorWorker
 
                 if (!newKlinesToProcess.Any())
                 {
-                    _logger.LogInformation("Нет новых свечей для расчета признаков. Цикл пропущен.");
+                    _logger.LogInformation("No new klines for feature calculation. Cycle skipped.");
                     return;
                 }
 
-                _logger.LogInformation("Получено {Count} новых свечей для обработки.", newKlinesToProcess.Count);
+                _logger.LogInformation("Received {Count} new klines for processing.", newKlinesToProcess.Count);
 
                 var klinesBySymbol = newKlinesToProcess.GroupBy(k => k.Symbol);
 
@@ -92,7 +92,7 @@ public class FeatureCalculatorWorker
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "[{Symbol}] Ошибка при расчете признаков для символа.", symbol);
+                        _logger.LogError(ex, "[{Symbol}] Error calculating features for symbol.", symbol);
                         // В этой архитектуре мы не откатываем статус, а просто пробуем снова в след. цикле
                     }
                 }
@@ -101,11 +101,11 @@ public class FeatureCalculatorWorker
                 var processedTimes = newKlinesToProcess.Select(k => k.OpenTime).Distinct();
                 await _ohlcvRepository.MarkKlinesAsProcessedAsync(processedTimes);
 
-                _logger.LogInformation("Успешно обработано {Count} свечей.", newKlinesToProcess.Count);
+                _logger.LogInformation("Successfully processed {Count} klines.", newKlinesToProcess.Count);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Произошла непредвиденная ошибка в главном цикле FeatureCalculatorWorker.");
+                _logger.LogError(ex, "Unexpected error in FeatureCalculatorWorker main loop.");
             }
 
         }
@@ -113,7 +113,7 @@ public class FeatureCalculatorWorker
 
     public async Task DoWorkAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("--- Начинаем плановый расчет признаков ---");
+        _logger.LogInformation("--- Starting scheduled feature calculation ---");
 
         // 1. "Резервируем" и получаем новую порцию работы (свечи со статусом 'new')
         var newKlinesToProcess = (await _ohlcvRepository.ClaimNewKlinesForProcessingAsync(BatchSize)).ToList();

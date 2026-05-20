@@ -72,7 +72,7 @@ public class BinanceService : IBinanceService
 
         if (!result.Success)
         {
-            _logger.LogError("Не удалось подписаться на потоки сделок: {Error}", result.Error?.Message);
+            _logger.LogError("Failed to subscribe to trade streams: {Error}", result.Error?.Message);
             return;
         }
 
@@ -86,7 +86,7 @@ public class BinanceService : IBinanceService
         var result = await _restClient.SpotApi.ExchangeData.GetExchangeInfoAsync();
         if (!result.Success)
         {
-            _logger.LogError("Не удалось получить информацию о бирже: {Error}", result.Error?.Message);
+            _logger.LogError("Failed to get exchange information: {Error}", result.Error?.Message);
             return Enumerable.Empty<BinanceSymbol>();
         }
         return result.Data.Symbols;
@@ -98,7 +98,7 @@ public class BinanceService : IBinanceService
         var result = await _restClient.SpotApi.ExchangeData.GetTickersAsync();
         if (!result.Success)
         {
-            _logger.LogError("Не удалось получить 24-часовую статистику: {Error}", result.Error?.Message);
+            _logger.LogError("Failed to get 24-hour ticker statistics: {Error}", result.Error?.Message);
             return Enumerable.Empty<Binance24HPrice>();
         }
         return (IEnumerable<Binance24HPrice>)result.Data;
@@ -124,7 +124,7 @@ public class BinanceService : IBinanceService
 
             if (!result.Success)
             {
-                _logger.LogError("[{Symbol}] Ошибка при загрузке исторических свечей: {Error}", symbol, result.Error?.Message);
+                _logger.LogError("[{Symbol}] Error downloading historical klines: {Error}", symbol, result.Error?.Message);
                 break; // Выходим из цикла при ошибке
             }
             if (!result.Data.Any())
@@ -160,12 +160,12 @@ public class BinanceService : IBinanceService
                     // Коды 429 (Too Many Requests) и 418 (IP Banned) - это ошибки лимитов
                     if (result.Error.Code == 429 || result.Error.Code == 418)
                     {
-                        _logger.LogWarning("[{Symbol}] Достигнут лимит API Binance. Код: {Code}", symbol, result.Error.Code);
+                        _logger.LogWarning("[{Symbol}] Binance API rate limit reached. Code: {Code}", symbol, result.Error.Code);
                         return FetchResult.ApiLimitResult();
                     }
                 }
 
-                _logger.LogError("[{Symbol}] Ошибка при загрузке исторических сделок: {Error}", symbol, result.Error?.Message);
+                _logger.LogError("[{Symbol}] Error downloading historical trades: {Error}", symbol, result.Error?.Message);
                 return FetchResult.ErrorResult();
             }
 
@@ -192,7 +192,7 @@ public class BinanceService : IBinanceService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[{Symbol}] Непредвиденная ошибка при запросе к GetAggregatedTradeHistoryAsync.", symbol);
+            _logger.LogError(ex, "[{Symbol}] Unexpected error calling GetAggregatedTradeHistoryAsync.", symbol);
             return FetchResult.ErrorResult();
         }
     }
@@ -212,12 +212,12 @@ public class BinanceService : IBinanceService
                     // Коды 429 (Too Many Requests) и 418 (IP Banned) - это ошибки лимитов
                     if (result.Error.Code == 429 || result.Error.Code == 418)
                     {
-                        _logger.LogWarning("[{Symbol}] Достигнут лимит API Binance. Код: {Code}", symbol, result.Error.Code);
+                        _logger.LogWarning("[{Symbol}] Binance API rate limit reached. Code: {Code}", symbol, result.Error.Code);
                         return FetchResult.ApiLimitResult();
                     }
                 }
 
-                _logger.LogError("[{Symbol}] Ошибка при загрузке исторических сделок: {Error}", symbol, result.Error?.Message);
+                _logger.LogError("[{Symbol}] Error downloading historical trades: {Error}", symbol, result.Error?.Message);
                 return FetchResult.ErrorResult();
             }
 
@@ -244,7 +244,7 @@ public class BinanceService : IBinanceService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[{Symbol}] Непредвиденная ошибка при запросе к GetAggregatedTradeHistoryAsync с fromId {FromId}.", symbol, fromId);
+            _logger.LogError(ex, "[{Symbol}] Unexpected error calling GetAggregatedTradeHistoryAsync with fromId {FromId}.", symbol, fromId);
             return FetchResult.ErrorResult();
         }
     }
@@ -268,11 +268,11 @@ public class BinanceService : IBinanceService
                 {
                     if (result.Error.Code == 429 || result.Error.Code == 418)
                     {
-                        _logger.LogWarning("[{Symbol}] Достигнут лимит API Binance (GetTradeHistoryAsync). Код: {Code}", symbol, result.Error.Code);
+                        _logger.LogWarning("[{Symbol}] Binance API rate limit reached (GetTradeHistoryAsync). Code: {Code}", symbol, result.Error.Code);
                         return FetchResult.ApiLimitResult();
                     }
                 }
-                _logger.LogError("[{Symbol}] Ошибка при загрузке сырых исторических сделок: {Error}", symbol, result.Error?.Message);
+                _logger.LogError("[{Symbol}] Error downloading raw historical trades: {Error}", symbol, result.Error?.Message);
                 return FetchResult.ErrorResult();
             }
 
@@ -302,7 +302,7 @@ public class BinanceService : IBinanceService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[{Symbol}] Непредвиденная ошибка при запросе к GetTradeHistoryAsync с fromId {FromId}.", symbol, fromId);
+            _logger.LogError(ex, "[{Symbol}] Unexpected error calling GetTradeHistoryAsync with fromId {FromId}.", symbol, fromId);
             return FetchResult.ErrorResult();
         }
     }
@@ -311,7 +311,7 @@ public class BinanceService : IBinanceService
     {
         var allKlinesDomainModel = new List<Ohlcv>();
         var currentStartTime = startTime;
-        _logger.LogInformation("[{Symbol}] Начинаем загрузку исторических свечей с {Start} по {End}", symbol, startTime, endTime);
+        _logger.LogInformation("[{Symbol}] Starting historical klines download from {Start} to {End}", symbol, startTime, endTime);
 
         // Цикл для пагинации, так как API отдает максимум 1000 свечей за раз
         while (currentStartTime < endTime && !cancellationToken.IsCancellationRequested)
@@ -330,7 +330,7 @@ public class BinanceService : IBinanceService
 
             if (!result.Success)
             {
-                _logger.LogError("[{Symbol}] Ошибка при загрузке Klines: {Error}", symbol, result.Error?.Message);
+                _logger.LogError("[{Symbol}] Error downloading Klines: {Error}", symbol, result.Error?.Message);
                 // В реальной задаче Hangfire здесь лучше выбросить исключение, чтобы задача ушла на Retry
                 // throw new Exception($"Failed to download klines for {symbol}: {result.Error?.Message}");
                 break; // Для простоты пока прерываем цикл
@@ -359,13 +359,13 @@ public class BinanceService : IBinanceService
             // Берем OpenTime последней свечи и прибавляем 1 минуту
             currentStartTime = result.Data.Last().OpenTime.AddMinutes(1);
 
-            _logger.LogDebug("[{Symbol}] Загружено {Count} свечей. Следующий запрос с {NextStart}", symbol, result.Data.Count(), currentStartTime);
+            _logger.LogDebug("[{Symbol}] Downloaded {Count} klines. Next request from {NextStart}", symbol, result.Data.Count(), currentStartTime);
 
             // Вежливая пауза, чтобы не "долбить" API слишком часто
             await Task.Delay(500, cancellationToken);
         }
 
-        _logger.LogInformation("[{Symbol}] Загрузка исторических свечей завершена. Всего: {Count}", symbol, allKlinesDomainModel.Count);
+        _logger.LogInformation("[{Symbol}] Historical klines download complete. Total: {Count}", symbol, allKlinesDomainModel.Count);
 
         return allKlinesDomainModel;
     }

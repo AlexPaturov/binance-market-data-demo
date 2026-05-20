@@ -52,7 +52,7 @@ public class HistoricalAuditorWorker
     /// </summary>
     public async Task AuditNextBatchAsync()
     {
-        using (_logger.TimedOperation("Один цикл исторического аудита"))
+        using (_logger.TimedOperation("Single historical audit cycle"))
         {
             try
             {
@@ -60,7 +60,7 @@ public class HistoricalAuditorWorker
                 var symbolsToAudit = await _auditRepo.GetSymbolsToAuditAsync(BatchSize, MaxRetries, _retryInterval);
                 if (!symbolsToAudit.Any())
                 {
-                    _logger.LogInformation("Нет символов для исторического аудита в данный момент.");
+                    _logger.LogInformation("No symbols pending historical audit at this time.");
                     return;
                 }
 
@@ -72,7 +72,7 @@ public class HistoricalAuditorWorker
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Критическая ошибка в HistoricalAuditorWorker");
+                _logger.LogError(ex, "Critical error in HistoricalAuditorWorker");
                 throw; // Перевыбрасываем, чтобы Hangfire пометил задачу как Failed
             }
         }
@@ -94,7 +94,7 @@ public class HistoricalAuditorWorker
             // 2. "Защитный барьер": не лезем в "горячую" зону QuickAuditor'а.
             if (windowEnd >= DateTime.UtcNow.AddHours(-48))
             {
-                _logger.LogInformation("[{Symbol}] Исторический аудит достиг 'горячей' зоны. Считаем завершенным.", symbol);
+                _logger.LogInformation("[{Symbol}] Historical audit reached the hot zone. Marking as completed.", symbol);
                 await _auditRepo.UpdateWatermarkAsync(symbol, watermark.LastChecked_TradeId, watermark.LastChecked_Timestamp, "Completed", false);
                 return;
             }
@@ -104,7 +104,7 @@ public class HistoricalAuditorWorker
             if (!minId.HasValue || !maxId.HasValue)
             {
                 // В этом окне нет сделок. Просто "перепрыгиваем" его, сдвигая вотермарку.
-                _logger.LogInformation("[{Symbol}] В окне {Start} - {End} нет сделок. Перепрыгиваем...", symbol, windowStart, windowEnd);
+                _logger.LogInformation("[{Symbol}] No trades in window {Start} - {End}. Skipping...", symbol, windowStart, windowEnd);
                 await _auditRepo.UpdateWatermarkAsync(symbol, watermark.LastChecked_TradeId, new DateTimeOffset(windowEnd).ToUnixTimeMilliseconds(), "Pending", false);
                 return;
             }
@@ -114,7 +114,7 @@ public class HistoricalAuditorWorker
 
             if (gaps.Any())
             {
-                _logger.LogWarning("[{Symbol}] В диапазоне ID {MinId}-{MaxId} найдено {Count} дыр.", symbol, minId.Value, maxId.Value, gaps.Count);
+                _logger.LogWarning("[{Symbol}] Found {Count} gaps in ID range {MinId}-{MaxId}.", symbol, gaps.Count, minId.Value, maxId.Value);
 
                 foreach (var gap in gaps)
                 {
@@ -126,11 +126,11 @@ public class HistoricalAuditorWorker
 
             // 6. Успешно сдвигаем вотермарку на конец проверенного окна.
             await _auditRepo.UpdateWatermarkAsync(symbol, maxId.Value, new DateTimeOffset(windowEnd).ToUnixTimeMilliseconds(), "Pending", false);
-            _logger.LogInformation("[{Symbol}] Успешно проверено окно до {WindowEnd} (TradeId: {MaxId}).", symbol, windowEnd, maxId.Value);
+            _logger.LogInformation("[{Symbol}] Window up to {WindowEnd} (TradeId: {MaxId}) checked successfully.", symbol, windowEnd, maxId.Value);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[{Symbol}] Ошибка при аудите порции данных. Вотермарка не сдвинута.", symbol);
+            _logger.LogError(ex, "[{Symbol}] Error auditing data chunk. Watermark not advanced.", symbol);
             // Обновляем с увеличением счетчика ошибок, не сдвигая вотермарку.
             await _auditRepo.UpdateWatermarkAsync(symbol, watermark.LastChecked_TradeId, watermark.LastChecked_Timestamp, "Failed", true);
             throw;
@@ -148,7 +148,7 @@ public class HistoricalAuditorWorker
 
         if (startTrade?.TradeTime <= 0 || endTrade?.TradeTime <= 0)
         {
-            _logger.LogWarning("[{Symbol}] Не удалось найти крайние сделки для дыры {gap}. Планирование отменено.", symbol, gap);
+            _logger.LogWarning("[{Symbol}] Could not find boundary trades for gap {gap}. Scheduling cancelled.", symbol, gap);
             return;
         }
 
@@ -159,7 +159,7 @@ public class HistoricalAuditorWorker
             // Используем трекер, чтобы не ставить дублирующиеся задачи
             if (_tracker.TryMarkArchiveAsProcessing(symbol, date))
             {
-                _logger.LogWarning("[{Symbol}] Планируем загрузку архива за {Date} для закрытия дыры.", symbol, date);
+                _logger.LogWarning("[{Symbol}] Scheduling archive download for {Date} to close gap.", symbol, date);
                 _backgroundJobClient.Enqueue<OnlineArchiveImportWorker>(
                     worker => worker.ImportArchiveAsync(symbol, date, JobCancellationToken.Null)
                 );
@@ -182,7 +182,7 @@ public class HistoricalAuditorWorker
         {
             // Если временные метки некорректны или перепутаны,
             // возвращаем пустую коллекцию, чтобы избежать ошибки.
-            _logger.LogWarning("Получены некорректные временные метки для GetDatesBetween: Start={start}, End={end}. Пропускаем.", startTimestampMs, endTimestampMs);
+            _logger.LogWarning("Invalid timestamps for GetDatesBetween: Start={start}, End={end}. Skipping.", startTimestampMs, endTimestampMs);
             yield break;
         }
         // =============================

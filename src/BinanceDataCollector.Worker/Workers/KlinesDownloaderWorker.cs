@@ -34,7 +34,7 @@ public class KlinesDownloaderWorker
     /// </summary>
     public async Task DownloadKlinesAsync()
     {
-        using (_logger.TimedOperation("Плановая загрузка свечей (Klines)"))
+        using (_logger.TimedOperation("Scheduled klines download"))
         {
             var activeSymbols = await _symbolRepo.GetActiveSymbolsAsync();
 
@@ -46,7 +46,7 @@ public class KlinesDownloaderWorker
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "[{Symbol}] Ошибка при загрузке свечей.", symbol);
+                    _logger.LogError(ex, "[{Symbol}] Error downloading klines.", symbol);
                     // Не перевыбрасываем, чтобы ошибка одного символа не остановила весь процесс
                 }
             }
@@ -79,7 +79,7 @@ public class KlinesDownloaderWorker
             // 3 года - слишком много и создаст огромную задачу. Начнем с 30 дней.
             // Глубокую историю заполнит HistoricalAuditor.
             startTime = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-            _logger.LogWarning("[{Symbol}] Нет свечей в базе. Начинаем загрузку за последние 30 дней.", symbol);
+            _logger.LogWarning("[{Symbol}] No klines in database. Starting download from last 30 days.", symbol);
         }
 
         // Загружаем данные до текущего момента.
@@ -89,7 +89,7 @@ public class KlinesDownloaderWorker
         // или если последняя свеча - это текущая минута, то выходим.
         if (startTime >= endTime)
         {
-            _logger.LogInformation("[{Symbol}] Данные по свечам актуальны. Пропускаем.", symbol);
+            _logger.LogInformation("[{Symbol}] Klines are up to date. Skipping.", symbol);
             return;
         }
 
@@ -100,7 +100,7 @@ public class KlinesDownloaderWorker
         // Пытаемся "зарезервировать" эту работу
         if (!_tracker.TryMarkKlinesAsProcessing(symbol, startTime))
         {
-            _logger.LogDebug("[{Symbol}] Загрузка свечей с {Start} уже в процессе. Пропускаем.", symbol, startTime);
+            _logger.LogDebug("[{Symbol}] Klines download from {Start} already in progress. Skipping.", symbol, startTime);
             return; // Если не удалось - выходим, работа уже ведется.
         }
 
@@ -115,11 +115,11 @@ public class KlinesDownloaderWorker
             {
                 // 3. Сохраняем скачанные свечи в базу
                 await _ohlcvRepo.BulkUpsertAsync(klines);
-                _logger.LogInformation("[{Symbol}] Успешно загружено и сохранено {Count} новых свечей.", symbol, klines.Count);
+                _logger.LogInformation("[{Symbol}] Successfully downloaded and saved {Count} new klines.", symbol, klines.Count);
             }
             else
             {
-                _logger.LogInformation("[{Symbol}] Новых свечей для загрузки не найдено в диапазоне {Start} - {End}.", symbol, startTime, endTime);
+                _logger.LogInformation("[{Symbol}] No new klines found in range {Start} - {End}.", symbol, startTime, endTime);
             }
         }
         finally

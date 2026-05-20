@@ -37,7 +37,7 @@ public class BinanceCollectorWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation($"{LoggerNames.GetCurrentMethodName()} Центральный сборщик данных запущен.");
+        _logger.LogInformation($"{LoggerNames.GetCurrentMethodName()} Central data collector started.");
 
         // --- Запускаем задачу-писателя (Consumer) в фоновом режиме ---
         var writerTask = Task.Run(() => DatabaseWriterLoop(stoppingToken), stoppingToken);
@@ -50,12 +50,12 @@ public class BinanceCollectorWorker : BackgroundService
                 var symbolsToTrack = (await _trackedSymbolRepository.GetActiveSymbolsAsync()).ToList();
                 if (!symbolsToTrack.Any())
                 {
-                    _logger.LogWarning("Нет активных символов для отслеживания. Повторная проверка через 5 минут.");
+                    _logger.LogWarning("No active symbols to track. Retrying in 5 minutes.");
                     await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
                     continue; // Переходим к следующей итерации цикла
                 }
 
-                _logger.LogInformation("Начинаем подписку на {Count} потоков сделок...", symbolsToTrack.Count);
+                _logger.LogInformation("Subscribing to {Count} trade streams...", symbolsToTrack.Count);
 
                 // Подписываемся на ВСЕ потоки ОДНИМ вызовом
                 await _binanceService.SubscribeToMultipleTradesAsync(symbolsToTrack,
@@ -68,7 +68,7 @@ public class BinanceCollectorWorker : BackgroundService
 
                 // Если подписка по какой-то причине завершилась (например, потеря связи),
                 // мы просто залогируем это и цикл while автоматически попробует переподписаться.
-                _logger.LogWarning("Поток подписки завершился. Попытка переподключения через 10 секунд...");
+                _logger.LogWarning("Subscription stream ended. Reconnecting in 10 seconds...");
                 await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
             }
             catch (OperationCanceledException)
@@ -77,14 +77,14 @@ public class BinanceCollectorWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка в основном цикле подписки. Повторная попытка через 30 секунд.");
+                _logger.LogError(ex, "Error in subscription loop. Retrying in 30 seconds.");
                 await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
             }
         }
 
         // Дожидаемся корректного завершения задачи-писателя
         await writerTask;
-        _logger.LogInformation("Центральный сборщик данных остановлен.");
+        _logger.LogInformation("Central data collector stopped.");
     }
 
     /// <summary>
@@ -93,7 +93,7 @@ public class BinanceCollectorWorker : BackgroundService
     /// </summary>
     private async Task DatabaseWriterLoop(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Задача-писатель в БД (DatabaseWriterLoop) запущена.");
+        _logger.LogInformation("Database writer task (DatabaseWriterLoop) started.");
         var buffer = new List<Trade>();
         var timer = new PeriodicTimer(TimeSpan.FromSeconds(2)); // Периодичность записи
 
@@ -111,12 +111,12 @@ public class BinanceCollectorWorker : BackgroundService
                 {
                     try
                     {
-                        _logger.LogInformation("Сохраняем {Count} сделок в базу данных...", buffer.Count);
+                        _logger.LogInformation("Saving {Count} trades to the database...", buffer.Count);
                         await _tradeRepository.BulkInsertAsync(buffer);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Ошибка при сохранении пачки из {Count} сделок. Данные могут быть утеряны.", buffer.Count);
+                        _logger.LogError(ex, "Error saving batch of {Count} trades. Data may be lost.", buffer.Count);
                         // Очищаем буфер в любом случае, чтобы не пытаться записать "битые" данные снова
                     }
                     finally
@@ -128,17 +128,17 @@ public class BinanceCollectorWorker : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("Задача-писатель в БД получила сигнал остановки.");
+            _logger.LogInformation("Database writer task received stop signal.");
             // Попробуем сохранить последние данные из буфера перед выходом
             if (buffer.Any())
             {
-                _logger.LogWarning("Сохраняем последние {Count} сделок перед завершением...", buffer.Count);
+                _logger.LogWarning("Saving last {Count} trades before shutdown...", buffer.Count);
                 await SaveBufferAsync(buffer);
             }
         }
         finally
         {
-            _logger.LogInformation("Задача-писатель в БД (DatabaseWriterLoop) остановлена.");
+            _logger.LogInformation("Database writer task (DatabaseWriterLoop) stopped.");
         }
     }
 
@@ -149,11 +149,11 @@ public class BinanceCollectorWorker : BackgroundService
         try
         {
             await _tradeRepository.BulkInsertAsync(buffer);
-            _logger.LogInformation("Последняя пачка из {Count} сделок успешно сохранена.", buffer.Count);
+            _logger.LogInformation("Last batch of {Count} trades saved successfully.", buffer.Count);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ошибка при сохранении последней пачки из {Count} сделок.", buffer.Count);
+            _logger.LogError(ex, "Error saving last batch of {Count} trades.", buffer.Count);
         }
         finally
         {

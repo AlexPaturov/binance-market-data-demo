@@ -21,7 +21,7 @@ public class AuditInitializationWorker
     [Queue("default")] // Это некритичная, фоновая задача
     public async Task CreateWatermarksForNewSymbolsAsync()
     {
-        using (_logger.TimedOperation("Инициализация аудита для новых символов"))
+        using (_logger.TimedOperation("Audit initialization for new symbols"))
         {
             await _auditRepo.InitializeAuditForNewSymbolsAsync();
         }

@@ -30,7 +30,7 @@ public class SymbolUpdateWorker
     [Queue("realtime")]
     public async Task ScanMarketAndUpdateSymbolsAsync()
     {
-        _logger.LogInformation("--- Начинаем плановое сканирование рынка ---");
+        _logger.LogInformation("--- Starting scheduled market scan ---");
 
         try
         {
@@ -41,23 +41,23 @@ public class SymbolUpdateWorker
             if (topPairs.Any())
             {
                 var symbolsToTrack = topPairs.Select(p => p.Symbol);
-                _logger.LogInformation("Найдено {Count} активных пар. Обновляем базу данных...",
+                _logger.LogInformation("Found {Count} active pairs. Updating database...",
                     symbolsToTrack.Count());
                 await _trackedSymbolRepository.UpdateSymbolListAsync(symbolsToTrack); // Сохраняем полученный список
 
-                _logger.LogInformation("База данных отслеживаемых символов успешно обновлена.");
+                _logger.LogInformation("Tracked symbols database updated successfully.");
             }
             else
             {
-                _logger.LogWarning("Сканер не вернул ни одной пары. Обновление БД пропущено.");
+                _logger.LogWarning("Market screener returned no pairs. Database update skipped.");
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Произошла критическая ошибка во время сканирования рынка.");
+            _logger.LogError(ex, "Critical error during market scan.");
             throw;
         }
 
-        _logger.LogInformation("--- Плановое сканирование рынка успешно завершено ---");
+        _logger.LogInformation("--- Scheduled market scan completed successfully ---");
     }
 }
