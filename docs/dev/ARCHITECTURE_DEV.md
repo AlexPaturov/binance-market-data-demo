@@ -31,6 +31,7 @@
 |   |    /    (LVM) — 49 GB  ← системный раздел, Docker daemon  |   |
 |   |    /boot      —  2 GB                                     |   |
 |   |    /mnt/bdc   — 406 GB ← VirtualBox Shared Folder (bdc)   |   |
+|   |    /mnt/ext   — 3.6 TB ← USB-C 4TB диск (USB Passthrough) |   |
 |   |                                                           |   |
 |   |  Shared Folder VirtualBox:                                |   |
 |   |    Windows: C:\Work\PrersonalProjects\BinanceDataCollector|   |
@@ -107,21 +108,21 @@ network:
 
 Docker daemon хранит образы, overlay2, container-логи и **named volumes** в `/var/lib/docker/` — на системном разделе (`/`, 49 GB). При хранении больших данных в Docker named volumes системный раздел быстро заполняется, что приводит к падению Postgres с `PANIC: No space left on device`.
 
-**Правило: любые крупные данные должны идти на `/mnt/bdc` через bind mount, а не через named volumes.**
+**Правило: любые крупные данные должны идти через bind mount на внешний диск, а не через named volumes.**
 
 | Контейнер   | Где хранятся данные              | Тип монтирования          |
 |-------------|----------------------------------|---------------------------|
-| Postgres    | `/mnt/bdc/postgres_data`         | bind mount                |
+| Postgres    | `/mnt/ext/postgres_data`         | bind mount                |
 | Seq         | named volume `bdc_seq_data`      | named volume (данные малы)|
 | RabbitMQ    | named volume `bdc_rabbitmq_data` | named volume (данные малы)|
 
-Конфигурация Postgres в `docker-compose.yml`:
+Конфигурация Postgres в `docker-compose.db.yml`:
 
 ```yaml
 services:
   bdc_db:
     volumes:
-      - /mnt/bdc/postgres_data:/var/lib/postgresql/data  # bind mount на bdc
+      - /mnt/ext/postgres_data:/var/lib/postgresql/data  # bind mount на внешний диск
 ```
 
 Никогда не использовать `postgres_data:` как named volume — данные уйдут на `/var/lib/docker/volumes/` и заполнят системный раздел при объёмных импортах.
@@ -226,7 +227,7 @@ Worker и DataManager стартуют **на Windows**, а БД и брокер
 - Считать, что Worker/DataManager доступны изнутри VM по `localhost:7001/7002` — они работают на Windows-хосте.
 - Хранить ценные данные в DEV-volume'ах: пересоздание VM или контейнеров — рутина.
 - Трогать `docker-compose.override.yml` — оставлен как есть, разберёмся отдельной задачей.
-- **Хранить Postgres-данные в Docker named volume** — они уйдут в `/var/lib/docker/volumes/` на 49 GB системном разделе. При объёмном импорте (первичная загрузка, bulk insert) WAL и данные таблиц быстро заполнят раздел до 100%, Postgres упадёт с `PANIC: No space left on device`. Postgres всегда должен монтироваться через bind mount на `/mnt/bdc/postgres_data`.
+- **Хранить Postgres-данные в Docker named volume** — они уйдут в `/var/lib/docker/volumes/` на 49 GB системном разделе. При объёмном импорте (первичная загрузка, bulk insert) WAL и данные таблиц быстро заполнят раздел до 100%, Postgres упадёт с `PANIC: No space left on device`. Postgres всегда должен монтироваться через bind mount на `/mnt/ext/postgres_data`.
 
 ## 10. Диагностика: VM недоступна по сети с Windows
 
