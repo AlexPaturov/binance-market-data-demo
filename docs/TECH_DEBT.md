@@ -106,6 +106,7 @@
 - [ ] Решить судьбу `BinanceCollectorWorker` (включить / удалить)
 - [ ] Удалить устаревшие ветки `docker-refactor`, `test/ci`
 - [ ] Решить судьбу `docker-compose.override.yml` (восстановить из бэкапа или нет)
+- [ ] Восстановить работу с двумя файлами (`docker-compose.yml` + `docker-compose.prod.yml`) — сейчас `docker-compose.prod.yml` самодостаточен и override-паттерн сломан (2026-05-20)
 - [ ] Удалить пустой `postgres-config/custom.conf`
 - [ ] Убрать `ConfigureKestrel` из `DataManager/Program.cs` и `Worker/Program.cs` (см. п. 7)
 
