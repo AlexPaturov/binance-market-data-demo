@@ -19,6 +19,13 @@
 |   |   - bdc_worker      :7001 |   .NET-процессы на Windows        |
 |   |   - bdc_datamanager :7002 |                                   |
 |   +-------------┬-------------+                                   |
+|                                                                   |
+|   Данные Worker/DataManager (D: диск Windows):                    |
+|     D:\Media\Downloads\Temp\Trades\                               |
+|       Downloaded  ← ZIP-архивы с Binance                         |
+|       Unpacked    ← распакованные CSV                             |
+|     (BasePath в ArchivesSettings, appsettings.Development.json)   |
+|                                                                   |
 |                 │ TCP по Host-Only сети (192.168.56.0/24)         |
 |                 ▼                                                 |
 |   +-----------------------------------------------------------+   |
@@ -244,7 +251,8 @@ Worker и DataManager стартуют **на Windows**, а БД и брокер
 - Считать, что Worker/DataManager доступны изнутри VM по `localhost:7001/7002` — они работают на Windows-хосте.
 - Хранить ценные данные в DEV-volume'ах: пересоздание VM или контейнеров — рутина.
 - Трогать `docker-compose.override.yml` — оставлен как есть, разберёмся отдельной задачей.
-- **Хранить Postgres-данные в Docker named volume** — они уйдут в `/var/lib/docker/volumes/` на 49 GB системном разделе. При объёмном импорте (первичная загрузка, bulk insert) WAL и данные таблиц быстро заполнят раздел до 100%, Postgres упадёт с `PANIC: No space left on device`. Postgres всегда должен монтироваться через bind mount на `/mnt/ext/postgres_data`.
+- **Менять `BasePath` в `appsettings.Development.json` на путь внутри VM** — Worker работает на Windows, пути должны быть Windows-путями. Текущий: `D:\Media\Downloads\Temp\Trades`.
+- **Если хранить Postgres-данные в Docker named volume** — они уйдут в `/var/lib/docker/volumes/` на 49 GB системном разделе. При объёмном импорте (первичная загрузка, bulk insert) WAL и данные таблиц быстро заполнят раздел до 100%, Postgres упадёт с `PANIC: No space left on device`. Postgres всегда должен монтироваться через bind mount на `/mnt/ext/postgres_data`.
 
 ## 10. Диагностика: VM недоступна по сети с Windows
 
