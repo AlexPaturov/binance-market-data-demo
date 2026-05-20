@@ -30,7 +30,7 @@
 |   |  Диски VM:                                                |   |
 |   |    /    (LVM) — 49 GB  ← системный раздел, Docker daemon  |   |
 |   |    /boot      —  2 GB                                     |   |
-|   |    /mnt/bdc   — 406 GB ← VirtualBox Shared Folder (bdc)   |   |
+|   |    /mnt/bdc   — ~100 GB ← VirtualBox Shared Folder (исходники) |   |
 |   |    /mnt/ext   — 3.6 TB ← USB-C 4TB диск (USB Passthrough) |   |
 |   |                                                           |   |
 |   |  Shared Folder VirtualBox:                                |   |
@@ -99,6 +99,8 @@ network:
 - Compose-файлы и `.env` редактируются на Windows и **сразу видны в VM** без `scp` / `git pull`.
 - В VM достаточно `cd /mnt/bdc/docker/compose && docker compose ... up -d`.
 - Старый путь `/opt/BinanceCollector` на VM **больше не используется** (был удалён как пустой).
+
+**Ограничение:** `/mnt/bdc` — только для исходников проекта (~100 GB максимум). Любые крупные данные (PostgreSQL, архивы CSV) хранятся исключительно на `/mnt/ext` (4TB диск). Postgres не может использовать vboxsf как data dir (требования к правам `0700`).
 
 ---
 
