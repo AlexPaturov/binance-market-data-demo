@@ -25,6 +25,9 @@ public class Program
 {
     public static void Main(string[] args)
     {
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Console.InputEncoding = System.Text.Encoding.UTF8;
+
         var startupStopwatch = Stopwatch.StartNew();
 
         #region Минимальный "загрузочный" логгер - записать в консоль ошибку, если .Build() упадет.
@@ -119,7 +122,7 @@ public class Program
             builder.Services.AddSingleton<GapProcessingTracker>();
             // builder.Services.AddTransient<ArchiveDownloaderWorker>(); // must be deleted
             builder.Services.AddTransient<IArchiveDownloaderWorker, ArchiveDownloaderWorker>();
-            builder.Services.AddTransient<ArchiveUnpackerWorker>(); // 
+            builder.Services.AddTransient<IArchiveUnpackerWorker, ArchiveUnpackerWorker>();
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
             
