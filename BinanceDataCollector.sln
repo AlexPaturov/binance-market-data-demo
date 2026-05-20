@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.6.11723.189 insiders
+VisualStudioVersion = 18.6.11723.189
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{3E238BA4-0B1D-453B-B2ED-807351588F1D}"
 	ProjectSection(SolutionItems) = preProject
@@ -35,6 +35,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{61180A7E-3843-46EC-AB2C-709A5B858DEF}"
 	ProjectSection(SolutionItems) = preProject
 		docs\INDEX.md = docs\INDEX.md
+		docs\INITIAL_DATA_LOAD.md = docs\INITIAL_DATA_LOAD.md
 		docs\Server_Network_Config.md = docs\Server_Network_Config.md
 		docs\TECH_DEBT.md = docs\TECH_DEBT.md
 	EndProjectSection

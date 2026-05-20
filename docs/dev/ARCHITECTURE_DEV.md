@@ -22,10 +22,15 @@
 |                 │ TCP по Host-Only сети (192.168.56.0/24)         |
 |                 ▼                                                 |
 |   +-----------------------------------------------------------+   |
-|   |  VirtualBox VM (Ubuntu 20.04, headless)                   |   |
+|   |  VirtualBox VM (Ubuntu, headless)                         |   |
 |   |                                                           |   |
 |   |  Адаптер 1: Host-Only — enp0s3, IP 192.168.56.101         |   |
 |   |  Адаптер 2: NAT       — enp0s8 (только для apt/docker pull)|  |
+|   |                                                           |   |
+|   |  Диски VM:                                                |   |
+|   |    /    (LVM) — 49 GB  ← системный раздел, Docker daemon  |   |
+|   |    /boot      —  2 GB                                     |   |
+|   |    /mnt/bdc   — 406 GB ← VirtualBox Shared Folder (bdc)   |   |
 |   |                                                           |   |
 |   |  Shared Folder VirtualBox:                                |   |
 |   |    Windows: C:\Work\PrersonalProjects\BinanceDataCollector|   |
@@ -41,7 +46,7 @@
 ```
 
 - **Хост:** Windows 11. На нём только IDE, .NET-приложения и SSH-клиент.
-- **VM:** VirtualBox с **Ubuntu 20.04**. Запускается в **headless-режиме** (правый клик в VirtualBox → *Headless Start*).
+- **VM:** VirtualBox (Ubuntu, headless). Запускается в **headless-режиме** (правый клик в VirtualBox → *Headless Start*).
 - **Docker** установлен **внутри VM**. Все контейнеры с инфраструктурой поднимаются там.
 - **Worker / DataManager** в DEV **в Docker не запускаются**. Они стартуют из IDE на Windows.
 
@@ -93,6 +98,33 @@ network:
 - Compose-файлы и `.env` редактируются на Windows и **сразу видны в VM** без `scp` / `git pull`.
 - В VM достаточно `cd /mnt/bdc/docker/compose && docker compose ... up -d`.
 - Старый путь `/opt/BinanceCollector` на VM **больше не используется** (был удалён как пустой).
+
+---
+
+## 3а. Размещение данных Docker-контейнеров
+
+> **Критически важно** из-за ограниченного размера системного раздела (49 GB).
+
+Docker daemon хранит образы, overlay2, container-логи и **named volumes** в `/var/lib/docker/` — на системном разделе (`/`, 49 GB). При хранении больших данных в Docker named volumes системный раздел быстро заполняется, что приводит к падению Postgres с `PANIC: No space left on device`.
+
+**Правило: любые крупные данные должны идти на `/mnt/bdc` через bind mount, а не через named volumes.**
+
+| Контейнер   | Где хранятся данные              | Тип монтирования          |
+|-------------|----------------------------------|---------------------------|
+| Postgres    | `/mnt/bdc/postgres_data`         | bind mount                |
+| Seq         | named volume `bdc_seq_data`      | named volume (данные малы)|
+| RabbitMQ    | named volume `bdc_rabbitmq_data` | named volume (данные малы)|
+
+Конфигурация Postgres в `docker-compose.yml`:
+
+```yaml
+services:
+  bdc_db:
+    volumes:
+      - /mnt/bdc/postgres_data:/var/lib/postgresql/data  # bind mount на bdc
+```
+
+Никогда не использовать `postgres_data:` как named volume — данные уйдут на `/var/lib/docker/volumes/` и заполнят системный раздел при объёмных импортах.
 
 ---
 
@@ -194,6 +226,7 @@ Worker и DataManager стартуют **на Windows**, а БД и брокер
 - Считать, что Worker/DataManager доступны изнутри VM по `localhost:7001/7002` — они работают на Windows-хосте.
 - Хранить ценные данные в DEV-volume'ах: пересоздание VM или контейнеров — рутина.
 - Трогать `docker-compose.override.yml` — оставлен как есть, разберёмся отдельной задачей.
+- **Хранить Postgres-данные в Docker named volume** — они уйдут в `/var/lib/docker/volumes/` на 49 GB системном разделе. При объёмном импорте (первичная загрузка, bulk insert) WAL и данные таблиц быстро заполнят раздел до 100%, Postgres упадёт с `PANIC: No space left on device`. Postgres всегда должен монтироваться через bind mount на `/mnt/bdc/postgres_data`.
 
 ## 10. Диагностика: VM недоступна по сети с Windows
 
