@@ -67,23 +67,91 @@
 
 **Контекст:** описание и параметры в `docs/TECH_DEBT.md` → раздел «Dev/Prod синхронизация БД».
 
-**Перед этим шагом:** реализовать механизм sync (отдельная задача разработки).
+### 5А — Новый диск для dev VM
 
-Параметры:
-- Окно: 3 месяца (rolling)
-- Объём: ~150-200 GB
-- Хранение: новый VirtualBox virtual disk (200 GB .vdi) в dev VM
-- Источник данных: прод через Tailscale (100.96.120.16)
+1. В VirtualBox: Settings → Storage → Add Hard Disk → Create VDI → Fixed size → 200 GB
+2. В VM:
+```bash
+lsblk                          # найти новый диск (напр. /dev/sdc)
+sudo mkfs.ext4 /dev/sdc
+sudo mkdir -p /mnt/devdb
+sudo blkid /dev/sdc            # взять UUID
+echo 'UUID=xxx /mnt/devdb ext4 defaults 0 2' | sudo tee -a /etc/fstab
+sudo mount -a
+```
+3. Обновить `docker-compose.db.yml` и `docker-compose.dev.yml`:
+```yaml
+- /mnt/devdb/postgres_data:/var/lib/postgresql/data
+```
+
+### 5Б — Первичное наполнение (разово, ~150 GB)
+
+Через Tailscale, командой COPY напрямую между prod и dev БД:
+```bash
+psql -h 100.96.120.16 -U postgres market_analytics -c \
+  "COPY (SELECT * FROM \"Trades\" WHERE \"TradeTime\" > extract(epoch from now() - interval '3 months')::bigint * 1000) TO STDOUT" \
+  | psql -h 192.168.56.101 -p 5432 -U postgres market_analytics -c \
+  "COPY \"Trades\" FROM STDIN"
+```
+То же для `Ohlcv_1min` и `Ohlcv_Features`. Разовая операция, займёт несколько часов.
+
+### 5В — DevSyncService (инкрементальная синхронизация)
+
+**Новая таблица `DevSyncWatermarks`** (только в dev БД, миграция):
+```sql
+CREATE TABLE "DevSyncWatermarks" (
+    "Symbol"              VARCHAR(20) PRIMARY KEY,
+    "LastSyncedTradeTime" BIGINT      NOT NULL,
+    "LastSyncedAt"        TIMESTAMPTZ NOT NULL
+);
+```
+
+**`DevSyncService : IHostedService`** — запускается на старте Worker'а:
+
+Алгоритм:
+1. Проверить `ASPNETCORE_ENVIRONMENT` — если не `Development`, завершить без действий
+2. Подключиться к прод БД (connection string из `appsettings.Development.json`)
+3. Для каждого символа: взять `LastSyncedTradeTime` из `DevSyncWatermarks`
+4. Pull из прода: `WHERE Symbol = X AND TradeTime > watermark`
+5. BulkInsert в dev
+6. То же для `Ohlcv_1min` (по `OpenTime`) и `Ohlcv_Features`
+7. Обновить watermark в `DevSyncWatermarks`
+8. Rolling cleanup: `DELETE WHERE TradeTime < now() - interval '3 months'`
+9. Сигнал завершения — Hangfire-серверы стартуют
+
+**Условие запуска (env guard):**
+```csharp
+// Program.cs
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddHostedService<DevSyncService>();
+}
+```
+На проде сервис не регистрируется вообще — нулевой оверхед.
+
+**Конфигурация** (`appsettings.Development.json`):
+```json
+"DevSync": {
+  "Enabled": true,
+  "ProdConnectionString": "Host=100.96.120.16;Port=5432;Database=market_analytics;Username=...;Password=...",
+  "RollingWindowMonths": 3
+}
+```
+
+**Порядок старта в `Program.cs`:**
+```
+DevSyncService.StartAsync() → sync завершён → Hangfire BackgroundServer → Worker'ы
+```
+
+Оценка трудоёмкости: **3-4 дня разработки** с учётом тестирования.
 
 ---
 
-## Шаг 6 — Переключение дева на новую базу
+## Шаг 6 — Проверка целостности дев базы
 
-1. Создать новый VirtualBox virtual disk 200 GB (`.vdi`) для dev VM
-2. Подключить к VM, отформатировать, смонтировать (например `/mnt/devdb`)
-3. Обновить `docker-compose.db.yml` и `docker-compose.dev.yml`: bind mount на `/mnt/devdb/postgres_data`
-4. Запустить rolling window sync — скопировать 3 месяца данных с прода
-5. Проверить целостность дев базы (тот же инструмент что в Шаге 1)
+После первичного наполнения (5Б) и после каждой синхронизации:
+- Использовать тот же инструмент проверки целостности что в Шаге 1
+- Диапазон проверки: последние 3 месяца
 
 ---
 
