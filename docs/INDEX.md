@@ -6,6 +6,9 @@
 docs/
 ├── INDEX.md                    ← этот файл
 ├── Server_Network_Config.md    ← UFW, Cloudflare IP, NetworkManager (прод-сервер)
+├── TODO_POST_INITIAL_LOAD.md   ← action plan после завершения initial load (6 шагов)
+├── INITIAL_DATA_LOAD.md        ← пошаговый план первичной загрузки исторических данных
+├── TECH_DEBT.md                ← известные проблемы и технический долг
 ├── common/                     ← общая документация (актуально для всех окружений)
 │   ├── 01_overview.md          ← обзор и назначение системы
 │   ├── 02_architecture.md      ← архитектура воркеров и потоков данных
