@@ -72,6 +72,11 @@ public class Program
             });
             #endregion
 
+            builder.Services.Configure<HostOptions>(options =>
+            {
+                options.ShutdownTimeout = TimeSpan.FromSeconds(60);
+            });
+
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
 
             #region Регистрация сервисов
