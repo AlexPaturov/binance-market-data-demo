@@ -31,7 +31,7 @@ public class ArchiveDownloaderWorker : IArchiveDownloaderWorker
     /// <summary>
     /// Скачивает ОДИН архив и сохраняет его на диск.
     /// </summary>
-    public async Task DownloadArchiveAsync(Guid requestId, string connectionId, string symbol, DateOnly date)
+    public async Task DownloadArchiveAsync(Guid requestId, string connectionId, string symbol, DateOnly date, IJobCancellationToken cancellationToken)
     {
         var fileName = $"{symbol}-trades-{date:yyyy-MM-dd}.zip";
         Directory.CreateDirectory(_downloadPath); // создаём директорию
@@ -58,7 +58,7 @@ public class ArchiveDownloaderWorker : IArchiveDownloaderWorker
                 Directory.CreateDirectory(_downloadPath);
                 fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
 
-                bool success = await _archiveService.DownloadArchiveToStreamAsync(symbol, date, fileStream, CancellationToken.None);
+                bool success = await _archiveService.DownloadArchiveToStreamAsync(symbol, date, fileStream, cancellationToken.ShutdownToken);
 
                 // --- ВАЖНО: Закрываем поток ДО проверки размера ---
                 // Это гарантирует, что все буферы сброшены на диск и размер файла финальный.
