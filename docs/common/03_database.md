@@ -371,6 +371,52 @@ CREATE TABLE public."Trades" (
 
 
 -- ============================================================
+-- PRIMARY KEYS
+-- ============================================================
+
+ALTER TABLE ONLY public."HistoricalAudit_Watermarks"
+    ADD CONSTRAINT "HistoricalAudit_Watermarks_pkey" PRIMARY KEY ("Symbol");
+
+ALTER TABLE ONLY public."Ohlcv_Features"
+    ADD CONSTRAINT "Ohlcv_Features_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+ALTER TABLE ONLY public."Ohlcv_1min"
+    ADD CONSTRAINT "PK_Ohlcv_1min" PRIMARY KEY ("Symbol", "OpenTime");
+
+ALTER TABLE ONLY public."Trades"
+    ADD CONSTRAINT "PK_Trades" PRIMARY KEY ("TradeId", "Symbol");
+
+ALTER TABLE ONLY public."Processing_Watermarks"
+    ADD CONSTRAINT "Processing_Watermarks_pkey" PRIMARY KEY ("ProcessName");
+
+ALTER TABLE ONLY public."TrackedSymbols"
+    ADD CONSTRAINT "TrackedSymbols_pkey" PRIMARY KEY ("Symbol");
+
+
+-- ============================================================
+-- INDEXES
+-- ============================================================
+
+CREATE INDEX "IX_HistoricalAudit_Watermarks_Status"
+    ON public."HistoricalAudit_Watermarks" USING btree ("Status");
+
+CREATE INDEX "IX_Ohlcv_1min_ProcessingStatus_OpenTime"
+    ON public."Ohlcv_1min" USING btree ("ProcessingStatus", "OpenTime");
+
+CREATE INDEX "IX_TrackedSymbols_IsActive"
+    ON public."TrackedSymbols" USING btree ("IsActive");
+
+CREATE INDEX "IX_Trades_ProcessingStatus_TradeTime"
+    ON public."Trades" USING btree ("ProcessingStatus", "TradeTime");
+
+CREATE INDEX "IX_Trades_Symbol_TradeTime"
+    ON public."Trades" USING btree ("Symbol", "TradeTime" DESC);
+
+CREATE INDEX ix_trades_tradetime_desc
+    ON public."Trades" USING btree ("TradeTime" DESC);
+
+
+-- ============================================================
 -- FUNCTIONS
 -- ============================================================
 
@@ -631,48 +677,4 @@ END;
 $$;
 
 
--- ============================================================
--- PRIMARY KEYS
--- ============================================================
-
-ALTER TABLE ONLY public."HistoricalAudit_Watermarks"
-    ADD CONSTRAINT "HistoricalAudit_Watermarks_pkey" PRIMARY KEY ("Symbol");
-
-ALTER TABLE ONLY public."Ohlcv_Features"
-    ADD CONSTRAINT "Ohlcv_Features_pkey" PRIMARY KEY ("Symbol", "OpenTime");
-
-ALTER TABLE ONLY public."Ohlcv_1min"
-    ADD CONSTRAINT "PK_Ohlcv_1min" PRIMARY KEY ("Symbol", "OpenTime");
-
-ALTER TABLE ONLY public."Trades"
-    ADD CONSTRAINT "PK_Trades" PRIMARY KEY ("TradeId", "Symbol");
-
-ALTER TABLE ONLY public."Processing_Watermarks"
-    ADD CONSTRAINT "Processing_Watermarks_pkey" PRIMARY KEY ("ProcessName");
-
-ALTER TABLE ONLY public."TrackedSymbols"
-    ADD CONSTRAINT "TrackedSymbols_pkey" PRIMARY KEY ("Symbol");
-
-
--- ============================================================
--- INDEXES
--- ============================================================
-
-CREATE INDEX "IX_HistoricalAudit_Watermarks_Status"
-    ON public."HistoricalAudit_Watermarks" USING btree ("Status");
-
-CREATE INDEX "IX_Ohlcv_1min_ProcessingStatus_OpenTime"
-    ON public."Ohlcv_1min" USING btree ("ProcessingStatus", "OpenTime");
-
-CREATE INDEX "IX_TrackedSymbols_IsActive"
-    ON public."TrackedSymbols" USING btree ("IsActive");
-
-CREATE INDEX "IX_Trades_ProcessingStatus_TradeTime"
-    ON public."Trades" USING btree ("ProcessingStatus", "TradeTime");
-
-CREATE INDEX "IX_Trades_Symbol_TradeTime"
-    ON public."Trades" USING btree ("Symbol", "TradeTime" DESC);
-
-CREATE INDEX ix_trades_tradetime_desc
-    ON public."Trades" USING btree ("TradeTime" DESC);
 ```
