@@ -305,6 +305,72 @@ COMMENT ON SCHEMA public IS 'standard public schema';
 
 
 -- ============================================================
+-- TABLES
+-- ============================================================
+
+CREATE TABLE public."HistoricalAudit_Watermarks" (
+    "Symbol"                character varying(20)        NOT NULL,
+    "LastChecked_TradeId"   bigint                       NOT NULL,
+    "LastChecked_Timestamp" bigint                       NOT NULL,
+    "Status"                character varying(20)        NOT NULL,
+    "RetryCount"            integer          DEFAULT 0   NOT NULL,
+    "LastAttempt_UTC"       timestamp with time zone
+);
+
+CREATE TABLE public."Ohlcv_1min" (
+    "Symbol"          character varying(20)                       NOT NULL,
+    "OpenTime"        bigint                                      NOT NULL,
+    "OpenPrice"       numeric(18,8)                               NOT NULL,
+    "HighPrice"       numeric(18,8)                               NOT NULL,
+    "LowPrice"        numeric(18,8)                               NOT NULL,
+    "ClosePrice"      numeric(18,8)                               NOT NULL,
+    "Volume"          numeric(28,8)                               NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'        NOT NULL
+);
+
+CREATE TABLE public."Ohlcv_Features" (
+    "Symbol"      character varying(20) NOT NULL,
+    "OpenTime"    bigint                NOT NULL,
+    "RSI_14"      numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist"   numeric(18,8),
+    "MA_1051200"  numeric(18,8),
+    "MA_201600"   numeric(18,8),
+    "CVD"         numeric(28,8)
+);
+
+CREATE TABLE public."Processing_Watermarks" (
+    "ProcessName"            character varying(50)     NOT NULL,
+    "LastProcessedTimestamp" bigint                    NOT NULL,
+    "Status"                 character varying(20)     NOT NULL,
+    "LastUpdate_UTC"         timestamp with time zone  NOT NULL
+);
+
+CREATE TABLE public."TrackedSymbols" (
+    "Symbol"      character varying(20)                    NOT NULL,
+    "IsActive"    boolean          DEFAULT true            NOT NULL,
+    "DateAdded"   timestamp with time zone DEFAULT now()   NOT NULL,
+    "LastScanned" timestamp with time zone
+);
+
+CREATE TABLE public."Trades" (
+    "TradeId"         bigint                                      NOT NULL,
+    "Symbol"          character varying(20)                       NOT NULL,
+    "Price"           numeric(18,8)                               NOT NULL,
+    "Quantity"        numeric(28,8)                               NOT NULL,
+    "QuoteQuantity"   numeric(28,8)                               NOT NULL,
+    "TradeTime"       bigint                                      NOT NULL,
+    "IsBuyerMaker"    boolean                                     NOT NULL,
+    "IsBestMatch"     boolean                                     NOT NULL,
+    "OrderId"         bigint,
+    "Commission"      numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade"       boolean          DEFAULT false,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'        NOT NULL
+);
+
+
+-- ============================================================
 -- FUNCTIONS
 -- ============================================================
 
@@ -563,72 +629,6 @@ BEGIN
         "CVD" = EXCLUDED."CVD";
 END;
 $$;
-
-
--- ============================================================
--- TABLES
--- ============================================================
-
-CREATE TABLE public."HistoricalAudit_Watermarks" (
-    "Symbol"                character varying(20)        NOT NULL,
-    "LastChecked_TradeId"   bigint                       NOT NULL,
-    "LastChecked_Timestamp" bigint                       NOT NULL,
-    "Status"                character varying(20)        NOT NULL,
-    "RetryCount"            integer          DEFAULT 0   NOT NULL,
-    "LastAttempt_UTC"       timestamp with time zone
-);
-
-CREATE TABLE public."Ohlcv_1min" (
-    "Symbol"          character varying(20)                       NOT NULL,
-    "OpenTime"        bigint                                      NOT NULL,
-    "OpenPrice"       numeric(18,8)                               NOT NULL,
-    "HighPrice"       numeric(18,8)                               NOT NULL,
-    "LowPrice"        numeric(18,8)                               NOT NULL,
-    "ClosePrice"      numeric(18,8)                               NOT NULL,
-    "Volume"          numeric(28,8)                               NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'        NOT NULL
-);
-
-CREATE TABLE public."Ohlcv_Features" (
-    "Symbol"      character varying(20) NOT NULL,
-    "OpenTime"    bigint                NOT NULL,
-    "RSI_14"      numeric(10,4),
-    "MACD_Signal" numeric(18,8),
-    "MACD_Hist"   numeric(18,8),
-    "MA_1051200"  numeric(18,8),
-    "MA_201600"   numeric(18,8),
-    "CVD"         numeric(28,8)
-);
-
-CREATE TABLE public."Processing_Watermarks" (
-    "ProcessName"            character varying(50)     NOT NULL,
-    "LastProcessedTimestamp" bigint                    NOT NULL,
-    "Status"                 character varying(20)     NOT NULL,
-    "LastUpdate_UTC"         timestamp with time zone  NOT NULL
-);
-
-CREATE TABLE public."TrackedSymbols" (
-    "Symbol"      character varying(20)                    NOT NULL,
-    "IsActive"    boolean          DEFAULT true            NOT NULL,
-    "DateAdded"   timestamp with time zone DEFAULT now()   NOT NULL,
-    "LastScanned" timestamp with time zone
-);
-
-CREATE TABLE public."Trades" (
-    "TradeId"         bigint                                      NOT NULL,
-    "Symbol"          character varying(20)                       NOT NULL,
-    "Price"           numeric(18,8)                               NOT NULL,
-    "Quantity"        numeric(28,8)                               NOT NULL,
-    "QuoteQuantity"   numeric(28,8)                               NOT NULL,
-    "TradeTime"       bigint                                      NOT NULL,
-    "IsBuyerMaker"    boolean                                     NOT NULL,
-    "IsBestMatch"     boolean                                     NOT NULL,
-    "OrderId"         bigint,
-    "Commission"      numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade"       boolean          DEFAULT false,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'        NOT NULL
-);
 
 
 -- ============================================================
