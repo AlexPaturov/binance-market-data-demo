@@ -278,7 +278,7 @@ Watermark'и для streaming-процессов. По одной записи �
 
 ---
 
-# Скрипт схемы (эталон)
+# Скрипт схемы
 
 > `sqlScripts/prod_schema_2026-05-09.sql` — `pg_dump --schema-only` с боевого сервера, PostgreSQL 16.11.
 
