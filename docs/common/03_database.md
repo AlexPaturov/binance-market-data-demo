@@ -1,6 +1,6 @@
 # Документация: 03 - База данных (PostgreSQL)
 
-Этот документ описывает фактическую структуру баз данных проекта `BinanceDataCollector`. Источником истины для DDL служит `tests/BinanceDataCollector.Infrastructure.Tests/schema.sql` (это `pg_dump --schema-only` живой схемы); скрипты в `sqlScripts/` местами устарели — известные расхождения зафиксированы в разделе 10.
+Этот документ описывает фактическую структуру баз данных проекта `BinanceDataCollector`. Источник истины — `sqlScripts/prod_schema_2026-05-09.sql`.
 
 ## 1. Концепция и архитектура данных
 
@@ -10,9 +10,9 @@
 
 1. **Поступление:** Тиковые сделки непрерывно поступают в `"Trades"` с `ProcessingStatus = 'new'`. Это «входная воронка» системы.
 2. **Агрегация:** Функция `sp_aggregate_trades_to_ohlcv` инкрементально читает новые тики и складывает их в минутные свечи `"Ohlcv_1min"` (тоже с `ProcessingStatus = 'new'`).
-3. **Расчёт индикаторов:** Над «свежими» свечами работает feature-pipeline (`sp_claim_new_ohlcv_for_features` + `sp_process_features` + `sp_upsert_ohlcv_features`), результат сохраняется в `"Ohlcv_Features"`.
+3. **Расчёт индикаторов:** Над «свежими» свечами работает feature-pipeline (`sp_process_features` + `sp_upsert_ohlcv_features`), результат сохраняется в `"Ohlcv_Features"`.
 4. **Управление подпиской:** Список собираемых пар динамически управляется через `"TrackedSymbols"`.
-5. **Аудит целостности:** Состояние исторической дозагрузки фиксируется в `"Audit_Blocks"` и `"HistoricalAudit_Watermarks"`.
+5. **Аудит целостности:** Состояние исторической дозагрузки фиксируется в `"HistoricalAudit_Watermarks"`.
 
 Для инкрементальной обработки потоков применяется **watermark-механика**: колонки `ProcessingStatus` в исходных таблицах + позиции процессов в `"Processing_Watermarks"`. Подробности — в разделе 5.
 
@@ -24,17 +24,16 @@
 
 ### 2.1. `market_analytics` — основная
 
-Содержит все бизнес-данные: тики, свечи, индикаторы, состояние аудита, watermark'и. Все таблицы — в схеме `public`. Создание ролей / БД — `sqlScripts/create/create_user.sql` и `sqlScripts/create/init-db.sql`.
+Содержит все бизнес-данные: тики, свечи, индикаторы, watermark'и, состояние аудита. Все таблицы — в схеме `public`.
 
 ### 2.2. `market_analytics_jobs` — Hangfire
 
-Изолированная служебная БД для Hangfire. Создаётся скриптом `sqlScripts/create/init-db.sql` (`CREATE DATABASE market_analytics_jobs`). Внутри — единственная пользовательская схема `hangfire`, все таблицы создаются Hangfire'ом автоматически при старте Worker'а (`PrepareSchemaIfNecessary = true`). Подробности по серверам и очередям — в разделе 7.
+Изолированная служебная БД для Hangfire. Внутри — единственная пользовательская схема `hangfire`, все таблицы создаются Hangfire'ом автоматически при старте Worker'а (`PrepareSchemaIfNecessary = true`). Подробности по серверам и очередям — в разделе 7.
 
 **Зачем разделение:**
 
 - **Изоляция нагрузки:** очереди Hangfire (множество мелких UPDATE'ов на `job`/`state`/`counter`) не делят буферы и locks с тяжёлыми bulk-вставками тиков.
 - **Независимое бэкапирование:** бизнес-БД и БД джобов имеют разный жизненный цикл — историю сделок надо хранить долго, состояние Hangfire можно периодически чистить.
-- **Зеркало dev/prod:** до недавнего времени Hangfire в dev делил БД с бизнес-данными — это создавало расхождение с продом. Сейчас выровнено.
 
 ---
 
@@ -57,7 +56,7 @@
 | `"OrderId"` | `BIGINT NULL` | ID ордера. |
 | `"Commission"` | `NUMERIC(18,8) NULL` | Комиссия (для своих сделок). |
 | `"CommissionAsset"` | `VARCHAR(10) NULL` | Валюта комиссии. |
-| `"IsMyTrade"` | `BOOLEAN DEFAULT false` | `true`, если это личная сделка (задел на будущее). |
+| `"IsMyTrade"` | `BOOLEAN DEFAULT false` | `true`, если это личная сделка. |
 | `"ProcessingStatus"` | `VARCHAR(10) DEFAULT 'new'` | Маркер watermark-обработки: `'new'` → `'processed'`. Переключается процедурой `sp_aggregate_trades_to_ohlcv`. |
 
 ### 3.2. `public."TrackedSymbols"`
@@ -84,7 +83,7 @@
 | `"LowPrice"` | `NUMERIC(18,8)` | Минимум за минуту. |
 | `"ClosePrice"` | `NUMERIC(18,8)` | Цена последней сделки в минуте. |
 | `"Volume"` | `NUMERIC(28,8)` | Суммарный объём за минуту. |
-| `"ProcessingStatus"` | `VARCHAR(10) DEFAULT 'new'` | Маркер для feature-pipeline: `'new'` → `'processing'` → `'processed'`. |
+| `"ProcessingStatus"` | `VARCHAR(10) DEFAULT 'new'` | Маркер для feature-pipeline: `'new'` → `'processed'`. |
 
 ### 3.4. `public."Ohlcv_Features"`
 
@@ -101,19 +100,7 @@
 | `"MA_201600"` | `NUMERIC(18,8) NULL` | Скользящая средняя (среднее окно). |
 | `"CVD"` | `NUMERIC(28,8) NULL` | Cumulative Volume Delta. |
 
-### 3.5. `public."Audit_Blocks"`
-
-Управление 3-дневными блоками исторического аудита. Каждая запись = одна задача проверки целостности данных за блок.
-
-| Поле | Тип | Описание |
-| :--- | :--- | :--- |
-| **`"Symbol"`** | `VARCHAR(20)` | **(Часть PK)** Валютная пара. |
-| **`"BlockStartDate"`** | `DATE` | **(Часть PK)** Начало 3-дневного блока (всегда округлено). |
-| `"Status"` | `VARCHAR(20)` | `Pending` / `Completed` / `Failed` / `Abandoned`. |
-| `"LastAttempt"` | `TIMESTAMPTZ NULL` | Когда последний раз пытались проверить блок. |
-| `"RetryCount"` | `INT DEFAULT 0` | Количество повторных попыток после ошибок. |
-
-### 3.6. `public."Processing_Watermarks"`
+### 3.5. `public."Processing_Watermarks"`
 
 Watermark'и для streaming-процессов. По одной записи на каждый процесс-обработчик (`OhlcvAggregator`, `FeatureCalculator`).
 
@@ -121,10 +108,10 @@ Watermark'и для streaming-процессов. По одной записи �
 | :--- | :--- | :--- |
 | **`"ProcessName"`** | `VARCHAR(50)` | **(PK)** Имя процесса-обработчика. |
 | `"LastProcessedTimestamp"` | `BIGINT` | Последняя обработанная позиция (Unix-мс или `OpenTime`). |
+| `"Status"` | `VARCHAR(20)` | Текущий статус процесса. |
+| `"LastUpdate_UTC"` | `TIMESTAMPTZ` | Время последнего обновления watermark'а. |
 
-> **Подозрение на расхождение:** в `src/BinanceDataCollector.Worker/docs/miscelanious.md` упоминается версия таблицы с дополнительными колонками `Status` и `LastUpdate_UTC`. В `tests/schema.sql` этих колонок нет. Зафиксировано в разделе 10.
-
-### 3.7. `public."HistoricalAudit_Watermarks"`
+### 3.6. `public."HistoricalAudit_Watermarks"`
 
 Состояние процесса исторической дозагрузки тиков по символу — где остановилась проверка.
 
@@ -134,7 +121,7 @@ Watermark'и для streaming-процессов. По одной записи �
 | `"LastChecked_TradeId"` | `BIGINT` | TradeId последней проверенной сделки. |
 | `"LastChecked_Timestamp"` | `BIGINT` | Время последней проверенной сделки (Unix-мс). |
 | `"Status"` | `VARCHAR(20)` | Текущий статус процесса. |
-| `"RetryCount"` | `INT DEFAULT 0` | Количество ретраев. |
+| `"RetryCount"` | `INT DEFAULT 0` | Количество повторных попыток после ошибок. |
 | `"LastAttempt_UTC"` | `TIMESTAMPTZ NULL` | Время последней попытки. |
 
 ---
@@ -155,26 +142,30 @@ Watermark'и для streaming-процессов. По одной записи �
 
 ### 4.2. Агрегация
 
-#### `public.sp_aggregate_trades_to_ohlcv()` *(watermark-версия)*
-- **Задача:** Инкрементальная агрегация тиков в минутные свечи.
+#### `public.sp_aggregate_trades_to_ohlcv()` — watermark-версия (без параметров)
+- **Задача:** Инкрементальная агрегация тиков в минутные свечи с автоматическим определением окна по watermark.
 - **Логика:**
-  1. Читает позицию `LastProcessedTimestamp` процесса `OhlcvAggregator` из `"Processing_Watermarks"`.
-  2. Находит «окно» — `Trades` с `ProcessingStatus = 'new'` и `TradeTime >= start`.
-  3. Через оконные функции (`first_value` / `last_value`) собирает свечи и делает `INSERT ... ON CONFLICT DO UPDATE` в `"Ohlcv_1min"` (Open остаётся прежним, High/Low пересчитываются, Close — последний).
-  4. Помечает обработанные тики как `'processed'`.
-  5. Сдвигает watermark.
+  1. Читает `LastProcessedTimestamp` процесса `OhlcvAggregator` из `"Processing_Watermarks"`.
+  2. Находит `MAX(TradeTime)` среди новых тиков от watermark'а — это конец окна.
+  3. Агрегирует тики в temp-таблицу `NewCandles` (Open/Close через `MIN/MAX TradeId`, High/Low/Volume через агрегаты).
+  4. `INSERT ... ON CONFLICT DO UPDATE` в `"Ohlcv_1min"` (High/Low мерджатся, Close заменяется).
+  5. Помечает тики в окне как `'processed'`, сдвигает watermark.
 - **Взаимодействие:** [Читает + Пишет] → `"Trades"`, `"Ohlcv_1min"`, `"Processing_Watermarks"`.
+
+#### `public.sp_aggregate_trades_to_ohlcv(p_start_timestamp BIGINT, p_end_timestamp BIGINT)` — оконная версия
+- **Задача:** Агрегация тиков в явно заданном временном окне `[p_start, p_end)`.
+- **Логика:** Не использует watermark. Агрегирует через CTE (`array_agg` с сортировкой для корректных Open/Close), делает `INSERT ... ON CONFLICT DO UPDATE` с суммированием Volume. Помечает тики как `'processed'`.
+- **Взаимодействие:** [Читает + Пишет] → `"Trades"`, `"Ohlcv_1min"`.
 
 ### 4.3. Расчёт features
 
-#### `public.sp_claim_new_ohlcv_for_features(p_batch_size INT)`
-- **Задача:** Атомарно «забрать» пачку свежих свечей под расчёт индикаторов так, чтобы конкурирующие воркеры не взяли те же строки.
-- **Логика:** `LOCK TABLE Processing_Watermarks IN EXCLUSIVE MODE`, выбирает свечи `Ohlcv_1min` с `ProcessingStatus = 'new'` через `FOR UPDATE SKIP LOCKED`, помечает их как `'processing'`, возвращает строки вызывающему коду.
-- **Взаимодействие:** [Читает + Пишет] → `"Ohlcv_1min"`, `"Processing_Watermarks"`.
-
 #### `public.sp_process_features()`
 - **Задача:** Завершить обработку «окна» свечей — пометить как `'processed'` и сдвинуть watermark.
-- **Логика:** Не считает индикаторы (расчёты — в C#), только обновляет статусы и watermark.
+- **Логика:**
+  1. Читает `LastProcessedTimestamp` процесса `FeatureCalculator`.
+  2. Находит `MAX(OpenTime)` среди свечей с `ProcessingStatus = 'new'` от watermark'а.
+  3. Помечает все свечи в найденном окне как `'processed'`.
+  4. Сдвигает watermark.
 - **Взаимодействие:** [Пишет] → `"Ohlcv_1min"`, `"Processing_Watermarks"`.
 
 #### `public.sp_upsert_ohlcv_features(...)`
@@ -184,19 +175,20 @@ Watermark'и для streaming-процессов. По одной записи �
 
 ### 4.4. Аудит и анализ целостности
 
-#### `public.sp_find_trade_gaps(p_symbol, p_min_gap_seconds)`
-- **Задача:** Найти разрывы во времени между соседними сделками без ограничения по окну.
-- **Логика:** `LAG()` по `TradeTime`, фильтр по разности > порога. Дополнительно проверяет «дыру в конце» (между `MAX(TradeTime)` и текущим временем).
+#### `public.sp_find_trade_gaps(p_symbol TEXT, p_min_gap_seconds INT)`
+- **Задача:** Найти разрывы во времени между соседними сделками по всей истории символа.
+- **Логика:** `LAG()` по `TradeTime`, фильтр по разности > порога. Дополнительно проверяет «дыру в конце» (между `MAX(TradeTime)` и текущим временем UTC).
 - **Взаимодействие:** [Читает] → `"Trades"`.
 
-#### `public.sp_find_gaps_in_window(p_symbol, p_start_time_ms, p_end_time_ms, p_min_gap_seconds)`
-- **Задача:** То же, что `sp_find_trade_gaps`, но в заданном временном окне. Используется аудитом в `Audit_Blocks`.
+#### `public.sp_find_gaps_in_window(p_symbol TEXT, p_start_time_ms BIGINT, p_end_time_ms BIGINT, p_min_gap_seconds INT)`
+- **Задача:** Найти разрывы во времени в заданном временном окне.
 - **Логика:** Берёт сделки внутри окна + одну сделку до окна (для корректного определения первой дыры), считает `LAG()`.
 - **Взаимодействие:** [Читает] → `"Trades"`.
 
-#### `public.sp_get_data_quality_stats(p_symbol, p_start_date, p_end_date)`
-- **Задача:** Сводка по `"Audit_Blocks"` за период: сколько блоков `Completed` / `Pending` / `Failed` / `Abandoned`.
-- **Взаимодействие:** [Читает] → `"Audit_Blocks"`.
+#### `public.sp_find_trade_id_gaps_in_window(p_symbol TEXT, p_start_trade_id BIGINT, p_end_trade_id BIGINT)`
+- **Задача:** Найти пропуски в последовательности `TradeId` в заданном диапазоне ID.
+- **Логика:** `LAG(TradeId)`, фильтр `TradeId > PrevTradeId + 1` — ищет «дыры» по ID, не по времени.
+- **Взаимодействие:** [Читает] → `"Trades"`.
 
 ---
 
@@ -214,30 +206,25 @@ Watermark'и для streaming-процессов. По одной записи �
 
 **Где применяется.**
 
-- **Агрегация тиков → свечей:** `sp_aggregate_trades_to_ohlcv` — процесс `OhlcvAggregator`, исходник `"Trades"`, приёмник `"Ohlcv_1min"`.
-- **Feature-pipeline:** `sp_claim_new_ohlcv_for_features` + `sp_process_features` + `sp_upsert_ohlcv_features` — процесс `FeatureCalculator`, исходник `"Ohlcv_1min"`, приёмник `"Ohlcv_Features"`.
+- **Агрегация тиков → свечей:** `sp_aggregate_trades_to_ohlcv()` — процесс `OhlcvAggregator`, исходник `"Trades"`, приёмник `"Ohlcv_1min"`.
+- **Feature-pipeline:** C# читает свечи с `ProcessingStatus = 'new'`, вычисляет индикаторы, затем `sp_upsert_ohlcv_features` сохраняет результат и `sp_process_features` помечает свечи как `'processed'` и сдвигает watermark процесса `FeatureCalculator`.
 
 **Преимущества.**
 
 - **Идемпотентность:** повторный запуск на тех же данных не создаст дубликатов (при `ON CONFLICT DO UPDATE` итог тот же).
-- **Параллелизм:** `FOR UPDATE SKIP LOCKED` в `sp_claim_new_ohlcv_for_features` позволяет нескольким воркерам брать непересекающиеся пачки.
 - **Наблюдаемость:** позиция watermark = простой и точный показатель прогресса по каждому процессу.
 
 ---
 
 ## 6. Индексы
 
-Главные индексы в `market_analytics` (по `tests/schema.sql`):
-
 | Индекс | Таблица | Колонки | Зачем |
 | :--- | :--- | :--- | :--- |
 | `IX_Trades_Symbol_TradeTime` | `Trades` | `(Symbol, TradeTime DESC)` | Основной для выборки сделок по паре за период (агрегация, аудит). |
 | `IX_Trades_ProcessingStatus_TradeTime` | `Trades` | `(ProcessingStatus, TradeTime)` | Watermark-обработка: быстрый поиск `ProcessingStatus = 'new'`. |
-| `idx_trades_symbol_tradeid_tradetime` | `Trades` | `(Symbol, TradeId, TradeTime)` | Покрывающий для фильтра по символу + сортировки по TradeId. |
-| `idx_trades_symbol_date_utc` | `Trades` | `(Symbol, date(to_timestamp(TradeTime/1000) AT TIME ZONE 'UTC'))` | Функциональный индекс по календарной дате — для запросов вида «сделки за день». |
+| `ix_trades_tradetime_desc` | `Trades` | `(TradeTime DESC)` | Глобальная сортировка по времени без фильтра по символу. |
 | `IX_TrackedSymbols_IsActive` | `TrackedSymbols` | `(IsActive)` | Быстрая выборка активных пар. |
-| `IX_Ohlcv_1min_ProcessingStatus_OpenTime` | `Ohlcv_1min` | `(ProcessingStatus, OpenTime)` | Feature-pipeline: поиск `ProcessingStatus = 'new'`. |
-| `IX_Audit_Blocks_Status_LastAttempt` | `Audit_Blocks` | `(Status, LastAttempt)` | Поиск блоков, которые пора повторно проверить. |
+| `IX_Ohlcv_1min_ProcessingStatus_OpenTime` | `Ohlcv_1min` | `(ProcessingStatus, OpenTime)` | Feature-pipeline: поиск свечей с `ProcessingStatus = 'new'`. |
 | `IX_HistoricalAudit_Watermarks_Status` | `HistoricalAudit_Watermarks` | `(Status)` | Выборка символов в нужном статусе аудита. |
 
 ---
@@ -264,7 +251,7 @@ Watermark'и для streaming-процессов. По одной записи �
 ### 7.2. Dashboard
 
 - **Worker:** `/hangfire`, доступ через `HangfireAuthorizationFilter`.
-- **DataManager:** `/hangfire`, использует `AllowAllConnectionsFilter` (т.е. открыт; в проде защищается на уровне Traefik / Cloudflare Access).
+- **DataManager:** `/hangfire`, использует `AllowAllConnectionsFilter` (в проде защищается на уровне Traefik / Cloudflare Access).
 
 ---
 
@@ -274,30 +261,15 @@ Watermark'и для streaming-процессов. По одной записи �
 
 - `Trades.Symbol` ↔ `TrackedSymbols.Symbol`
 - `Ohlcv_1min(Symbol, OpenTime)` ↔ `Ohlcv_Features(Symbol, OpenTime)`
-- `Audit_Blocks.Symbol` ↔ `TrackedSymbols.Symbol`
 - `HistoricalAudit_Watermarks.Symbol` ↔ `TrackedSymbols.Symbol`
-- `Processing_Watermarks.ProcessName` — без таблицы-источника, имена процессов жёстко прописаны в коде (`OhlcvAggregator`, `FeatureCalculator`).
+- `Processing_Watermarks.ProcessName` — имена процессов жёстко прописаны в коде (`OhlcvAggregator`, `FeatureCalculator`).
 
-**Почему так.** Целевая нагрузка — bulk-вставки тиков (десятки тысяч в секунду). FK-проверки на каждой вставке и блокировки по родительским таблицам неприемлемы. Целостность поддерживается на уровне приложения: воркеры не пишут в таблицы для пар, которых нет в `TrackedSymbols`, а sp-процедуры используют `ON CONFLICT DO NOTHING` / `DO UPDATE` для устойчивости к гонкам.
+**Почему так.** Целевая нагрузка — bulk-вставки тиков (десятки тысяч в секунду). FK-проверки на каждой вставке неприемлемы. Целостность поддерживается на уровне приложения: воркеры не пишут в таблицы для пар, которых нет в `TrackedSymbols`, а sp-процедуры используют `ON CONFLICT DO NOTHING` / `DO UPDATE` для устойчивости к гонкам.
 
 ---
 
 ## 9. Auth-схема
 
-Документация по подсистеме аутентификации и авторизации — в [`docs/common/auth/`](./auth/). Описанная там модель данных (`User`, `UserIdentity`, `Role`, `Permission`, `UserRole`, `RolePermission`, `AuthorizationSnapshot`, `SystemState`, `AuditEvent`) — это **спецификация**. Реализация в коде пока не начата: ни одной соответствующей сущности в `src/BinanceDataCollector.Domain/Entities/` и ни одной таблицы в `tests/schema.sql`.
+Документация по подсистеме аутентификации и авторизации — в [`docs/common/auth/`](./auth/). Описанная там модель данных — это **спецификация**. В текущей схеме БД таблиц авторизации нет.
 
-В `BinanceDataCollector.DataManager` работает только аутентификация через **Azure AD B2C** (OIDC + Cookie auth, без серверной модели прав). Собственной auth-схемы в БД на текущий момент нет.
-
----
-
-## 10. Известные расхождения и TODO
-
-Список долгов перед БД и инфраструктурой DDL — чтобы при возврате к проекту через месяц мы помнили, что не доделано.
-
-- **`sqlScripts/ddl/dbFromScratch.sql` устарел.** Нет колонки `ProcessingStatus` на `Trades` и `Ohlcv_1min`, нет таблиц `Audit_Blocks` (она в отдельном файле), `Processing_Watermarks`, `HistoricalAudit_Watermarks`, нет watermark-индексов и функционального `idx_trades_symbol_date_utc`. Содержит **старую** версию `sp_aggregate_trades_to_ohlcv` (без watermark). Запуск этого скрипта поверх живой БД откатит схему. Требует переработки.
-- **DDL для `Processing_Watermarks` и `HistoricalAudit_Watermarks` отсутствует в `sqlScripts/`.** Таблицы существуют на серверах, но восстановить их с нуля по репозиторию невозможно. Источник истины — `tests/schema.sql`.
-- **Расхождение по `Processing_Watermarks`:** в `tests/schema.sql` две колонки (`ProcessName`, `LastProcessedTimestamp`); в `src/BinanceDataCollector.Worker/docs/miscelanious.md` упоминается INSERT с четырьмя (`Status`, `LastUpdate_UTC` дополнительно). Какая версия фактически работает на dev/prod — нужно проверить.
-- **`sp_find_trade_id_gaps_in_window` вызывается из `HistoricalAuditRepository`, но не определена в `sqlScripts/`.** Функция работает на серверах (раз код успешно её вызывает), но в репозитории её определения нет. Нужно восстановить.
-- **Две версии `sp_aggregate_trades_to_ohlcv` в `sqlScripts/`:** старая в `ddl/dbFromScratch.sql` и новая (watermark) в `create/sp/watermark/`. Старую нужно удалить или явно пометить как deprecated, чтобы случайный прогон `dbFromScratch.sql` не уронил пайплайн.
-- **`postgres-config/custom.conf` — пустой файл.** Удалить или наполнить осмысленным содержимым.
-- **EF Core / миграции отсутствуют.** Схема ведётся вручную через SQL. Это сознательный выбор (raw Dapper-репозитории), но требует дисциплины: любое изменение схемы должно сопровождаться правкой соответствующих файлов в `sqlScripts/` и регенерацией `tests/schema.sql` (через `pg_dump`).
+В `BinanceDataCollector.DataManager` работает только аутентификация через **Azure AD B2C** (OIDC + Cookie auth). Собственной auth-схемы в БД на текущий момент нет.
