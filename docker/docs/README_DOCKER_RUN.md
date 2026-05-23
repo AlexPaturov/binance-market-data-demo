@@ -48,7 +48,7 @@ docker compose \
   -f compose/docker-compose.db.yml \
   -f compose/docker-compose.rabbit.yml \
   -f compose/docker-compose.seq.yml \
-  down
+  down --timeout 30
 ```
 Просмотр состояния инфраструктуры:
 ```bash
