@@ -81,6 +81,7 @@ public class HangfireJobsService : IHostedService
         // INITIAL LOAD: disabled during dev historical load phase.
         // Enable on prod after data migration is complete.
         _recurringJobManager.RemoveIfExists("partition-maintenance");
+        _recurringJobManager.RemoveIfExists("data-quality-check");
         // _recurringJobManager.AddOrUpdate<PartitionMaintenanceWorker>(
         //     "partition-maintenance",
         //     worker => worker.RotatePartitionsAsync(),
