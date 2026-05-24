@@ -9,14 +9,14 @@
         "ASPNETCORE_ENVIRONMENT": "Development",
         "DOTNET_ENVIRONMENT": "Development",
         "DOTNET_UTF8_CONSOLE": "true",
-        "ConnectionStrings__DefaultConnection": "Host=192.168.56.101;Port=6432;Database=market_analytics;Username=bindatacoll;Password=dt_hfgd_yyyd",
-        "ConnectionStrings__HangfireConnection": "Host=192.168.56.101;Port=6432;Database=market_analytics_jobs;Username=bindatacoll;Password=dt_hfgd_yyyd",
-        "RabbitMQ__HostName": "192.168.56.101",
+        "ConnectionStrings__DefaultConnection": "Host=localhost;Port=6432;Database=market_analytics;Username=bindatacoll;Password=dt_hfgd_yyyd",
+        "ConnectionStrings__HangfireConnection": "Host=localhost;Port=6432;Database=market_analytics_jobs;Username=bindatacoll;Password=dt_hfgd_yyyd",
+        "RabbitMQ__HostName": "localhost",
         "RabbitMQ__UserName": "guest",
         "RabbitMQ__Password": "guest",
         "RabbitMQ__Port": "5672",
         "Serilog__WriteTo__1__Name": "Seq",
-        "Serilog__WriteTo__1__Args__serverUrl": "http://192.168.56.101:5341"
+        "Serilog__WriteTo__1__Args__serverUrl": "http://localhost:5341"
       }
     }
   }

@@ -18,7 +18,7 @@ docs/
 │       ├── README_AUTH_FLOWS.md
 │       └── README_AUTH_IMPLEMENTATION_PLAN.md
 ├── dev/                        ← документация для разработки
-│   ├── ARCHITECTURE_DEV.md     ← Windows + VirtualBox VM, shared folder, IDE-режим
+│   ├── ARCHITECTURE_DEV.md     ← Ubuntu-хост, Docker на localhost, IDE-режим (Rider)
 │   └── MIGRATE_TO_LINUX.md     ← чеклист переезда dev-окружения с Windows на Ubuntu
 ├── prod/                       ← документация для эксплуатации
 │   ├── ARCHITECTURE_PROD.md    ← железо, сеть, состав сервисов
@@ -32,7 +32,6 @@ docs/
 |---|---|
 | Новый разработчик | `common/01_overview.md` → `common/02_architecture.md` → `dev/ARCHITECTURE_DEV.md` |
 | Разработчик настраивает локалку | `dev/ARCHITECTURE_DEV.md` |
-| Переезжаешь с Windows на Ubuntu | `dev/MIGRATE_TO_LINUX.md` |
 | Хочешь понять схему БД | `common/03_database.md` |
 | Работаешь с auth | `common/auth/README_AUTH_SCHEMA.md` → `common/auth/README_AUTH_FLOWS.md` |
 | Деплоишь на прод | `prod/04_deployment.md` |

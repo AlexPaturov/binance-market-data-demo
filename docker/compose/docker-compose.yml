@@ -56,3 +56,4 @@ volumes:
   bdc_seq_data:
   bdc_rabbitmq_data:
   bdc_data:
+  postgres_data:
