@@ -58,8 +58,15 @@ public class TradeRepository : ITradeRepository
         var tradeList = trades.ToList();
         if (!tradeList.Any()) return;
 
-        // 1. Создаем анонимный объект с параметрами.
-        //    Имена свойств должны ТОЧНО совпадать с именами параметров в функции.
+        using var db = Connection;
+
+        // Ensure the target month partition exists before inserting
+        var maxTradeTime = tradeList.Max(t => t.TradeTime);
+        await db.ExecuteAsync(
+            "SELECT public.sp_ensure_trades_partition(@t)",
+            new { t = maxTradeTime },
+            commandTimeout: 30);
+
         var parameters = new
         {
             p_trade_ids = tradeList.Select(t => t.TradeId).ToArray(),
@@ -72,15 +79,17 @@ public class TradeRepository : ITradeRepository
             p_is_best_matches = tradeList.Select(t => t.IsBestMatch).ToArray()
         };
 
-        // 2. Формируем SQL-запрос, который ВЫЗЫВАЕТ функцию через SELECT.
         const string sql = "SELECT public.sp_bulk_insert_trades(" +
                            "@p_trade_ids, @p_symbols, @p_prices, @p_quantities, " +
                            "@p_quote_quantities, @p_trade_times, @p_is_buyer_makers, @p_is_best_matches)";
 
-        using var db = Connection;
-
-        // 3. Выполняем как обычный ТЕКСТОВЫЙ запрос.
         await db.ExecuteAsync(sql, parameters, commandTimeout: 600);
+    }
+
+    public async Task RotatePartitionsAsync()
+    {
+        using var db = Connection;
+        await db.ExecuteAsync("SELECT public.sp_rotate_trades_partition()", commandTimeout: 60);
     }
 
     public async Task<long?> GetLastTradeTimeAsync(string symbol)

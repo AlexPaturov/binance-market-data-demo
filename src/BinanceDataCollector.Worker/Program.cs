@@ -124,6 +124,7 @@ public class Program
             builder.Services.AddTransient<OnlineArchiveImportWorker>();
             builder.Services.AddTransient<OhlcvAggregatorWorker>();
             builder.Services.AddTransient<FeatureCalculatorWorker>();
+            builder.Services.AddTransient<PartitionMaintenanceWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
             // builder.Services.AddTransient<ArchiveDownloaderWorker>(); // must be deleted
             builder.Services.AddTransient<IArchiveDownloaderWorker, ArchiveDownloaderWorker>();

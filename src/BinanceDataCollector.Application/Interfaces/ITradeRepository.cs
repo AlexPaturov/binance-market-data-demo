@@ -83,4 +83,10 @@ public interface ITradeRepository
     /// </summary>
     /// <returns></returns>
     Task<Trade?> GetLastTradeAsync();
+
+    /// <summary>
+    /// Rotates monthly partitions: creates current and next month, drops the 13th oldest.
+    /// Called daily by PartitionMaintenanceWorker on prod.
+    /// </summary>
+    Task RotatePartitionsAsync();
 }
