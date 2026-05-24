@@ -128,20 +128,17 @@ Dev-БД небольшая — named volumes в `/var/lib/docker/volumes/` до
 
 ## 6. Запуск инфраструктуры
 
-Из директории `docker/compose/`:
+Из корня проекта:
 
 ```bash
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.db.yml \
-  -f docker-compose.rabbit.yml \
-  -f docker-compose.seq.yml \
-  up -d
+./docker/dev-start.sh
 ```
+
+Скрипт создаёт `~/bdc_data/` поддиректории если их нет, затем поднимает инфраструктуру. Безопасно запускать повторно.
 
 Остановка:
 ```bash
-docker compose \
+cd docker/compose && docker compose \
   -f docker-compose.yml \
   -f docker-compose.db.yml \
   -f docker-compose.rabbit.yml \
@@ -149,7 +146,7 @@ docker compose \
   down --timeout 30
 ```
 
-После этого — запустить Worker и DataManager из Rider.
+После запуска инфраструктуры — запустить Worker и DataManager из Rider (Compound run configuration `Dev (Worker + DataManager)`).
 
 ---
 
