@@ -13,6 +13,8 @@ docs/
 │   ├── 01_overview.md          ← обзор и назначение системы
 │   ├── 02_architecture.md      ← архитектура воркеров и потоков данных
 │   ├── 03_database.md          ← схема БД (market_analytics, market_analytics_jobs)
+│   ├── analytics/              ← аналитика и бизнес-логика
+│   │   └── indicators.md       ← реализованные технические индикаторы
 │   └── auth/                   ← подсистема аутентификации и авторизации
 │       ├── README_AUTH_SCHEMA.md
 │       ├── README_AUTH_FLOWS.md
@@ -33,6 +35,7 @@ docs/
 | Новый разработчик | `common/01_overview.md` → `common/02_architecture.md` → `dev/ARCHITECTURE_DEV.md` |
 | Разработчик настраивает локалку | `dev/ARCHITECTURE_DEV.md` |
 | Хочешь понять схему БД | `common/03_database.md` |
+| Хочешь понять индикаторы | `common/analytics/indicators.md` |
 | Работаешь с auth | `common/auth/README_AUTH_SCHEMA.md` → `common/auth/README_AUTH_FLOWS.md` |
 | Деплоишь на прод | `prod/04_deployment.md` |
 | Настраиваешь прод-сервер с нуля | `prod/05_setup.md` → `Server_Network_Config.md` |
