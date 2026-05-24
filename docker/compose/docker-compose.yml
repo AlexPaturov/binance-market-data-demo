@@ -7,8 +7,6 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=market_analytics
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d market_analytics"]
       interval: 10s
@@ -56,4 +54,3 @@ volumes:
   bdc_seq_data:
   bdc_rabbitmq_data:
   bdc_data:
-  postgres_data:

@@ -45,6 +45,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "common", "common", "{F1260B
 		docs\common\01_overview.md = docs\common\01_overview.md
 		docs\common\02_architecture.md = docs\common\02_architecture.md
 		docs\common\03_database.md = docs\common\03_database.md
+		docs\common\analytics\indicators.md = docs\common\analytics\indicators.md
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "dev", "dev", "{963A48A4-FEF9-4A37-AA3A-2583B354FA44}"

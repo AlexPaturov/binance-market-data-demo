@@ -29,8 +29,8 @@
 |   |   - bdc_rabbitmq           :5672 / :15672        |   |
 |   |   - bdc_seq                :5341                 |   |
 |   |                                                  |   |
-|   |  Данные Postgres: named volume postgres_data     |   |
-|   |  (маленькая dev-БД, не зеркало прода)            |   |
+|   |  Данные Postgres: /mnt/ext/postgres_data        |   |
+|   |  (bind mount → внешний диск 4TB, /dev/sda1)     |   |
 |   +--------------------------------------------------+   |
 |                                                          |
 |  Данные Worker (архивы и CSV):                           |
@@ -81,13 +81,15 @@ docker exec -i bdc_db psql -U bindatacoll -d market_analytics < sqlScripts/prod_
 
 ## 4. Хранение данных Docker-контейнеров
 
-| Контейнер   | Где хранятся данные          | Тип монтирования |
-|-------------|------------------------------|------------------|
-| Postgres    | named volume `postgres_data` | named volume     |
-| Seq         | named volume `seq_data`      | named volume     |
-| RabbitMQ    | named volume `rabbitmq_data` | named volume     |
+| Контейнер   | Где хранятся данные              | Тип монтирования |
+|-------------|----------------------------------|------------------|
+| Postgres    | `/mnt/ext/postgres_data`         | bind mount       |
+| Seq         | named volume `bdc_seq_data`      | named volume     |
+| RabbitMQ    | named volume `bdc_rabbitmq_data` | named volume     |
 
-Dev-БД небольшая — named volumes в `/var/lib/docker/volumes/` достаточно, проблем с местом нет.
+Postgres хранится на внешнем диске `/dev/sda1` (4TB, ext4, UUID `25ddc534-13e6-479e-8392-a4487a975c80`), примонтированном в `/mnt/ext` через `/etc/fstab` с флагом `nofail`. Диск содержит партиционированную таблицу `Trades` с историческими данными Jan 2025–Dec 2026 (24 партиции).
+
+> Если диск не примонтирован при старте Docker — `nofail` не даст системе зависнуть, но Postgres не запустится (пустая директория). Перед `dev-start.sh` убедись что `/mnt/ext` примонтирован: `df -h /mnt/ext`.
 
 ---
 
