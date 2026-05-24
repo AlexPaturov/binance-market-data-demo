@@ -138,12 +138,7 @@ Dev-БД небольшая — named volumes в `/var/lib/docker/volumes/` до
 
 Остановка:
 ```bash
-cd docker/compose && docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.db.yml \
-  -f docker-compose.rabbit.yml \
-  -f docker-compose.seq.yml \
-  down --timeout 30
+./docker/dev-stop.sh
 ```
 
 После запуска инфраструктуры — запустить Worker и DataManager из Rider (Compound run configuration `Dev (Worker + DataManager)`).
