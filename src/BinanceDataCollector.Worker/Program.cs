@@ -153,7 +153,10 @@ public class Program
                         QueuePollInterval = TimeSpan.FromSeconds(15),
                         InvisibilityTimeout = TimeSpan.FromHours(4),
                         UseNativeDatabaseTransactions = true,
-                        PrepareSchemaIfNecessary = true,
+                        // Schema is pre-created via sqlScripts/migrations/. Must be false:
+                        // PgBouncer transaction mode drops session advisory locks that Hangfire
+                        // uses to guard concurrent schema creation → duplicate key crash on startup.
+                        PrepareSchemaIfNecessary = false,
                         SchemaName = "hangfire",
                         JobExpirationCheckInterval = TimeSpan.FromHours(1),
                         CountersAggregateInterval = TimeSpan.FromMinutes(5),

@@ -93,7 +93,7 @@ BEGIN
     to_ms       := EXTRACT(EPOCH FROM month_end)::BIGINT * 1000;
 
     IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                   WHERE c.relname = LOWER(part_name) AND n.nspname = 'public') THEN
+                   WHERE c.relname = part_name AND n.nspname = 'public') THEN
         EXECUTE format(
             'CREATE TABLE public.%I PARTITION OF public."Trades" FOR VALUES FROM (%s) TO (%s)',
             part_name, from_ms, to_ms
@@ -132,7 +132,7 @@ BEGIN
         to_ms     := EXTRACT(EPOCH FROM (target_month + INTERVAL '1 month'))::BIGINT * 1000;
 
         IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                       WHERE c.relname = LOWER(part_name) AND n.nspname = 'public') THEN
+                       WHERE c.relname = part_name AND n.nspname = 'public') THEN
             EXECUTE format(
                 'CREATE TABLE public.%I PARTITION OF public."Trades" FOR VALUES FROM (%s) TO (%s)',
                 part_name, from_ms, to_ms
@@ -145,7 +145,7 @@ BEGIN
     old_part_name := 'Trades_' || TO_CHAR(old_month, 'YYYY_MM');
 
     IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-               WHERE c.relname = LOWER(old_part_name) AND n.nspname = 'public') THEN
+               WHERE c.relname = old_part_name AND n.nspname = 'public') THEN
         EXECUTE format('ALTER TABLE public."Trades" DETACH PARTITION public.%I', old_part_name);
         EXECUTE format('DROP TABLE public.%I', old_part_name);
         RAISE NOTICE 'Dropped old partition: %', old_part_name;
@@ -171,7 +171,7 @@ BEGIN
         pname   := 'Trades_' || TO_CHAR(d, 'YYYY_MM');
 
         IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                       WHERE c.relname = LOWER(pname) AND n.nspname = 'public') THEN
+                       WHERE c.relname = pname AND n.nspname = 'public') THEN
             EXECUTE format(
                 'CREATE TABLE public.%I PARTITION OF public."Trades" FOR VALUES FROM (%s) TO (%s)',
                 pname, from_ms, to_ms
