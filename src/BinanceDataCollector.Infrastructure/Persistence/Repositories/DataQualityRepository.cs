@@ -53,7 +53,7 @@ public class DataQualityRepository : IDataQualityRepository
 
         using var db = Connection;
         var row = await db.QuerySingleAsync<(long TradeCount, int GapCount, int InvalidPriceCount, int OutlierCount)>(
-            sql, new { Symbol = symbol, FromMs = fromMs, ToMs = toMs }, commandTimeout: 300);
+            sql, new { Symbol = symbol, FromMs = fromMs, ToMs = toMs }, commandTimeout: 1800);
 
         var status = row.TradeCount == 0 || row.InvalidPriceCount > 0 ? "error"
                    : row.GapCount > 0 || row.OutlierCount > 0         ? "warning"
