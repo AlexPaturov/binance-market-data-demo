@@ -4,9 +4,10 @@ using Hangfire;
 namespace BinanceDataCollector.Worker.Workers;
 
 /// <summary>
-/// Layer 1 data integrity checks for a given month.
-/// Checks per active symbol: trade count, TradeId gaps, invalid prices, price outliers (5-sigma).
-/// Trigger manually from Hangfire Dashboard: CheckMonthAsync(year, month).
+/// Layer 1 data integrity checks on raw Trades data.
+/// CheckUncheckedMonthsAsync — registered as Cron.Never(), trigger from Hangfire Dashboard.
+///   Finds all months that have trade data but no quality report yet, checks each.
+/// CheckMonthAsync(year, month) — one-off check for a specific month (enqueue manually).
 /// </summary>
 [Queue("default")]
 [DisableConcurrentExecution(30 * 60)]
@@ -25,6 +26,24 @@ public class DataQualityWorker
         _qualityRepository = qualityRepository;
         _symbolRepository = symbolRepository;
         _logger = logger;
+    }
+
+    public async Task CheckUncheckedMonthsAsync()
+    {
+        var uncheckedMonths = await _qualityRepository.GetUncheckedMonthsAsync();
+        var months = uncheckedMonths.ToList();
+
+        if (!months.Any())
+        {
+            _logger.LogInformation("Data quality: no unchecked months found.");
+            return;
+        }
+
+        _logger.LogInformation("Data quality: found {Count} unchecked month(s): {Months}",
+            months.Count, string.Join(", ", months.Select(m => m.ToString("yyyy-MM"))));
+
+        foreach (var month in months)
+            await CheckMonthAsync(month.Year, month.Month);
     }
 
     public async Task CheckMonthAsync(int year, int month)

@@ -91,6 +91,38 @@ public class DataQualityRepository : IDataQualityRepository
         await db.ExecuteAsync(sql, report);
     }
 
+    public async Task<IEnumerable<DateTime>> GetUncheckedMonthsAsync()
+    {
+        // Find distinct months present in Trades partitions that have no DataQualityReport yet.
+        // Uses pg_inherits to list partitions, extracts month from partition name (Trades_YYYY_MM),
+        // filters out empty partitions and already-checked months.
+        const string sql = @"
+            WITH partitions AS (
+                SELECT inhrelid::regclass::text AS part_name,
+                       pg_total_relation_size(inhrelid) AS size_bytes
+                FROM pg_inherits
+                WHERE inhparent = 'public.""Trades""'::regclass
+            ),
+            months AS (
+                SELECT TO_DATE(
+                    REGEXP_REPLACE(part_name, '.*Trades_(\d{4})_(\d{2}).*', '\1-\2-01'),
+                    'YYYY-MM-DD'
+                ) AS period_month
+                FROM partitions
+                WHERE size_bytes > 1048576  -- skip empty partitions (< 1MB)
+                  AND part_name ~ 'Trades_\d{4}_\d{2}'
+            )
+            SELECT m.period_month
+            FROM months m
+            LEFT JOIN public.""DataQualityReports"" r ON r.""PeriodMonth"" = m.period_month
+            WHERE r.""PeriodMonth"" IS NULL
+            ORDER BY m.period_month;";
+
+        using var db = Connection;
+        var results = await db.QueryAsync<DateTime>(sql);
+        return results;
+    }
+
     public async Task<IEnumerable<DataQualityReport>> GetReportsAsync(string? symbol = null, string? status = null)
     {
         var where = new List<string>();
