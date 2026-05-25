@@ -10,7 +10,7 @@ namespace BinanceDataCollector.Worker.Workers;
 /// CheckMonthAsync(year, month) — one-off check for a specific month (enqueue manually).
 /// </summary>
 [Queue("default")]
-[DisableConcurrentExecution(30 * 60)]
+[DisableConcurrentExecution(4 * 60 * 60)]
 [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
 public class DataQualityWorker
 {
