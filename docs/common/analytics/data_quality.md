@@ -35,6 +35,9 @@
 
 ### Из Hangfire Dashboard
 
+> Использовать дашборд **Worker** (`:7001`), не DataManager (`:7002`).
+> DataManager видит все джобы в общей БД, но не может десериализовать Worker-типы.
+
 1. Открыть `http://localhost:7001/hangfire`
 2. Перейти в **Jobs → Recurring** или **Jobs → Create**
 3. Тип: `BinanceDataCollector.Worker.Workers.DataQualityWorker`
