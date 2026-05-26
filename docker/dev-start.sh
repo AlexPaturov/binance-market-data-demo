@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -e
 
+# Mount database disk if not mounted
+if ! mountpoint -q /mnt/ext; then
+    echo "Mounting /mnt/ext..."
+    sudo mount /mnt/ext
+fi
+
 # Ensure data directories exist
 mkdir -p "$HOME/bdc_data/Trades/Downloaded"
 mkdir -p "$HOME/bdc_data/Trades/Unpacked"
