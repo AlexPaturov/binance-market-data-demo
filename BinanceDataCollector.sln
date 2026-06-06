@@ -120,6 +120,8 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docker", "docker", "{19E43883-59CE-4E9F-A276-C8E1C4CC45FB}"
 	ProjectSection(SolutionItems) = preProject
 		docker\Dockerfile = docker\Dockerfile
+		docker\dev-start.sh = docker\dev-start.sh
+		docker\dev-stop.sh = docker\dev-stop.sh
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "compose", "compose", "{5CADAED3-6EDE-4922-BEBF-C5ED6DEB7398}"
