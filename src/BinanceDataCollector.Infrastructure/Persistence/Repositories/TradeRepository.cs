@@ -300,7 +300,20 @@ public class TradeRepository : ITradeRepository
     public async Task<Trade?> GetLastTradeAsync()
     {
         using var db = Connection;
-        const string sql = @"SELECT * FROM ""Trades"" ORDER BY ""TradeTime"" DESC LIMIT 1";
-        return await db.QuerySingleOrDefaultAsync<Trade?>(sql, commandTimeout:120);
+        const string sql = @"
+            SELECT t.*
+            FROM public.""TrackedSymbols"" s
+            JOIN LATERAL (
+                SELECT *
+                FROM public.""Trades"" t
+                WHERE t.""Symbol"" = s.""Symbol""
+                ORDER BY t.""TradeTime"" DESC
+                LIMIT 1
+            ) t ON TRUE
+            WHERE s.""IsActive"" = TRUE
+            ORDER BY t.""TradeTime"" DESC
+            LIMIT 1";
+
+        return await db.QuerySingleOrDefaultAsync<Trade?>(sql, commandTimeout: 30);
     }
 }
