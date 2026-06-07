@@ -12,6 +12,7 @@ using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
 using Hangfire;
 using Hangfire.PostgreSql;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
@@ -107,7 +108,12 @@ public class Program {
                     }
                 });
 
-            builder.Services.AddAuthorization();
+            builder.Services.AddAuthorization(options =>
+            {
+                options.FallbackPolicy = new AuthorizationPolicyBuilder()
+                    .RequireAuthenticatedUser()
+                    .Build();
+            });
             // === Authentication (OIDC + Cookies) end ===
             
             // Настройка заголовков для Traefik/Cloudflare
@@ -228,9 +234,9 @@ public class Program {
 
             // Middleware pipeline
             app.UseRouting();
-            //app.UseCookiePolicy(); // Активируем политики кук ПЕРЕД аутентификацией
-            //app.UseAuthentication();
-            //app.UseAuthorization();
+            app.UseCookiePolicy(); // Активируем политики кук ПЕРЕД аутентификацией
+            app.UseAuthentication();
+            app.UseAuthorization();
 
             app.MapHangfireDashboard("/hangfire", new DashboardOptions { Authorization = new[] { new AllowAllConnectionsFilter() } });
             app.MapHub<ArchiveStatusHub>("/archiveStatusHub");
@@ -238,10 +244,10 @@ public class Program {
 
             app.MapHealthChecks("/health/live", new HealthCheckOptions {
                 Predicate = _ => false
-            });
+            }).AllowAnonymous();
             app.MapHealthChecks("/health/ready", new HealthCheckOptions {
                 Predicate = _ => true
-            });
+            }).AllowAnonymous();
             
             Log.Information(
                 "SERVICE READY {@Ready}",
