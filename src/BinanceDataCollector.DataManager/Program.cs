@@ -236,9 +236,10 @@ public class Program {
             app.UseRouting();
             app.UseCookiePolicy(); // Активируем политики кук ПЕРЕД аутентификацией
             app.UseAuthentication();
-            app.UseAuthorization();
 
-            app.MapHangfireDashboard("/hangfire", new DashboardOptions { Authorization = new[] { new AllowAllConnectionsFilter() } });
+            app.UseHangfireDashboard("/hangfire", new DashboardOptions { Authorization = new[] { new AllowAllConnectionsFilter() } });
+
+            app.UseAuthorization();
             app.MapHub<ArchiveStatusHub>("/archiveStatusHub");
             app.MapDefaultControllerRoute();
 
