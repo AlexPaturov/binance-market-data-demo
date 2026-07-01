@@ -1,11 +1,14 @@
 using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Models;
+using BinanceDataCollector.DataManager.Common.Auth;
+using Microsoft.AspNetCore.Authorization;
 using Hangfire;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BinanceDataCollector.DataManager.Controllers;
 
+[Authorize(Policy = DataManagerAuthorizationPolicies.Viewer)]
 public class ArchiveController : Controller
 {
     private readonly ITrackedSymbolRepository _symbolRepo;
@@ -42,6 +45,7 @@ public class ArchiveController : Controller
         return View(model);
     }
 
+    [Authorize(Policy = DataManagerAuthorizationPolicies.Operator)]
     [HttpPost]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> DownloadArchives([FromBody] DownloadArchivesRequest request)
@@ -95,6 +99,7 @@ public class ArchiveController : Controller
         return Ok(new { Message = $"{totalJobs} archive download jobs queued." });
     }
 
+    [Authorize(Policy = DataManagerAuthorizationPolicies.Operator)]
     [HttpPost]
     [ValidateAntiForgeryToken]
     public IActionResult ProcessArchives([FromBody] ProcessArchivesRequest request)
@@ -116,6 +121,7 @@ public class ArchiveController : Controller
         return Ok(new { Message = $"Processing of {request.FileNames.Count} archives scheduled." });
     }
 
+    [Authorize(Policy = DataManagerAuthorizationPolicies.Operator)]
     [HttpPost]
     [ValidateAntiForgeryToken]
     public IActionResult TriggerSymbolUpdate()
@@ -125,6 +131,7 @@ public class ArchiveController : Controller
         return Ok(new { Message = "Обновление символов поставлено в очередь." });
     }
 
+    [Authorize(Policy = DataManagerAuthorizationPolicies.Operator)]
     [HttpPost]
     [ValidateAntiForgeryToken]
     public IActionResult DeleteArchives([FromBody] DeleteArchivesRequest request)

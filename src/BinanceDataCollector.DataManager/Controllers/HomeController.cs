@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Models;
+using BinanceDataCollector.DataManager.Common.Auth;
 using Hangfire;
 using Hangfire.Storage;
 using Microsoft.AspNetCore.Authorization;
@@ -8,7 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace BinanceDataCollector.DataManager.Controllers
 {
-    //[Authorize]
+    [Authorize(Policy = DataManagerAuthorizationPolicies.Viewer)]
     public class HomeController : Controller
     {
         private readonly ILogger<HomeController> _logger;

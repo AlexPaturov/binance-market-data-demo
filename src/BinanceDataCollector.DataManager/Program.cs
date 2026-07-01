@@ -3,6 +3,7 @@ using System.Net;
 using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Common;
+using BinanceDataCollector.DataManager.Common.Auth;
 using BinanceDataCollector.DataManager.Hubs;
 using BinanceDataCollector.DataManager.Messaging;
 using BinanceDataCollector.DataManager.Middleware;
@@ -12,6 +13,7 @@ using BinanceDataCollector.Infrastructure.Persistence.Repositories;
 using BinanceDataCollector.Infrastructure.Services;
 using Hangfire;
 using Hangfire.PostgreSql;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -107,12 +109,19 @@ public class Program {
                         options.Scope.Add(scope);
                     }
                 });
+            builder.Services.AddScoped<IClaimsTransformation, IdentityProviderRoleClaimsTransformation>();
 
             builder.Services.AddAuthorization(options =>
             {
                 options.FallbackPolicy = new AuthorizationPolicyBuilder()
                     .RequireAuthenticatedUser()
                     .Build();
+                options.AddPolicy(DataManagerAuthorizationPolicies.Viewer, policy =>
+                    policy.RequireRole(DataManagerRoles.Viewer, DataManagerRoles.Operator, DataManagerRoles.Admin));
+                options.AddPolicy(DataManagerAuthorizationPolicies.Operator, policy =>
+                    policy.RequireRole(DataManagerRoles.Operator, DataManagerRoles.Admin));
+                options.AddPolicy(DataManagerAuthorizationPolicies.Admin, policy =>
+                    policy.RequireRole(DataManagerRoles.Admin));
             });
             // === Authentication (OIDC + Cookies) end ===
             
@@ -237,7 +246,7 @@ public class Program {
             app.UseCookiePolicy(); // Активируем политики кук ПЕРЕД аутентификацией
             app.UseAuthentication();
 
-            app.UseHangfireDashboard("/hangfire", new DashboardOptions { Authorization = new[] { new AllowAllConnectionsFilter() } });
+            app.UseHangfireDashboard("/hangfire", new DashboardOptions { Authorization = new[] { new AdminHangfireAuthorizationFilter() } });
 
             app.UseAuthorization();
             app.MapHub<ArchiveStatusHub>("/archiveStatusHub");

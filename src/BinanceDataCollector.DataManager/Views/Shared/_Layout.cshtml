@@ -183,6 +183,25 @@
     <div class="slide-menu" id="slideMenu">
         <div class="slide-menu-header">
             <h5 class="mb-0">DataManager</h5>
+            @if (User.Identity?.IsAuthenticated == true)
+            {
+                var displayName = User.FindFirst("name")?.Value
+                                  ?? User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name")?.Value
+                                  ?? User.FindFirst("emails")?.Value
+                                  ?? User.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress")?.Value
+                                  ?? User.Identity.Name
+                                  ?? "Authenticated user";
+                var roleText = string.Join(", ", User.Claims
+                    .Where(claim => claim.Type == "http://schemas.microsoft.com/ws/2008/06/identity/claims/role")
+                    .Select(claim => claim.Value)
+                    .Distinct());
+                if (string.IsNullOrWhiteSpace(roleText))
+                {
+                    roleText = "none";
+                }
+                <div class="small text-muted mt-2">@displayName</div>
+                <div class="small text-muted">Role: @roleText</div>
+            }
         </div>
         <div class="slide-menu-body">
             <a asp-controller="Home" asp-action="Index" class="menu-item"><i class="bi bi-house-fill"></i>Home</a>

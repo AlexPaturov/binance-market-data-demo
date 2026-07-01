@@ -1,10 +1,13 @@
 using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.DataManager.Models;
+using BinanceDataCollector.DataManager.Common.Auth;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BinanceDataCollector.DataManager.Controllers;
 
+[Authorize(Policy = DataManagerAuthorizationPolicies.Viewer)]
 public class InspectorController : Controller
 {
     private readonly IArchiveService _archiveService;
