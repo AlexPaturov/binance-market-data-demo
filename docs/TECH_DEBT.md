@@ -76,6 +76,7 @@
 
 - **Закомментирован в `Program.cs:117`** — сейчас realtime-сбор тиков отключён. Тики поступают только через Hangfire-джобы (`OnlineArchiveImportWorker`, `CsvImportWorker`, `FillGapWorker`).
 - Намеренно ли это? Когда планируется включить обратно?
+- **Graceful cancellation CSV import логируется как ошибка:** при штатной остановке Worker через `Ctrl+C` активный `CsvImportWorker.ImportFromCsvAsync` получает cancellation token, `ArchiveService.ParseTradesFromCsvStreamAsync` выбрасывает `OperationCanceledException`, а worker пишет это как `[ERR] Error importing from file ...`. По смыслу это controlled shutdown, не unexpected import failure. Нужно отдельно обработать `OperationCanceledException`/Hangfire shutdown token и логировать как `Information`/`Warning`, сохранив корректный статус job для повторного запуска. Это снижает шум в логах и убирает ложный portfolio-сигнал о падении импорта.
 
 ---
 
