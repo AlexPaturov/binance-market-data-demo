@@ -210,6 +210,14 @@
             <a asp-controller="Inspector" asp-action="Index" class="menu-item"><i class="bi bi-search"></i>Inspector</a>
             <hr class="my-3">
             <a asp-controller="Home" asp-action="Privacy" class="menu-item"><i class="bi bi-shield-lock"></i>Privacy</a>
+            @if (User.Identity?.IsAuthenticated == true)
+            {
+                <form asp-controller="Account" asp-action="Logout" method="post" class="m-0">
+                    <button type="submit" class="menu-item border-0 bg-transparent w-100 text-start">
+                        <i class="bi bi-box-arrow-right"></i>Logout
+                    </button>
+                </form>
+            }
         </div>
     </div>
 
