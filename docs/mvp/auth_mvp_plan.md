@@ -41,8 +41,9 @@
    - не смешивать одновременно роли, permissions, scopes, если они не нужны.
 
 7. Добавить health/demo-safe поведение:
-   - `/health/live` можно оставить anonymous;
-   - `/health/ready` решить явно: либо anonymous для Docker healthcheck, либо internal-only через сеть;
+   - `/health/live` оставить anonymous;
+   - `/health/ready` оставить anonymous для Docker healthcheck и Uptime Kuma;
+   - health responses не должны раскрывать чувствительные детали;
    - все UI/dashboard routes закрыты.
 
 8. Обновить документацию:

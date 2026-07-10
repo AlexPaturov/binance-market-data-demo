@@ -55,7 +55,7 @@ public class FeatureCalculatorWorkerTests : IDisposable
         _mockServiceProvider.Setup(sp => sp.GetService(typeof(IIndicatorService))).Returns(_mockIndicatorService.Object);
     }
 
-    [Fact]
+    [Fact(Skip = "Pseudo-test: Act is commented out after FeatureCalculatorWorker constructor/workflow changed. Rewrite before enabling.")]
     public async Task DoWorkAsync_WhenKlinesExist_CallsUpsertFeatures()
     {
         // --- ARRANGE ---

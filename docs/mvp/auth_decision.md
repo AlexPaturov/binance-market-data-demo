@@ -50,8 +50,8 @@ Local config allowlists are no longer accepted for the senior portfolio MVP.
 
 - Включить `UseAuthentication()` и `UseAuthorization()` в `DataManager`.
 - Настроить default authorization policy: весь DataManager UI требует authenticated user.
-- Оставить `/health/live` доступным для infrastructure checks.
-- Решить явно поведение `/health/ready`: anonymous для Docker healthcheck или internal-only через сеть.
+- Оставить `/health/live` доступным anonymous для infrastructure checks.
+- Оставить `/health/ready` доступным anonymous для Docker healthcheck и Uptime Kuma; ответ не должен раскрывать чувствительные детали.
 - Закрыть archive/job mutation actions минимум ролью `Operator`.
 - Закрыть admin-only actions ролью `Admin`.
 - Заменить `AllowAllConnectionsFilter` для Hangfire Dashboard на фильтр с проверкой `Admin`.
