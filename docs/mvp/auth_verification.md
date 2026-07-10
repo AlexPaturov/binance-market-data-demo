@@ -9,8 +9,35 @@ Date: 2026-07-10
 - `/health/live` returns `200 Healthy` without authentication.
 - `/health/ready` returns `200 Healthy` without authentication.
 - Viewer login works and shows `Role: Viewer`.
-- Admin login via B2C `DataManagerRole=Admin` works and shows `Role: Admin`.
+- Admin login via B2C `extension_DataManagerRole=Admin` works and shows `Role: Admin`.
 - Hangfire dashboard is available for Admin; previous Viewer `403` is gone for Admin.
+
+## B2C role claim setup
+
+DataManager reads the role from a B2C custom attribute:
+
+- Attribute name in Azure B2C: `DataManagerRole` (custom attribute on the user flow / directory extension).
+- In the OIDC token this arrives as `extension_DataManagerRole` (single role) or `extension_DataManagerRoles` (comma/semicolon/space-separated multiple roles).
+- Accepted values: `Viewer`, `Operator`, `Admin` (case-insensitive).
+- If the claim is absent or empty, the authenticated user gets `Viewer` by default (`IdentityProviderRoleClaimsTransformation`).
+- Any unrecognized value in the claim is ignored (not mapped to a role).
+
+Example decoded token claims (no real user identifiers):
+
+```json
+{
+  "sub": "00000000-0000-0000-0000-000000000000",
+  "extension_DataManagerRole": "Admin"
+}
+```
+
+```json
+{
+  "sub": "11111111-1111-1111-1111-111111111111"
+}
+```
+
+The second example has no role claim, so the user is authorized as `Viewer`.
 
 ## Automated checks
 

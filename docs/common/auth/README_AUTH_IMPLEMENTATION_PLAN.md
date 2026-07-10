@@ -12,7 +12,7 @@
 
 ## 1. Границы ответственности модулей
 
-### 1.1 Blazor UI (Server-side)
+### 1.1 DataManager UI (ASP.NET Core MVC)
 
 Отвечает за:
 
