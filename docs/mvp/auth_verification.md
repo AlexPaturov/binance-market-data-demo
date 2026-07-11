@@ -9,6 +9,7 @@ Date: 2026-07-10
 - `/health/live` returns `200 Healthy` without authentication.
 - `/health/ready` returns `200 Healthy` without authentication.
 - Viewer login works and shows `Role: Viewer`.
+- Operator login via B2C `extension_DataManagerRole=Operator` (local email/password account `devalextest@gmail.com`) works and shows `Role: Operator`; `POST /Archive/TriggerSymbolUpdate` succeeds; `/hangfire` returns `403`.
 - Admin login via B2C `extension_DataManagerRole=Admin` works and shows `Role: Admin`.
 - Hangfire dashboard is available for Admin; previous Viewer `403` is gone for Admin.
 
@@ -48,13 +49,22 @@ Added `BinanceDataCollector.DataManager.Tests` with focused auth tests:
 - multiple provider roles are split and normalized;
 - anonymous users do not get default roles;
 - read-only controllers require `Viewer` policy;
-- Archive mutation actions require `Operator` policy and `POST`.
+- Archive mutation actions require `Operator` policy and `POST`;
+- policy evaluation behaves per role (`PolicyAuthorizationTests`): a principal built from the real
+  `IdentityProviderRoleClaimsTransformation` and evaluated by a real `IAuthorizationService` —
+  - `Operator` claim -> passes `Viewer` and `Operator` policies, denied `Admin` policy;
+  - no claim / `Viewer` -> passes `Viewer` only;
+  - `Admin` -> passes all three;
+  - anonymous -> denied `Operator`.
+
+The `Operator` role is verified both at the policy-behavior level (`PolicyAuthorizationTests`)
+and end-to-end via B2C browser login (see Manual checks above).
 
 Current full baseline:
 
 ```text
 dotnet test BinanceDataCollector.sln --no-restore
-Passed: 15, Failed: 0, Skipped: 2
+Passed: 20, Failed: 0, Skipped: 2
 ```
 
 ## Skipped pseudo-tests
