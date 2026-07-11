@@ -1,13 +1,37 @@
-name: Build and Deploy to Production
+name: CI and Deploy to Production
 
 on:
   push:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore BinanceDataCollector.sln
+
+      - name: Build
+        run: dotnet build BinanceDataCollector.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test BinanceDataCollector.sln --configuration Release --no-build --verbosity normal
+
+  deploy:
+    needs: build-and-test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
     runs-on: self-hosted
 
     steps:
@@ -18,9 +42,6 @@ jobs:
         id: version
         run: |
           echo "APP_VERSION=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-
-      - name: List files for debugging
-        run: ls -R
 
       - name: Set up Docker image names
         id: image_names
@@ -42,7 +63,7 @@ jobs:
             --file docker/Dockerfile \
             --tag ${{ steps.image_names.outputs.WORKER_IMAGE }}:${{ steps.version.outputs.APP_VERSION }} \
             --target worker
-  
+
           docker push ${{ steps.image_names.outputs.WORKER_IMAGE }}:${{ steps.version.outputs.APP_VERSION }}
 
       - name: Build and push DataManager image
@@ -52,7 +73,7 @@ jobs:
             --file docker/Dockerfile \
             --tag ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:${{ steps.version.outputs.APP_VERSION }} \
             --target datamanager
-  
+
           docker push ${{ steps.image_names.outputs.DATAMANAGER_IMAGE }}:${{ steps.version.outputs.APP_VERSION }}
 
       - name: Deploy to Server
@@ -83,11 +104,7 @@ jobs:
           AUTH_B2C_CLIENT_SECRET=${{ secrets.AUTH_B2C_CLIENT_SECRET }}
           EOF
 
-          # 4. Проверяем содержимое .env (для отладки, потом можно удалить)
-          echo "=== .env file created ==="
-          cat .env | sed 's/PASSWORD=.*/PASSWORD=***HIDDEN***/'
-          
-          # 5. Создаем контракты
+          # 4. Создаем контракты
           echo "Ensuring persistent volumes exist..."
           docker volume create binancecollector_postgres_data || true
           docker volume create binancecollector_seq_data || true
@@ -95,11 +112,11 @@ jobs:
           docker volume create binancecollector_letsencrypt_data || true
           docker volume create binancecollector_bdc_data || true
           docker volume create binancecollector_uptime_kuma_data || true
-          
+
           echo "Ensuring persistent networks exist..."
           docker network create binancecollector_web || true
           docker network create internal_network || true
 
-          # 6. Скачиваем свежие образы и перезапускаем сервисы
+          # 5. Скачиваем свежие образы и перезапускаем сервисы
           docker compose pull
           docker compose up -d
