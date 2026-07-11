@@ -27,6 +27,7 @@
   - [Обзор проекта](./docs/common/01_overview.md)
   - [Архитектура приложения](./docs/common/02_architecture.md)
   - [База данных (PostgreSQL)](./docs/common/03_database.md)
+  - [Architecture Decision Records](./docs/adr/README.md) — ключевые архитектурные решения
 - **Разработка:**
   - [Архитектура DEV-окружения](./docs/dev/ARCHITECTURE_DEV.md) — Windows + VirtualBox VM, shared folder, IDE-режим
 - **Эксплуатация:**
