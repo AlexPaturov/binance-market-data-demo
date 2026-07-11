@@ -12,7 +12,7 @@
 2. **Агрегация:** Функция `sp_aggregate_trades_to_ohlcv` инкрементально читает новые тики и складывает их в минутные свечи `"Ohlcv_1min"` (тоже с `ProcessingStatus = 'new'`).
 3. **Расчёт индикаторов:** Над «свежими» свечами работает feature-pipeline (`sp_process_features` + `sp_upsert_ohlcv_features`), результат сохраняется в `"Ohlcv_Features"`.
 4. **Управление подпиской:** Список собираемых пар динамически управляется через `"TrackedSymbols"`.
-5. **Аудит целостности:** Состояние исторической дозагрузки фиксируется в `"HistoricalAudit_Watermarks"`.
+5. **Аудит целостности:** Состояние исторической дозагрузки фиксируется в `"HistoricalAudit_Watermarks"`, результаты периодической проверки качества сырых тиков по паре и месяцу — в `"DataQualityReports"`.
 
 Для инкрементальной обработки потоков применяется **watermark-механика**: колонки `ProcessingStatus` в исходных таблицах + позиции процессов в `"Processing_Watermarks"`. Подробности — в разделе 5.
 
@@ -58,6 +58,8 @@
 | `"CommissionAsset"` | `VARCHAR(10) NULL` | Валюта комиссии. |
 | `"IsMyTrade"` | `BOOLEAN DEFAULT false` | `true`, если это личная сделка. |
 | `"ProcessingStatus"` | `VARCHAR(10) DEFAULT 'new'` | Маркер watermark-обработки: `'new'` → `'processed'`. Переключается процедурой `sp_aggregate_trades_to_ohlcv`. |
+
+Таблица физически партиционирована (`PARTITION BY RANGE ("TradeTime")`) на помесячные партиции `"Trades_YYYY_MM"` (`FOR VALUES FROM ... TO ...` по границам месяца в Unix-мс). Партиции создаются и вращаются автоматически — см. `sp_ensure_trades_partition` и `sp_rotate_trades_partition` в разделе 4.5.
 
 ### 3.2. `public."TrackedSymbols"`
 
@@ -124,6 +126,22 @@ Watermark'и для streaming-процессов. По одной записи �
 | `"RetryCount"` | `INT DEFAULT 0` | Количество повторных попыток после ошибок. |
 | `"LastAttempt_UTC"` | `TIMESTAMPTZ NULL` | Время последней попытки. |
 
+### 3.7. `public."DataQualityReports"`
+
+Месячные отчёты о качестве сырых тиковых данных по паре: сколько сделок, разрывов последовательности `TradeId`, некорректных цен и ценовых выбросов найдено за период.
+
+| Поле | Тип | Описание |
+| :--- | :--- | :--- |
+| **`"Id"`** | `INTEGER` | **(PK)** Автоинкрементный идентификатор отчёта. |
+| `"Symbol"` | `VARCHAR(20)` | Валютная пара. Вместе с `PeriodMonth` — уникальная пара (`ix_dqr_symbol_month`), используется для upsert. |
+| `"PeriodMonth"` | `DATE` | Первый день проверяемого месяца. |
+| `"TradeCount"` | `BIGINT DEFAULT 0` | Количество сделок за период. |
+| `"GapCount"` | `INT DEFAULT 0` | Количество разрывов последовательности `TradeId` за период. |
+| `"InvalidPriceCount"` | `INT DEFAULT 0` | Количество сделок с `Price <= 0` или `Quantity <= 0`. |
+| `"OutlierCount"` | `INT DEFAULT 0` | Количество сделок с ценой дальше 5σ от средней цены за период. |
+| `"Status"` | `VARCHAR(10) DEFAULT 'ok'` | Итоговый статус периода: `'ok'`, `'warning'` (есть разрывы или выбросы) либо `'error'` (нет сделок за месяц или есть некорректные цены). |
+| `"CheckedAt"` | `TIMESTAMPTZ DEFAULT now()` | Время выполнения проверки. |
+
 ---
 
 ## 4. Хранимые процедуры / функции
@@ -132,7 +150,7 @@ Watermark'и для streaming-процессов. По одной записи �
 
 #### `public.sp_bulk_insert_trades(...)`
 - **Задача:** Максимально быстро вставить пачку тиков в `"Trades"`.
-- **Логика:** Принимает массивы (`UNNEST`), делает `INSERT ... ON CONFLICT ("TradeId", "Symbol") DO NOTHING`.
+- **Логика:** Принимает массивы (`UNNEST`), делает `INSERT ... ON CONFLICT ("TradeId", "Symbol", "TradeTime") DO NOTHING`.
 - **Взаимодействие:** [Пишет] → `"Trades"`.
 
 #### `public.sp_update_tracked_symbols(p_symbols VARCHAR[])`
@@ -190,6 +208,18 @@ Watermark'и для streaming-процессов. По одной записи �
 - **Логика:** `LAG(TradeId)`, фильтр `TradeId > PrevTradeId + 1` — ищет «дыры» по ID, не по времени.
 - **Взаимодействие:** [Читает] → `"Trades"`.
 
+### 4.5. Партиционирование `Trades`
+
+#### `public.sp_ensure_trades_partition(target_time BIGINT)`
+- **Задача:** Создать помесячную партицию для переданного момента времени, если она ещё не существует.
+- **Логика:** Вычисляет границы месяца (UTC) по `target_time` (Unix-мс), проверяет наличие партиции `"Trades_YYYY_MM"` через `pg_class`/`pg_namespace`; при отсутствии — `CREATE TABLE ... PARTITION OF "Trades" FOR VALUES FROM (...) TO (...)`.
+- **Взаимодействие:** [Читает + Пишет] → создаёт партиции `"Trades_YYYY_MM"`.
+
+#### `public.sp_rotate_trades_partition()`
+- **Задача:** Поддерживать окно из готовых партиций на будущее и убирать самые старые.
+- **Логика:** Создаёт (если не существуют) партиции на текущий и следующий месяц; для партиции, начинающейся 13 месяцев назад от текущего месяца, выполняет `DETACH PARTITION` + `DROP TABLE`.
+- **Взаимодействие:** [Читает + Пишет] → создаёт/удаляет партиции `"Trades_YYYY_MM"`.
+
 ---
 
 ## 5. Watermark-механика
@@ -220,12 +250,14 @@ Watermark'и для streaming-процессов. По одной записи �
 
 | Индекс | Таблица | Колонки | Зачем |
 | :--- | :--- | :--- | :--- |
-| `IX_Trades_Symbol_TradeTime` | `Trades` | `(Symbol, TradeTime DESC)` | Основной для выборки сделок по паре за период (агрегация, аудит). |
-| `IX_Trades_ProcessingStatus_TradeTime` | `Trades` | `(ProcessingStatus, TradeTime)` | Watermark-обработка: быстрый поиск `ProcessingStatus = 'new'`. |
-| `ix_trades_tradetime_desc` | `Trades` | `(TradeTime DESC)` | Глобальная сортировка по времени без фильтра по символу. |
+| `ix_trades_symbol_tradetime` | `Trades` (партиционированный, индекс на родителе `ON ONLY`, per-партиция — `Trades_YYYY_MM_Symbol_TradeTime_idx`) | `(Symbol, TradeTime DESC)` | Основной для выборки сделок по паре за период (агрегация, аудит). |
+| `ix_trades_processingstatus` | `Trades` (партиционированный, индекс на родителе `ON ONLY`, per-партиция — `Trades_YYYY_MM_ProcessingStatus_idx`) | `(ProcessingStatus)` частичный, `WHERE ProcessingStatus = 'new'` | Watermark-обработка: быстрый поиск необработанных тиков без сканирования уже обработанных. |
 | `IX_TrackedSymbols_IsActive` | `TrackedSymbols` | `(IsActive)` | Быстрая выборка активных пар. |
 | `IX_Ohlcv_1min_ProcessingStatus_OpenTime` | `Ohlcv_1min` | `(ProcessingStatus, OpenTime)` | Feature-pipeline: поиск свечей с `ProcessingStatus = 'new'`. |
 | `IX_HistoricalAudit_Watermarks_Status` | `HistoricalAudit_Watermarks` | `(Status)` | Выборка символов в нужном статусе аудита. |
+| `ix_dqr_symbol_month` (UNIQUE) | `DataQualityReports` | `(Symbol, PeriodMonth)` | Один отчёт на пару "символ+месяц"; обеспечивает `ON CONFLICT` при upsert. |
+| `ix_dqr_status` | `DataQualityReports` | `(Status)` частичный, `WHERE Status <> 'ok'` | Быстрая выборка проблемных отчётов (`warning`/`error`). |
+| `ix_dqr_checked_at` | `DataQualityReports` | `(CheckedAt DESC)` | Выборка последних по времени проверок. |
 
 ---
 
@@ -262,6 +294,7 @@ Watermark'и для streaming-процессов. По одной записи �
 - `Trades.Symbol` ↔ `TrackedSymbols.Symbol`
 - `Ohlcv_1min(Symbol, OpenTime)` ↔ `Ohlcv_Features(Symbol, OpenTime)`
 - `HistoricalAudit_Watermarks.Symbol` ↔ `TrackedSymbols.Symbol`
+- `DataQualityReports.Symbol` ↔ `TrackedSymbols.Symbol`
 - `Processing_Watermarks.ProcessName` — имена процессов жёстко прописаны в коде (`OhlcvAggregator`, `FeatureCalculator`).
 
 **Почему так.** Целевая нагрузка — bulk-вставки тиков (десятки тысяч в секунду). FK-проверки на каждой вставке неприемлемы. Целостность поддерживается на уровне приложения: воркеры не пишут в таблицы для пар, которых нет в `TrackedSymbols`, а sp-процедуры используют `ON CONFLICT DO NOTHING` / `DO UPDATE` для устойчивости к гонкам.
