@@ -29,6 +29,13 @@ jobs:
       - name: Test
         run: dotnet test BinanceDataCollector.sln --configuration Release --no-build --verbosity normal
 
+      - name: Publish (catch publish-only errors before deploy)
+        run: |
+          dotnet publish src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj \
+            --configuration Release --no-restore -o "${RUNNER_TEMP}/publish/worker"
+          dotnet publish src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj \
+            --configuration Release --no-restore -o "${RUNNER_TEMP}/publish/datamanager"
+
   deploy:
     needs: build-and-test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
