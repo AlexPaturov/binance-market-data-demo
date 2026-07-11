@@ -53,5 +53,20 @@
             <CopyToPublishDirectory>Never</CopyToPublishDirectory>
         </Content>
 	</ItemGroup>
-    
+
+    <!--
+        Проект ссылается на Worker (нужен для Hangfire Enqueue<IArchiveDownloaderWorker> и т.п.),
+        поэтому Worker.appsettings.json транзитивно попадает в publish DataManager и конфликтует
+        с собственным appsettings.json (NETSDK1152). Убираем именно транзитивный файл из Worker,
+        оставляя appsettings.json самого DataManager.
+    -->
+    <Target Name="_RemoveReferencedAppSettingsFromPublish"
+            AfterTargets="ComputeResolvedFilesToPublishList">
+        <ItemGroup>
+            <ResolvedFileToPublish
+                Remove="@(ResolvedFileToPublish)"
+                Condition="'%(ResolvedFileToPublish.RelativePath)' == 'appsettings.json' And $([System.String]::Copy('%(ResolvedFileToPublish.Identity)').Contains('BinanceDataCollector.Worker'))" />
+        </ItemGroup>
+    </Target>
+
 </Project>
