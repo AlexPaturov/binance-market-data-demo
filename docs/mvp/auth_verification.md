@@ -64,14 +64,5 @@ Current full baseline:
 
 ```text
 dotnet test BinanceDataCollector.sln --no-restore
-Passed: 20, Failed: 0, Skipped: 2
+Passed: 22, Failed: 0, Skipped: 0
 ```
-
-## Skipped pseudo-tests
-
-Two old tests are explicitly skipped because they were not executable tests:
-
-- `FeatureCalculatorWorkerTests.DoWorkAsync_WhenKlinesExist_CallsUpsertFeatures` - `Act` is commented out after worker constructor/workflow changes.
-- `GapFillingTests.HistoricalAuditor_ShouldFindAndFill_SingleTradeIdGap` - uses stale `schema.sql` and placeholder SQL statements.
-
-They should be rewritten later as real worker orchestration and Testcontainers repository tests.

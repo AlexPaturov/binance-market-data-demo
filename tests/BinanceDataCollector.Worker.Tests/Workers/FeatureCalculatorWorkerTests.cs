@@ -1,109 +1,63 @@
-﻿using BinanceDataCollector.Application.Analytics.Models;
+using BinanceDataCollector.Application.Analytics.Models;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Worker.Workers;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using Serilog;
 
 namespace BinanceDataCollector.Worker.Tests.Workers;
 
-public class FeatureCalculatorWorkerTests : IDisposable
+public class FeatureCalculatorWorkerTests
 {
-    // --- Моки ---
-    private readonly ILogger<FeatureCalculatorWorkerTests> _testLogger; // логгер для самого теста
-    private readonly ILogger<FeatureCalculatorWorker> _workerLogger;    // логгер для передачи в качестве параметра
-    private readonly Mock<IServiceProvider> _mockServiceProvider;
-    private readonly Mock<IServiceScopeFactory> _mockScopeFactory;
-    private readonly Mock<IServiceScope> _mockScope;
-    private readonly Mock<ITrackedSymbolRepository> _mockSymbolRepo;
-    private readonly Mock<IOhlcvRepository> _mockOhlcvRepo;
-    private readonly Mock<IFeatureRepository> _mockFeatureRepo;
-    private readonly Mock<IAnalysisRepository> _mockAnalysisRepo;
-    private readonly Mock<IIndicatorService> _mockIndicatorService;
+    private readonly Mock<IOhlcvRepository> _ohlcvRepo = new();
+    private readonly Mock<IFeatureRepository> _featureRepo = new();
+    private readonly Mock<IIndicatorService> _indicatorService = new();
+    private readonly Mock<IAnalysisRepository> _analysisRepo = new();
 
-    public FeatureCalculatorWorkerTests()
+    private FeatureCalculatorWorker CreateWorker() => new(
+        NullLogger<FeatureCalculatorWorker>.Instance,
+        _ohlcvRepo.Object,
+        _featureRepo.Object,
+        _indicatorService.Object,
+        _analysisRepo.Object);
+
+    [Fact]
+    public async Task DoWorkAsync_WhenNewKlinesExist_UpsertsCalculatedFeaturesAndMarksProcessed()
     {
-        // --- Настройка Serilog ---
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Debug().WriteTo.Seq("http://localhost:5341").CreateLogger();
-        var loggerFactory = new LoggerFactory().AddSerilog();
-        _testLogger = loggerFactory.CreateLogger<FeatureCalculatorWorkerTests>();
+        const string symbol = "BTCUSDT";
+        const long openTime = 1_700_000_000_000;
 
-        // ОТДЕЛЬНЫЙ логгер специально для передачи в конструктор воркера
-        _workerLogger = loggerFactory.CreateLogger<FeatureCalculatorWorker>();
+        var newKline = new Ohlcv { Symbol = symbol, OpenTime = openTime };
+        var feature = new FeatureData { Symbol = symbol, OpenTime = openTime };
 
-        // --- Подготовка моков ---
-        _mockServiceProvider = new Mock<IServiceProvider>();
-        _mockScopeFactory = new Mock<IServiceScopeFactory>();
-        _mockScope = new Mock<IServiceScope>();
-        _mockSymbolRepo = new Mock<ITrackedSymbolRepository>();
-        _mockOhlcvRepo = new Mock<IOhlcvRepository>();
-        _mockFeatureRepo = new Mock<IFeatureRepository>();
-        _mockAnalysisRepo = new Mock<IAnalysisRepository>();
-        _mockIndicatorService = new Mock<IIndicatorService>();
+        _ohlcvRepo.Setup(r => r.ClaimNewKlinesForProcessingAsync(It.IsAny<int>()))
+            .ReturnsAsync(new List<Ohlcv> { newKline });
+        _ohlcvRepo.Setup(r => r.GetWarmupKlinesAsync(symbol, It.IsAny<long>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<Ohlcv>());
+        _indicatorService.Setup(s => s.CalculateAll(symbol, It.IsAny<IEnumerable<Ohlcv>>()))
+            .Returns(new List<FeatureData> { feature });
+        _analysisRepo.Setup(r => r.GetCvdForOhlcvAsync(symbol, It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new List<CvdResult>());
 
-        // --- Настройка цепочки DI ---
-        _mockServiceProvider.Setup(sp => sp.GetService(typeof(IServiceScopeFactory))).Returns(_mockScopeFactory.Object);
-        _mockScopeFactory.Setup(factory => factory.CreateScope()).Returns(_mockScope.Object);
-        _mockScope.Setup(scope => scope.ServiceProvider).Returns(_mockServiceProvider.Object);
-        _mockServiceProvider.Setup(sp => sp.GetService(typeof(ITrackedSymbolRepository))).Returns(_mockSymbolRepo.Object);
-        _mockServiceProvider.Setup(sp => sp.GetService(typeof(IOhlcvRepository))).Returns(_mockOhlcvRepo.Object);
-        _mockServiceProvider.Setup(sp => sp.GetService(typeof(IFeatureRepository))).Returns(_mockFeatureRepo.Object);
-        _mockServiceProvider.Setup(sp => sp.GetService(typeof(IAnalysisRepository))).Returns(_mockAnalysisRepo.Object);
-        _mockServiceProvider.Setup(sp => sp.GetService(typeof(IIndicatorService))).Returns(_mockIndicatorService.Object);
+        await CreateWorker().DoWorkAsync(CancellationToken.None);
+
+        _featureRepo.Verify(r => r.UpsertFeaturesAsync(
+            It.Is<IEnumerable<FeatureData>>(features => features.Single().OpenTime == openTime)), Times.Once);
+        _ohlcvRepo.Verify(r => r.MarkKlinesAsProcessedAsync(
+            It.Is<IEnumerable<long>>(times => times.Single() == openTime)), Times.Once);
     }
 
-    [Fact(Skip = "Pseudo-test: Act is commented out after FeatureCalculatorWorker constructor/workflow changed. Rewrite before enabling.")]
-    public async Task DoWorkAsync_WhenKlinesExist_CallsUpsertFeatures()
+    [Fact]
+    public async Task DoWorkAsync_WhenNoNewKlines_DoesNotCalculateOrMark()
     {
-        // --- ARRANGE ---
-        var symbol = "BTCUSDT";
-        var klinesToReturn = new List<Ohlcv>
-        {
-            new Ohlcv
-            {
-                Symbol = symbol, // <-- Добавлено
-                OpenTime = 1,
-                OpenPrice = 1, // <-- Добавлено (предполагая, что они тоже required)
-                HighPrice = 1, // <-- Добавлено
-                LowPrice = 1,  // <-- Добавлено
-                ClosePrice = 1, // <-- Добавлено
-                Volume = 1,     // <-- Добавлено
-            }
-        };
+        _ohlcvRepo.Setup(r => r.ClaimNewKlinesForProcessingAsync(It.IsAny<int>()))
+            .ReturnsAsync(new List<Ohlcv>());
 
-        var featuresToReturn = new List<FeatureData> 
-        {
-            new FeatureData
-            {
-                Symbol = symbol, // <-- Добавлено
-                OpenTime = 1
-            }         
-        };
+        await CreateWorker().DoWorkAsync(CancellationToken.None);
 
-        // Настраиваем моки на возврат простых данных
-        _mockSymbolRepo.Setup(r => r.GetActiveSymbolsAsync()).ReturnsAsync(new List<string> { symbol });
-        //_mockOhlcvRepo.Setup(r => r.GetAllBySymbolAsync(symbol)).ReturnsAsync(klinesToReturn);
-        _mockIndicatorService.Setup(s => s.CalculateAll(symbol, klinesToReturn)).Returns(featuresToReturn);
-        _mockFeatureRepo.Setup(r => r.GetLastFeatureTimeAsync(symbol)).ReturnsAsync((long?)null); // Для "оглупленной" версии это не важно
-        _mockAnalysisRepo.Setup(r => r.GetCvdForOhlcvAsync(symbol, It.IsAny<DateTime>(), It.IsAny<DateTime>())).ReturnsAsync(new List<CvdResult>());
-
-        // TODO rewrite with new amount and types of parameters
-        // var worker = new FeatureCalculatorWorker(_workerLogger, _mockServiceProvider.Object);
-
-        // --- ACT ---
-        // TODO just uncomment after prev todo 
-        // await worker.DoWorkAsync(CancellationToken.None);
-
-        // --- ASSERT ---
-        // Мы просто проверяем, что метод сохранения был вызван. Всё.
-        _mockFeatureRepo.Verify(r => r.UpsertFeaturesAsync(featuresToReturn), Times.Once);
-    }
-
-    public void Dispose()
-    {
-        Log.CloseAndFlush();
+        _indicatorService.Verify(
+            s => s.CalculateAll(It.IsAny<string>(), It.IsAny<IEnumerable<Ohlcv>>()), Times.Never);
+        _featureRepo.Verify(r => r.UpsertFeaturesAsync(It.IsAny<IEnumerable<FeatureData>>()), Times.Never);
+        _ohlcvRepo.Verify(r => r.MarkKlinesAsProcessedAsync(It.IsAny<IEnumerable<long>>()), Times.Never);
     }
 }

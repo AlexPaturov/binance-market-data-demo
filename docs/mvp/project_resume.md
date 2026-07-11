@@ -41,14 +41,15 @@
 
 ### MUST HAVE blockers
 
-- `dotnet test BinanceDataCollector.sln --no-restore` сейчас падает. Application tests проходят, но Worker и Infrastructure tests нет.
-- В `tests/BinanceDataCollector.Worker.Tests/Workers/FeatureCalculatorWorkerTests.cs` тест фактически не вызывает worker, но проверяет вызов mock.
-- В `tests/BinanceDataCollector.Infrastructure.Tests/GapFillingTests.cs` есть SQL-заглушки `INSERT INTO ... (...) VALUES (...)`, это нельзя показывать как зрелый integration test.
 - Основные recurring jobs сейчас сняты с расписания during initial load: `src/BinanceDataCollector.Worker/Common/HangfireJobsService.cs`.
 - Realtime collector зарегистрирован, но hosted service закомментирован: `src/BinanceDataCollector.Worker/Program.cs`.
 - Схема БД по документации не полностью воспроизводима из репозитория: это сильный portfolio-risk.
 - CI/CD не запускает тесты и деплоит на `pull_request`: `.github/workflows/deploy.yml`.
-- В DataManager auth настроен, но middleware authentication/authorization закомментирован: `src/BinanceDataCollector.DataManager/Program.cs`.
+
+Решено (шаги 1–2 MVP):
+
+- Авторизация: middleware включён, роли `Viewer/Operator/Admin` работают, Hangfire закрыт под Admin (`src/BinanceDataCollector.DataManager/Program.cs`), проверено авто + ручной E2E — см. `docs/mvp/auth_verification.md`.
+- Тесты честные и зелёные: `dotnet test BinanceDataCollector.sln` → 22 passed, 0 skipped. `FeatureCalculatorWorkerTests` переписан в реальный тест оркестрации `DoWorkAsync`; пустой скаффолд `Infrastructure.Tests` удалён.
 
 ## 5. Обязательные элементы MVP для Senior C#/.NET портфолио
 
