@@ -59,30 +59,6 @@ public  class AnalysisRepository : IAnalysisRepository
         return await db.QueryAsync<CvdResult>(sql, new { Symbol = symbol, StartTimeMs = startTimeMs, EndTimeMs = endTimeMs });
     }
 
-    /// <summary>
-    ///  Получает статистику по качеству данных (статусам блоков аудита)
-    ///  для указанного символа и временного диапазона.
-    /// </summary>
-    /// <param name="symbol"></param>
-    /// <param name="startDate"></param>
-    /// <param name="endDate"></param>
-    /// <returns></returns>
-    /// <exception cref="NotImplementedException"></exception>
-    public async Task<IEnumerable<DataQualityStat>> GetDataQualityStatsAsync(string symbol, DateOnly startDate, DateOnly endDate)
-    {
-        using var db = Connection;
-        const string sql = "SELECT * FROM public.sp_get_data_quality_stats(@Symbol, @StartDate, @EndDate)";
-
-        var parameters = new
-        {
-            Symbol = symbol,
-            StartDate = startDate.ToDateTime(TimeOnly.MinValue), // Преобразуем DateOnly в DateTime для Dapper/Npgsql
-            EndDate = endDate.ToDateTime(TimeOnly.MinValue)
-        };
-
-        return await db.QueryAsync<DataQualityStat>(sql, parameters);
-    }
-
     public async Task<List<DataGap>> FindGapsInWindowAsync(string symbol, long startTradeId, long endTradeId)
     {
         using var db = Connection;
