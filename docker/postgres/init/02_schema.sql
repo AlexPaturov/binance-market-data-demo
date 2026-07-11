@@ -1,11 +1,15 @@
+-- Schema baseline for the "market_analytics" database.
+-- Auto-generated with: pg_dump --schema-only --no-owner --no-privileges
+-- Source: production DB (analserver, PostgreSQL 16.14), captured 2026-07-11.
+-- Applied automatically on a fresh volume via docker-entrypoint-initdb.d (docker/postgres/init).
+
 --
 -- PostgreSQL database dump
 --
 
-\restrict dZqh3sdYIoSXnBUbu1e8ycc0lXB3ThlR42v85eX3Ar4fi6chr6n0okrbFMHe7vv
 
--- Dumped from database version 16.11
--- Dumped by pg_dump version 16.11
+-- Dumped from database version 16.14
+-- Dumped by pg_dump version 16.14
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -17,20 +21,6 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
-
---
--- Name: public; Type: SCHEMA; Schema: -; Owner: -
---
-
-CREATE SCHEMA public;
-
-
---
--- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
---
-
-COMMENT ON SCHEMA public IS 'standard public schema';
-
 
 --
 -- Name: sp_aggregate_trades_to_ohlcv(); Type: FUNCTION; Schema: public; Owner: -
@@ -542,5 +532,4 @@ CREATE INDEX ix_trades_tradetime_desc ON public."Trades" USING btree ("TradeTime
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dZqh3sdYIoSXnBUbu1e8ycc0lXB3ThlR42v85eX3Ar4fi6chr6n0okrbFMHe7vv
 
