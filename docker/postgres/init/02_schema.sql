@@ -1,6 +1,6 @@
 -- Schema baseline for the "market_analytics" database.
 -- Auto-generated with: pg_dump --schema-only --no-owner --no-privileges
--- Source: production DB (analserver, PostgreSQL 16.14), captured 2026-07-11.
+-- Source: local development DB (partitioned, PostgreSQL 16), captured 2026-07-11.
 -- Applied automatically on a fresh volume via docker-entrypoint-initdb.d (docker/postgres/init).
 
 --
@@ -146,9 +146,46 @@ CREATE FUNCTION public.sp_bulk_insert_trades(p_trade_ids bigint[], p_symbols cha
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    INSERT INTO public."Trades" ("TradeId", "Symbol", "Price", "Quantity", "QuoteQuantity", "TradeTime", "IsBuyerMaker", "IsBestMatch")
-    SELECT * FROM UNNEST(p_trade_ids, p_symbols, p_prices, p_quantities, p_quote_quantities, p_trade_times, p_is_buyer_makers, p_is_best_matches)
-    ON CONFLICT ("TradeId", "Symbol") DO NOTHING;
+    INSERT INTO public."Trades" (
+        "TradeId", "Symbol", "Price", "Quantity", "QuoteQuantity",
+        "TradeTime", "IsBuyerMaker", "IsBestMatch"
+    )
+    SELECT * FROM UNNEST(
+        p_trade_ids, p_symbols, p_prices, p_quantities, p_quote_quantities,
+        p_trade_times, p_is_buyer_makers, p_is_best_matches
+    )
+    ON CONFLICT ("TradeId", "Symbol", "TradeTime") DO NOTHING;
+END;
+$$;
+
+
+--
+-- Name: sp_ensure_trades_partition(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_ensure_trades_partition(target_time bigint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    month_start TIMESTAMP;
+    month_end   TIMESTAMP;
+    part_name   TEXT;
+    from_ms     BIGINT;
+    to_ms       BIGINT;
+BEGIN
+    month_start := DATE_TRUNC('month', TO_TIMESTAMP(target_time / 1000.0) AT TIME ZONE 'UTC');
+    month_end   := month_start + INTERVAL '1 month';
+    part_name   := 'Trades_' || TO_CHAR(month_start, 'YYYY_MM');
+    from_ms     := EXTRACT(EPOCH FROM month_start)::BIGINT * 1000;
+    to_ms       := EXTRACT(EPOCH FROM month_end)::BIGINT * 1000;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE c.relname = part_name AND n.nspname = 'public') THEN
+        EXECUTE format(
+            'CREATE TABLE public.%I PARTITION OF public."Trades" FOR VALUES FROM (%s) TO (%s)',
+            part_name, from_ms, to_ms
+        );
+    END IF;
 END;
 $$;
 
@@ -294,6 +331,53 @@ $$;
 
 
 --
+-- Name: sp_rotate_trades_partition(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_rotate_trades_partition() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    current_month TIMESTAMP;
+    target_month  TIMESTAMP;
+    part_name     TEXT;
+    from_ms       BIGINT;
+    to_ms         BIGINT;
+    old_month     TIMESTAMP;
+    old_part_name TEXT;
+BEGIN
+    current_month := DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC');
+
+    FOR target_month IN
+        SELECT m FROM generate_series(current_month, current_month + INTERVAL '1 month', INTERVAL '1 month') AS m
+    LOOP
+        part_name := 'Trades_' || TO_CHAR(target_month, 'YYYY_MM');
+        from_ms   := EXTRACT(EPOCH FROM target_month)::BIGINT * 1000;
+        to_ms     := EXTRACT(EPOCH FROM (target_month + INTERVAL '1 month'))::BIGINT * 1000;
+
+        IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                       WHERE c.relname = part_name AND n.nspname = 'public') THEN
+            EXECUTE format(
+                'CREATE TABLE public.%I PARTITION OF public."Trades" FOR VALUES FROM (%s) TO (%s)',
+                part_name, from_ms, to_ms
+            );
+        END IF;
+    END LOOP;
+
+    old_month     := current_month - INTERVAL '13 months';
+    old_part_name := 'Trades_' || TO_CHAR(old_month, 'YYYY_MM');
+
+    IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE c.relname = old_part_name AND n.nspname = 'public') THEN
+        EXECUTE format('ALTER TABLE public."Trades" DETACH PARTITION public.%I', old_part_name);
+        EXECUTE format('DROP TABLE public.%I', old_part_name);
+        RAISE NOTICE 'Dropped old partition: %', old_part_name;
+    END IF;
+END;
+$$;
+
+
+--
 -- Name: sp_update_tracked_symbols(character varying[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -346,6 +430,43 @@ $$;
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: DataQualityReports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_Id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."DataQualityReports_Id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: DataQualityReports_Id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."DataQualityReports_Id_seq" OWNED BY public."DataQualityReports"."Id";
+
 
 --
 -- Name: HistoricalAudit_Watermarks; Type: TABLE; Schema: public; Owner: -
@@ -433,9 +554,697 @@ CREATE TABLE public."Trades" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false,
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+)
+PARTITION BY RANGE ("TradeTime");
+
+
+--
+-- Name: Trades_2025_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_01" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
     "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
 );
+
+
+--
+-- Name: Trades_2025_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_02" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_03" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_04" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_05" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_06" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_07" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_08" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_09" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_10" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_11" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2025_12" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_01" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_02" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_03" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_04" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_05" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_06" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_07" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_08" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_09" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_10" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_11" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2026_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2026_12" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2025_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_01" FOR VALUES FROM ('1735689600000') TO ('1738368000000');
+
+
+--
+-- Name: Trades_2025_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_02" FOR VALUES FROM ('1738368000000') TO ('1740787200000');
+
+
+--
+-- Name: Trades_2025_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_03" FOR VALUES FROM ('1740787200000') TO ('1743465600000');
+
+
+--
+-- Name: Trades_2025_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_04" FOR VALUES FROM ('1743465600000') TO ('1746057600000');
+
+
+--
+-- Name: Trades_2025_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_05" FOR VALUES FROM ('1746057600000') TO ('1748736000000');
+
+
+--
+-- Name: Trades_2025_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_06" FOR VALUES FROM ('1748736000000') TO ('1751328000000');
+
+
+--
+-- Name: Trades_2025_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_07" FOR VALUES FROM ('1751328000000') TO ('1754006400000');
+
+
+--
+-- Name: Trades_2025_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_08" FOR VALUES FROM ('1754006400000') TO ('1756684800000');
+
+
+--
+-- Name: Trades_2025_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_09" FOR VALUES FROM ('1756684800000') TO ('1759276800000');
+
+
+--
+-- Name: Trades_2025_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_10" FOR VALUES FROM ('1759276800000') TO ('1761955200000');
+
+
+--
+-- Name: Trades_2025_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_11" FOR VALUES FROM ('1761955200000') TO ('1764547200000');
+
+
+--
+-- Name: Trades_2025_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_12" FOR VALUES FROM ('1764547200000') TO ('1767225600000');
+
+
+--
+-- Name: Trades_2026_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_01" FOR VALUES FROM ('1767225600000') TO ('1769904000000');
+
+
+--
+-- Name: Trades_2026_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_02" FOR VALUES FROM ('1769904000000') TO ('1772323200000');
+
+
+--
+-- Name: Trades_2026_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_03" FOR VALUES FROM ('1772323200000') TO ('1775001600000');
+
+
+--
+-- Name: Trades_2026_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_04" FOR VALUES FROM ('1775001600000') TO ('1777593600000');
+
+
+--
+-- Name: Trades_2026_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_05" FOR VALUES FROM ('1777593600000') TO ('1780272000000');
+
+
+--
+-- Name: Trades_2026_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_06" FOR VALUES FROM ('1780272000000') TO ('1782864000000');
+
+
+--
+-- Name: Trades_2026_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_07" FOR VALUES FROM ('1782864000000') TO ('1785542400000');
+
+
+--
+-- Name: Trades_2026_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_08" FOR VALUES FROM ('1785542400000') TO ('1788220800000');
+
+
+--
+-- Name: Trades_2026_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_09" FOR VALUES FROM ('1788220800000') TO ('1790812800000');
+
+
+--
+-- Name: Trades_2026_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_10" FOR VALUES FROM ('1790812800000') TO ('1793491200000');
+
+
+--
+-- Name: Trades_2026_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_11" FOR VALUES FROM ('1793491200000') TO ('1796083200000');
+
+
+--
+-- Name: Trades_2026_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_12" FOR VALUES FROM ('1796083200000') TO ('1798761600000');
+
+
+--
+-- Name: DataQualityReports Id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ALTER COLUMN "Id" SET DEFAULT nextval('public."DataQualityReports_Id_seq"'::regclass);
+
+
+--
+-- Name: DataQualityReports DataQualityReports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports"
+    ADD CONSTRAINT "DataQualityReports_pkey" PRIMARY KEY ("Id");
 
 
 --
@@ -463,14 +1272,6 @@ ALTER TABLE ONLY public."Ohlcv_1min"
 
 
 --
--- Name: Trades PK_Trades; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades"
-    ADD CONSTRAINT "PK_Trades" PRIMARY KEY ("TradeId", "Symbol");
-
-
---
 -- Name: Processing_Watermarks Processing_Watermarks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -484,6 +1285,206 @@ ALTER TABLE ONLY public."Processing_Watermarks"
 
 ALTER TABLE ONLY public."TrackedSymbols"
     ADD CONSTRAINT "TrackedSymbols_pkey" PRIMARY KEY ("Symbol");
+
+
+--
+-- Name: Trades Trades_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades"
+    ADD CONSTRAINT "Trades_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_01 Trades_2025_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_01"
+    ADD CONSTRAINT "Trades_2025_01_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_02 Trades_2025_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_02"
+    ADD CONSTRAINT "Trades_2025_02_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_03 Trades_2025_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_03"
+    ADD CONSTRAINT "Trades_2025_03_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_04 Trades_2025_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_04"
+    ADD CONSTRAINT "Trades_2025_04_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_05 Trades_2025_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_05"
+    ADD CONSTRAINT "Trades_2025_05_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_06 Trades_2025_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_06"
+    ADD CONSTRAINT "Trades_2025_06_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_07 Trades_2025_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_07"
+    ADD CONSTRAINT "Trades_2025_07_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_08 Trades_2025_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_08"
+    ADD CONSTRAINT "Trades_2025_08_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_09 Trades_2025_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_09"
+    ADD CONSTRAINT "Trades_2025_09_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_10 Trades_2025_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_10"
+    ADD CONSTRAINT "Trades_2025_10_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_11 Trades_2025_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_11"
+    ADD CONSTRAINT "Trades_2025_11_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2025_12 Trades_2025_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2025_12"
+    ADD CONSTRAINT "Trades_2025_12_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_01 Trades_2026_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_01"
+    ADD CONSTRAINT "Trades_2026_01_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_02 Trades_2026_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_02"
+    ADD CONSTRAINT "Trades_2026_02_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_03 Trades_2026_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_03"
+    ADD CONSTRAINT "Trades_2026_03_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_04 Trades_2026_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_04"
+    ADD CONSTRAINT "Trades_2026_04_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_05 Trades_2026_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_05"
+    ADD CONSTRAINT "Trades_2026_05_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_06 Trades_2026_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_06"
+    ADD CONSTRAINT "Trades_2026_06_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_07 Trades_2026_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_07"
+    ADD CONSTRAINT "Trades_2026_07_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_08 Trades_2026_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_08"
+    ADD CONSTRAINT "Trades_2026_08_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_09 Trades_2026_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_09"
+    ADD CONSTRAINT "Trades_2026_09_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_10 Trades_2026_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_10"
+    ADD CONSTRAINT "Trades_2026_10_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_11 Trades_2026_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_11"
+    ADD CONSTRAINT "Trades_2026_11_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2026_12 Trades_2026_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2026_12"
+    ADD CONSTRAINT "Trades_2026_12_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
 
 
 --
@@ -508,24 +1509,878 @@ CREATE INDEX "IX_TrackedSymbols_IsActive" ON public."TrackedSymbols" USING btree
 
 
 --
--- Name: IX_Trades_ProcessingStatus_TradeTime; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_trades_processingstatus; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "IX_Trades_ProcessingStatus_TradeTime" ON public."Trades" USING btree ("ProcessingStatus", "TradeTime");
-
-
---
--- Name: IX_Trades_Symbol_TradeTime; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "IX_Trades_Symbol_TradeTime" ON public."Trades" USING btree ("Symbol", "TradeTime" DESC);
+CREATE INDEX ix_trades_processingstatus ON ONLY public."Trades" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: ix_trades_tradetime_desc; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2025_01_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_trades_tradetime_desc ON public."Trades" USING btree ("TradeTime" DESC);
+CREATE INDEX "Trades_2025_01_ProcessingStatus_idx" ON public."Trades_2025_01" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: ix_trades_symbol_tradetime; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_trades_symbol_tradetime ON ONLY public."Trades" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_01_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_01_Symbol_TradeTime_idx" ON public."Trades_2025_01" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_02_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_02_ProcessingStatus_idx" ON public."Trades_2025_02" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_02_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_02_Symbol_TradeTime_idx" ON public."Trades_2025_02" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_03_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_03_ProcessingStatus_idx" ON public."Trades_2025_03" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_03_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_03_Symbol_TradeTime_idx" ON public."Trades_2025_03" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_04_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_04_ProcessingStatus_idx" ON public."Trades_2025_04" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_04_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_04_Symbol_TradeTime_idx" ON public."Trades_2025_04" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_05_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_05_ProcessingStatus_idx" ON public."Trades_2025_05" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_05_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_05_Symbol_TradeTime_idx" ON public."Trades_2025_05" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_06_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_06_ProcessingStatus_idx" ON public."Trades_2025_06" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_06_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_06_Symbol_TradeTime_idx" ON public."Trades_2025_06" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_07_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_07_ProcessingStatus_idx" ON public."Trades_2025_07" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_07_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_07_Symbol_TradeTime_idx" ON public."Trades_2025_07" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_08_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_08_ProcessingStatus_idx" ON public."Trades_2025_08" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_08_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_08_Symbol_TradeTime_idx" ON public."Trades_2025_08" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_09_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_09_ProcessingStatus_idx" ON public."Trades_2025_09" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_09_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_09_Symbol_TradeTime_idx" ON public."Trades_2025_09" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_10_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_10_ProcessingStatus_idx" ON public."Trades_2025_10" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_10_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_10_Symbol_TradeTime_idx" ON public."Trades_2025_10" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_11_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_11_ProcessingStatus_idx" ON public."Trades_2025_11" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_11_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_11_Symbol_TradeTime_idx" ON public."Trades_2025_11" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2025_12_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_12_ProcessingStatus_idx" ON public."Trades_2025_12" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2025_12_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2025_12_Symbol_TradeTime_idx" ON public."Trades_2025_12" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_01_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_01_ProcessingStatus_idx" ON public."Trades_2026_01" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_01_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_01_Symbol_TradeTime_idx" ON public."Trades_2026_01" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_02_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_02_ProcessingStatus_idx" ON public."Trades_2026_02" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_02_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_02_Symbol_TradeTime_idx" ON public."Trades_2026_02" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_03_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_03_ProcessingStatus_idx" ON public."Trades_2026_03" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_03_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_03_Symbol_TradeTime_idx" ON public."Trades_2026_03" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_04_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_04_ProcessingStatus_idx" ON public."Trades_2026_04" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_04_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_04_Symbol_TradeTime_idx" ON public."Trades_2026_04" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_05_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_05_ProcessingStatus_idx" ON public."Trades_2026_05" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_05_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_05_Symbol_TradeTime_idx" ON public."Trades_2026_05" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_06_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_06_ProcessingStatus_idx" ON public."Trades_2026_06" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_06_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_06_Symbol_TradeTime_idx" ON public."Trades_2026_06" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_07_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_07_ProcessingStatus_idx" ON public."Trades_2026_07" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_07_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_07_Symbol_TradeTime_idx" ON public."Trades_2026_07" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_08_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_08_ProcessingStatus_idx" ON public."Trades_2026_08" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_08_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_08_Symbol_TradeTime_idx" ON public."Trades_2026_08" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_09_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_09_ProcessingStatus_idx" ON public."Trades_2026_09" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_09_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_09_Symbol_TradeTime_idx" ON public."Trades_2026_09" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_10_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_10_ProcessingStatus_idx" ON public."Trades_2026_10" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_10_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_10_Symbol_TradeTime_idx" ON public."Trades_2026_10" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_11_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_11_ProcessingStatus_idx" ON public."Trades_2026_11" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_11_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_11_Symbol_TradeTime_idx" ON public."Trades_2026_11" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2026_12_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_12_ProcessingStatus_idx" ON public."Trades_2026_12" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_12_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_12_Symbol_TradeTime_idx" ON public."Trades_2026_12" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: ix_dqr_checked_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_dqr_checked_at ON public."DataQualityReports" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: ix_dqr_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_dqr_status ON public."DataQualityReports" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: ix_dqr_symbol_month; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX ix_dqr_symbol_month ON public."DataQualityReports" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: Trades_2025_01_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_01_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_01_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_01_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_01_pkey";
+
+
+--
+-- Name: Trades_2025_02_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_02_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_02_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_02_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_02_pkey";
+
+
+--
+-- Name: Trades_2025_03_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_03_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_03_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_03_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_03_pkey";
+
+
+--
+-- Name: Trades_2025_04_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_04_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_04_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_04_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_04_pkey";
+
+
+--
+-- Name: Trades_2025_05_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_05_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_05_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_05_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_05_pkey";
+
+
+--
+-- Name: Trades_2025_06_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_06_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_06_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_06_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_06_pkey";
+
+
+--
+-- Name: Trades_2025_07_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_07_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_07_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_07_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_07_pkey";
+
+
+--
+-- Name: Trades_2025_08_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_08_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_08_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_08_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_08_pkey";
+
+
+--
+-- Name: Trades_2025_09_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_09_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_09_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_09_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_09_pkey";
+
+
+--
+-- Name: Trades_2025_10_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_10_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_10_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_10_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_10_pkey";
+
+
+--
+-- Name: Trades_2025_11_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_11_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_11_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_11_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_11_pkey";
+
+
+--
+-- Name: Trades_2025_12_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_12_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2025_12_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_12_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2025_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_12_pkey";
+
+
+--
+-- Name: Trades_2026_01_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_01_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_01_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_01_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_01_pkey";
+
+
+--
+-- Name: Trades_2026_02_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_02_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_02_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_02_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_02_pkey";
+
+
+--
+-- Name: Trades_2026_03_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_03_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_03_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_03_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_03_pkey";
+
+
+--
+-- Name: Trades_2026_04_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_04_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_04_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_04_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_04_pkey";
+
+
+--
+-- Name: Trades_2026_05_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_05_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_05_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_05_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_05_pkey";
+
+
+--
+-- Name: Trades_2026_06_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_06_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_06_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_06_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_06_pkey";
+
+
+--
+-- Name: Trades_2026_07_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_07_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_07_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_07_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_07_pkey";
+
+
+--
+-- Name: Trades_2026_08_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_08_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_08_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_08_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_08_pkey";
+
+
+--
+-- Name: Trades_2026_09_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_09_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_09_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_09_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_09_pkey";
+
+
+--
+-- Name: Trades_2026_10_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_10_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_10_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_10_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_10_pkey";
+
+
+--
+-- Name: Trades_2026_11_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_11_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_11_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_11_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_11_pkey";
+
+
+--
+-- Name: Trades_2026_12_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_12_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2026_12_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_12_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_12_pkey";
 
 
 --

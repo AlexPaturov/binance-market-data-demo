@@ -61,7 +61,7 @@
 Схема воспроизводится из репозитория одной командой. Каталог `docker/postgres/init/` монтируется в `docker-entrypoint-initdb.d` контейнера PostgreSQL и на **чистом томе** применяется автоматически при первом старте:
 
 - `01_create_jobs_db.sql` — создаёт служебную базу Hangfire `market_analytics_jobs`.
-- `02_schema.sql` — полная схема основной БД `market_analytics` (таблицы `Trades`, `Ohlcv_1min`, `Ohlcv_Features`, `TrackedSymbols`, `Processing_Watermarks`, `HistoricalAudit_Watermarks` и функции обработки). Это schema-only снимок (`pg_dump`) актуального прод-состояния.
+- `02_schema.sql` — полная схема основной БД `market_analytics`: таблицы `Trades` (партиционирована по месяцам, `PARTITION BY RANGE("TradeTime")`), `Ohlcv_1min`, `Ohlcv_Features`, `TrackedSymbols`, `Processing_Watermarks`, `HistoricalAudit_Watermarks` и функции обработки (bulk-insert, агрегация OHLCV, расчёт признаков, управление партициями). Это schema-only снимок (`pg_dump`) актуальной рабочей БД.
 
 Тем самым `./docker/dev-start.sh` на пустом томе поднимает готовую к работе БД без ручных шагов. Подробное описание модели данных — **[docs/common/03_database.md](./docs/common/03_database.md)**.
 
