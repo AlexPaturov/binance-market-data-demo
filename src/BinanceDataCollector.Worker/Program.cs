@@ -129,6 +129,7 @@ public class Program
             // builder.Services.AddTransient<ArchiveDownloaderWorker>(); // must be deleted
             builder.Services.AddTransient<IArchiveDownloaderWorker, ArchiveDownloaderWorker>();
             builder.Services.AddTransient<IArchiveUnpackerWorker, ArchiveUnpackerWorker>();
+            builder.Services.AddTransient<IArchiveDeletionWorker, ArchiveDeletionWorker>();
             builder.Services.AddScoped<IDataQualityRepository, DataQualityRepository>();
             builder.Services.AddTransient<DataQualityWorker>();
             builder.Services.AddHostedService<HangfireJobsService>();

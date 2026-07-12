@@ -4,7 +4,7 @@ using Hangfire;
 namespace BinanceDataCollector.Worker.Workers.Archives;
 
 [Queue("archive_import")] // Можно выполнять в той же низкоприоритетной очереди
-public class ArchiveDeletionWorker
+public class ArchiveDeletionWorker : IArchiveDeletionWorker
 {
     private readonly ILogger<ArchiveDeletionWorker> _logger;
     private readonly string _archivesPath;
