@@ -79,7 +79,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=market_analytics
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - /mnt/ext/postgres_data:/var/lib/postgresql/data
     command:
       - "postgres"
       - "-c"
@@ -235,9 +235,6 @@ services:
       - bdc_data:/opt/bdc_data
 
 volumes:
-  postgres_data:
-    external: true
-    name: /mnt/ext/postgres_data:/var/lib/postgresql/data
   seq_data:
     external: true
     name: binancecollector_seq_data
