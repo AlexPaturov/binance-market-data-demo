@@ -200,12 +200,15 @@ public class Program {
             
             // ЖЕСТКИЙ ФИКС ДЛЯ ЦИКЛИЧЕСКОГО РЕДИРЕКТА
             // Заставляем приложение думать, что оно работает по HTTPS (так как SSL снял Cloudflare/Traefik)
-           
-            //app.Use(async (context, next) =>
-            //{
-            //    context.Request.Scheme = "https";
-            //    await next();
-            //});
+
+            if (app.Environment.IsProduction())
+            {
+                app.Use(async (context, next) =>
+                {
+                    context.Request.Scheme = "https";
+                    await next();
+                });
+            }
             // ========================================
             
             Log.Information(
