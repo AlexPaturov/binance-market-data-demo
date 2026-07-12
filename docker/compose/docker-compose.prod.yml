@@ -198,6 +198,7 @@ services:
       - "traefik.http.routers.hangfire.service=worker"
     volumes:
       - bdc_data:/opt/bdc_data
+      - bdc_data:/home/lex/bdc_data
 
   bdc_datamanager:
     image: ghcr.io/alexpaturov/binancedatacollector/datamanager:${APP_VERSION}
