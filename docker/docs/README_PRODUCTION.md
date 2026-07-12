@@ -57,21 +57,56 @@ PROD запускается **строго** так:
 
 ---
 
+## 💾 Внешний диск — читать до запуска
+
+Данные PostgreSQL живут на внешнем 4TB-диске, примонтированном в `/mnt/ext` (bind mount, не Docker volume — см. `README_VOLUMES.md`).
+
+❗ Если поднять `bdc_db` при непримонтированном диске, Postgres **молча создаст новую пустую базу** на системном диске. Приложение поднимется и подключится, но таблиц не будет.
+
+Защита на двух уровнях:
+
+- **Автозапуск (ребут):** drop-in `/etc/systemd/system/docker.service.d/wait-for-ext.conf` с `RequiresMountsFor=/mnt/ext` — Docker не стартует, пока диск не примонтирован.
+- **Ручной запуск:** `prod-start.sh` (см. ниже) проверяет монтирование, наличие `PG_VERSION` и партиций.
+
+---
+
+## 🚀 Запуск и остановка (скрипты)
+
+Скрипты лежат в репозитории (`docker/prod-start.sh`, `docker/prod-stop.sh`) и **не разносятся деплоем** — на сервер копируются вручную в `/opt/BinanceCollector/docker/`.
+
+**Запуск:**
+```bash
+/opt/BinanceCollector/docker/prod-start.sh
+```
+Монтирует диск при необходимости, отказывается стартовать без реального каталога данных, ждёт `bdc_db` до healthy, проверяет что партиции `Trades` на месте (а не пустая БД) и что Worker может писать в `bdc_data`.
+
+**Остановка:**
+```bash
+/opt/BinanceCollector/docker/prod-stop.sh              # остановить + отмонтировать диск
+/opt/BinanceCollector/docker/prod-stop.sh --poweroff   # то же + выключить сервер
+```
+Сначала гасит приложения, затем остальное с таймаутом 120с (дефолтных 10 Postgres'у мало), **проверяет `database system is shut down` в логах** и только после этого отмонтирует диск и паркует головки.
+
+> Незавершённые джобы импорта прерывать безопасно: ZIP/CSV удаляются только после успешной вставки, вставка идемпотентна. Очередь доработает при следующем старте.
+
+---
+
 ## 🔄 Общий порядок запуска
 
 Реальный порядок инициализации:
 
-1. Docker daemon
-2. External volumes (должны существовать заранее)
-3. External network `binancecollector_web`
-4. Traefik
-5. Cloudflare Tunnel
-6. Postgres
-7. PgBouncer
-8. RabbitMQ
-9. Seq
-10. Worker / DataManager
-11. Uptime Kuma
+1. Монтирование `/mnt/ext` (данные Postgres)
+2. Docker daemon
+3. External volumes (должны существовать заранее)
+4. External network `binancecollector_web`
+5. Traefik
+6. Cloudflare Tunnel
+7. Postgres
+8. PgBouncer
+9. RabbitMQ
+10. Seq
+11. Worker / DataManager
+12. Uptime Kuma
 
 ❗ Docker Compose сам оркестрирует запуск, но **понимание порядка критично при дебаге**.
 

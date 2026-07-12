@@ -217,22 +217,33 @@ bdc_datamanager:
 
 ---
 
-## 8. Volumes (external, ручное создание)
+## 8. Хранилища
 
-Все persistent volumes объявлены в `docker-compose.prod.yml` как
-`external: true` и создаются workflow'ом через `docker volume create … || true`
-при каждом деплое (идемпотентно). **Удаление любого = потеря данных.**
+### 8.1. Данные PostgreSQL — внешний диск (bind mount)
+
+Данные БД **не в Docker volume**, а на внешнем 4TB-диске, примонтированном в `/mnt/ext`:
+
+```yaml
+bdc_db:
+  volumes:
+    - /mnt/ext/postgres_data:/var/lib/postgresql/data
+```
+
+> Если `bdc_db` стартует с непримонтированным диском, Postgres молча создаст пустую БД на системном диске. Подробности и защита — `docker/docs/README_VOLUMES.md`.
+
+### 8.2. Volumes (external, ручное создание)
+
+Объявлены в `docker-compose.prod.yml` как `external: true`, создаются workflow'ом через `docker volume create … || true` при каждом деплое (идемпотентно). **Удаление любого = потеря данных.**
 
 | Volume                                  | Что хранит                                        |
 |-----------------------------------------|---------------------------------------------------|
-| `binancecollector_postgres_data`        | Данные PostgreSQL (`/var/lib/postgresql/data`).   |
 | `binancecollector_seq_data`             | Логи Seq (`/data`).                               |
 | `binancecollector_rabbitmq_data`        | Состояние очередей RabbitMQ.                      |
 | `binancecollector_letsencrypt_data`     | TLS-сертификаты Let's Encrypt (`acme.json`).      |
 | `binancecollector_bdc_data`             | Рабочие данные Worker'а (CSV-архивы и т.п.). Монтируется в `/opt/bdc_data` и в Worker'е, и в DataManager'е. |
 | `binancecollector_uptime_kuma_data`     | Состояние Uptime Kuma (мониторы, история).        |
 
-Подробнее по сети и томам — `docs/Server_Network_Config.md`.
+Подробнее по сети и томам — `docs/Server_Network_Config.md`, `docker/docs/README_VOLUMES.md`.
 
 ---
 
