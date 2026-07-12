@@ -29,8 +29,8 @@
 |   |   - bdc_rabbitmq           :5672 / :15672        |   |
 |   |   - bdc_seq                :5341                 |   |
 |   |                                                  |   |
-|   |  Данные Postgres: /mnt/ext/postgres_data        |   |
-|   |  (bind mount → внешний диск 4TB, /dev/sda1)     |   |
+|   |  Данные Postgres: docker volume                  |   |
+|   |  dev_postgres_data                               |   |
 |   +--------------------------------------------------+   |
 |                                                          |
 |  Данные Worker (архивы и CSV):                           |
@@ -81,15 +81,17 @@ docker exec -i bdc_db psql -U bindatacoll -d market_analytics < sqlScripts/prod_
 
 ## 4. Хранение данных Docker-контейнеров
 
-| Контейнер   | Где хранятся данные              | Тип монтирования |
-|-------------|----------------------------------|------------------|
-| Postgres    | `/mnt/ext/postgres_data`         | bind mount       |
-| Seq         | named volume `bdc_seq_data`      | named volume     |
-| RabbitMQ    | named volume `bdc_rabbitmq_data` | named volume     |
+| Контейнер   | Где хранятся данные               | Тип монтирования |
+|-------------|-----------------------------------|------------------|
+| Postgres    | named volume `dev_postgres_data`  | named volume     |
+| Seq         | named volume `bdc_seq_data`       | named volume     |
+| RabbitMQ    | named volume `bdc_rabbitmq_data`  | named volume     |
 
-Postgres хранится на внешнем диске `/dev/sda1` (4TB, ext4, UUID `25ddc534-13e6-479e-8392-a4487a975c80`), примонтированном в `/mnt/ext` через `/etc/fstab` с флагом `nofail`. Диск содержит партиционированную таблицу `Trades` с историческими данными Jan 2025–Dec 2026 (24 партиции).
+DEV-база — локальная и лёгкая: только схема, без исторических данных. Схема применяется автоматически из baseline `docker/postgres/init/02_schema.sql` при первом старте на чистом volume (`docker-entrypoint-initdb.d`), включая партиционированную `Trades` и 24 пустые помесячные партиции.
 
-> Если диск не примонтирован при старте Docker — `nofail` не даст системе зависнуть, но Postgres не запустится (пустая директория). Перед `dev-start.sh` убедись что `/mnt/ext` примонтирован: `df -h /mnt/ext`.
+Исторические данные (сотни ГБ) живут на проде, на внешнем 4TB-диске — см. `docker/docs/README_VOLUMES.md`.
+
+> Чтобы пересоздать DEV-базу с нуля: `docker compose ... down`, `docker volume rm compose_dev_postgres_data`, затем `dev-start.sh` — схема накатится заново.
 
 ---
 
