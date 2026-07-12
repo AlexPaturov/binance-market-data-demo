@@ -236,7 +236,7 @@ services:
 volumes:
   postgres_data:
     external: true
-    name: binancecollector_postgres_data
+    name: /mnt/ext/postgres_data:/var/lib/postgresql/data
   seq_data:
     external: true
     name: binancecollector_seq_data
