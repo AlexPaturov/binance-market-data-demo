@@ -64,3 +64,26 @@ bdc_worker:
 Второй путь нужен, потому что в очереди Hangfire остались задачи импорта CSV, поставленные ещё на dev-машине — их аргумент содержит абсолютный dev-путь (`/home/lex/bdc_data/...`), зашитый в момент постановки задачи. Один и тот же volume, две точки монтирования: старые задачи находят свои файлы, новые работают по штатному пути из конфига (`ArchivesSettings.BasePath` = `/opt/bdc_data`).
 
 Второй mount можно убрать, когда очередь `archive_import` полностью разберётся.
+
+---
+
+## ⚠️ Права при заливке файлов в volume извне
+
+`bdc_worker` в проде работает под непривилегированным пользователем (`USER app` в `docker/Dockerfile`, uid/gid **1654**). Если положить файлы в `binancecollector_bdc_data` через сторонний контейнер (типичный приём — `docker run --rm -v binancecollector_bdc_data:/dest alpine cp ...`), они окажутся во владении **root**, и Worker не сможет ни распаковать архив, ни удалить обработанный файл:
+
+```
+Error extracting archive XXX.zip: Access to the path
+'/opt/bdc_data/Trades/Unpacked/XXX' is denied.
+```
+
+После любой такой заливки — вернуть владение:
+
+```bash
+docker run --rm -v binancecollector_bdc_data:/data alpine chown -R 1654:1654 /data
+```
+
+Проверка:
+
+```bash
+docker exec bdc_worker sh -c 'touch /opt/bdc_data/Trades/Unpacked/.wtest && echo WRITABLE && rm /opt/bdc_data/Trades/Unpacked/.wtest'
+```
