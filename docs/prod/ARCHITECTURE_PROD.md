@@ -72,11 +72,24 @@
 
 ---
 
-## 5. Хранилища (volumes)
+## 5. Хранилища
 
-Все volume'ы — **external named**, создаются вручную и **никогда не удаляются** автоматически:
+### 5.1. Данные PostgreSQL — внешний диск
 
-- `binancecollector_postgres_data`
+Данные БД лежат на **внешнем 4TB-диске**, примонтированном в `/mnt/ext` (`/etc/fstab`, UUID `25ddc534-13e6-479e-8392-a4487a975c80`, опция `nofail`). В `docker-compose.prod.yml` это **bind mount** у сервиса `bdc_db`:
+
+```yaml
+bdc_db:
+  volumes:
+    - /mnt/ext/postgres_data:/var/lib/postgresql/data
+```
+
+> Перед стартом `bdc_db` диск обязан быть примонтирован (`mountpoint /mnt/ext`). Иначе Postgres проинициализирует пустую базу в директории на системном диске. См. `docker/docs/README_DO_NOT_TOUCH.md`.
+
+### 5.2. Остальные volume'ы
+
+**External named**, создаются вручную и **никогда не удаляются** автоматически:
+
 - `binancecollector_seq_data`
 - `binancecollector_rabbitmq_data`
 - `binancecollector_letsencrypt_data` — сертификаты Let's Encrypt

@@ -20,7 +20,6 @@
 
 Следующие volume являются **контрактом данных**:
 
-* `binancecollector_postgres_data`
 * `binancecollector_seq_data`
 * `binancecollector_rabbitmq_data`
 * `binancecollector_letsencrypt_data`
@@ -39,6 +38,36 @@
 * потеря логов
 * потеря сертификатов
 * неконсистентное состояние Hangfire
+
+---
+
+## 💾 Внешний диск `/mnt/ext` — ТРОГАТЬ ЗАПРЕЩЕНО
+
+Данные PostgreSQL живут **не в Docker volume**, а на внешнем 4TB-диске, примонтированном в `/mnt/ext`.
+В `docker-compose.prod.yml` это bind mount:
+
+```yaml
+bdc_db:
+  volumes:
+    - /mnt/ext/postgres_data:/var/lib/postgresql/data
+```
+
+### 🚫 НЕЛЬЗЯ:
+
+* отмонтировать `/mnt/ext` при работающем `bdc_db`
+* менять/удалять запись в `/etc/fstab` (UUID `25ddc534-13e6-479e-8392-a4487a975c80`)
+* поднимать `bdc_db`, не убедившись что диск примонтирован
+
+### Почему:
+
+Если диск не примонтирован, а `bdc_db` стартует — Docker создаст **пустую директорию** `/mnt/ext/postgres_data` на системном диске, и Postgres молча проинициализирует в ней **новую пустую базу**. Данные на самом диске при этом целы, но приложение будет работать с пустышкой.
+
+### ✅ Перед стартом `bdc_db` проверить:
+
+```bash
+mountpoint /mnt/ext        # должно быть: /mnt/ext is a mountpoint
+df -h /mnt/ext             # должно быть ~3.6T, а не системный раздел
+```
 
 ---
 
