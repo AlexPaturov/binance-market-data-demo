@@ -78,6 +78,7 @@ public class Program
             });
 
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
+            builder.Services.Configure<RetentionSettings>(builder.Configuration.GetSection("RetentionSettings"));
 
             #region Регистрация сервисов
             builder.Services.AddHttpClient("BinanceArchive", client =>

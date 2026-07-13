@@ -90,10 +90,10 @@ public sealed class TradeRepositoryTests : IAsyncLifetime
         Assert.Equal(2, latest.Count);
     }
 
-    // 2025-01-01T00:00:00Z in unix milliseconds — lands in the Trades_2025_01 partition.
-    private const long Jan2025Ms = 1_735_689_600_000;
+    // 2026-01-01T00:00:00Z in unix milliseconds — lands in the Trades_2026_01 partition.
+    private const long Jan2026Ms = 1_767_225_600_000;
 
-    private static long TradeTime(int minuteOffset) => Jan2025Ms + minuteOffset * 60_000L;
+    private static long TradeTime(int minuteOffset) => Jan2026Ms + minuteOffset * 60_000L;
 
     private static Trade NewTrade(long tradeId, string symbol, decimal price, long tradeTime) => new()
     {

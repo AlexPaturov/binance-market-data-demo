@@ -26,8 +26,8 @@ public sealed class ChartRepositoryTests : IAsyncLifetime
 
     private const string Symbol = "BTCUSDT";
 
-    // 2025-01-06T00:00:00Z — понедельник. Удобная точка отсчёта для недельной сетки.
-    private const long Monday6Jan2025Ms = 1_736_121_600_000;
+    // 2026-01-05T00:00:00Z — понедельник. Удобная точка отсчёта для недельной сетки.
+    private const long Monday5Jan2026Ms = 1_767_571_200_000;
 
     public async Task InitializeAsync()
     {
@@ -58,12 +58,12 @@ public sealed class ChartRepositoryTests : IAsyncLifetime
     public async Task GetCandles_Aggregates15Minutes_FromMinuteCandles()
     {
         // 15 минутных свечей: цена растёт 100 → 114, объём по 1.
-        await SeedMinutesAsync(Monday6Jan2025Ms, count: 15, startPrice: 100m);
+        await SeedMinutesAsync(Monday5Jan2026Ms, count: 15, startPrice: 100m);
 
         var candles = await _repository.GetCandlesAsync(Symbol, ChartTimeframes.M15, limit: 10);
 
         var bar = Assert.Single(candles);
-        Assert.Equal(Monday6Jan2025Ms, bar.OpenTime);
+        Assert.Equal(Monday5Jan2026Ms, bar.OpenTime);
         Assert.Equal(100m, bar.OpenPrice);   // первая минута
         Assert.Equal(114m, bar.ClosePrice);  // последняя минута
         Assert.Equal(115m, bar.HighPrice);   // High = цена + 1 (см. SeedMinutesAsync)
@@ -75,13 +75,13 @@ public sealed class ChartRepositoryTests : IAsyncLifetime
     public async Task GetCandles_SplitsIntoSeparateBars_OnBucketBoundary()
     {
         // 30 минут → ровно два 15-минутных бара.
-        await SeedMinutesAsync(Monday6Jan2025Ms, count: 30, startPrice: 100m);
+        await SeedMinutesAsync(Monday5Jan2026Ms, count: 30, startPrice: 100m);
 
         var candles = await _repository.GetCandlesAsync(Symbol, ChartTimeframes.M15, limit: 10);
 
         Assert.Equal(2, candles.Count);
-        Assert.Equal(Monday6Jan2025Ms, candles[0].OpenTime);
-        Assert.Equal(Monday6Jan2025Ms + 900_000, candles[1].OpenTime);
+        Assert.Equal(Monday5Jan2026Ms, candles[0].OpenTime);
+        Assert.Equal(Monday5Jan2026Ms + 900_000, candles[1].OpenTime);
 
         Assert.Equal(100m, candles[0].OpenPrice);
         Assert.Equal(114m, candles[0].ClosePrice);
@@ -93,21 +93,21 @@ public sealed class ChartRepositoryTests : IAsyncLifetime
     public async Task GetCandles_HourlyBars_AlignToTheHour()
     {
         // Начинаем с 00:30 — свеча должна попасть в час 00:00, а не открыть новый бар.
-        await SeedMinutesAsync(Monday6Jan2025Ms + 30 * 60_000L, count: 30, startPrice: 100m);
+        await SeedMinutesAsync(Monday5Jan2026Ms + 30 * 60_000L, count: 30, startPrice: 100m);
 
         var candles = await _repository.GetCandlesAsync(Symbol, ChartTimeframes.H1, limit: 10);
 
         var bar = Assert.Single(candles);
-        Assert.Equal(Monday6Jan2025Ms, bar.OpenTime); // 00:00, не 00:30
+        Assert.Equal(Monday5Jan2026Ms, bar.OpenTime); // 00:00, не 00:30
     }
 
     [Fact]
     public async Task GetCandles_WeeklyBars_OpenOnMonday_NotOnEpochThursday()
     {
         // Сутки минуток начиная с понедельника.
-        await SeedMinutesAsync(Monday6Jan2025Ms, count: 60, startPrice: 100m);
+        await SeedMinutesAsync(Monday5Jan2026Ms, count: 60, startPrice: 100m);
         // И ещё сутки со среды той же недели — должны попасть в ТОТ ЖЕ недельный бар.
-        await SeedMinutesAsync(Monday6Jan2025Ms + 2 * 86_400_000L, count: 60, startPrice: 200m, tradeIdOffset: 10_000);
+        await SeedMinutesAsync(Monday5Jan2026Ms + 2 * 86_400_000L, count: 60, startPrice: 200m, tradeIdOffset: 10_000);
 
         var candles = await _repository.GetCandlesAsync(Symbol, ChartTimeframes.W1, limit: 10);
 
@@ -117,7 +117,7 @@ public sealed class ChartRepositoryTests : IAsyncLifetime
         // по эпохе, неделя открывалась бы в четверг и данные разъехались бы на два бара.
         var openTime = DateTimeOffset.FromUnixTimeMilliseconds(bar.OpenTime).UtcDateTime;
         Assert.Equal(DayOfWeek.Monday, openTime.DayOfWeek);
-        Assert.Equal(Monday6Jan2025Ms, bar.OpenTime);
+        Assert.Equal(Monday5Jan2026Ms, bar.OpenTime);
 
         Assert.Equal(100m, bar.OpenPrice);   // первая минута понедельника
         Assert.Equal(259m, bar.ClosePrice);  // последняя минута среды
@@ -127,7 +127,7 @@ public sealed class ChartRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task GetCandlesSince_ReturnsOnlyBarsFromGivenTime()
     {
-        await SeedMinutesAsync(Monday6Jan2025Ms, count: 180, startPrice: 100m); // 3 часа
+        await SeedMinutesAsync(Monday5Jan2026Ms, count: 180, startPrice: 100m); // 3 часа
 
         var all = await _repository.GetCandlesAsync(Symbol, ChartTimeframes.H1, limit: 10);
         Assert.Equal(3, all.Count);
@@ -142,14 +142,14 @@ public sealed class ChartRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task GetCandles_ReturnsMostRecentBars_WhenLimitIsSmaller()
     {
-        await SeedMinutesAsync(Monday6Jan2025Ms, count: 300, startPrice: 100m); // 5 часов
+        await SeedMinutesAsync(Monday5Jan2026Ms, count: 300, startPrice: 100m); // 5 часов
 
         var candles = await _repository.GetCandlesAsync(Symbol, ChartTimeframes.H1, limit: 2);
 
         Assert.Equal(2, candles.Count);
         // Отдаём последние бары, но в хронологическом порядке.
         Assert.True(candles[0].OpenTime < candles[1].OpenTime);
-        Assert.Equal(Monday6Jan2025Ms + 4 * 3_600_000L, candles[1].OpenTime);
+        Assert.Equal(Monday5Jan2026Ms + 4 * 3_600_000L, candles[1].OpenTime);
     }
 
     [Fact]
@@ -163,14 +163,14 @@ public sealed class ChartRepositoryTests : IAsyncLifetime
         {
             await db.ExecuteAsync(
                 @"INSERT INTO public.""Ohlcv_Features"" (""Symbol"", ""OpenTime"", ""CVD"") VALUES (@S, @T, @C);",
-                new { S = Symbol, T = Monday6Jan2025Ms + i * 60_000L, C = 10m + i });
+                new { S = Symbol, T = Monday5Jan2026Ms + i * 60_000L, C = 10m + i });
         }
 
         var cvd = await _repository.GetCvdAsync(
-            Symbol, ChartTimeframes.H1, Monday6Jan2025Ms, Monday6Jan2025Ms + 3_600_000L);
+            Symbol, ChartTimeframes.H1, Monday5Jan2026Ms, Monday5Jan2026Ms + 3_600_000L);
 
         var point = Assert.Single(cvd);
-        Assert.Equal(Monday6Jan2025Ms, point.OpenTime);
+        Assert.Equal(Monday5Jan2026Ms, point.OpenTime);
         Assert.Equal(69m, point.Value); // 10 + 59 — последняя минута, не сумма
     }
 
@@ -178,7 +178,7 @@ public sealed class ChartRepositoryTests : IAsyncLifetime
     public async Task Indicators_AreComputedOnSelectedTimeframe_NotOnMinutes()
     {
         // 100 часов минуток → 100 часовых баров.
-        await SeedMinutesAsync(Monday6Jan2025Ms, count: 100 * 60, startPrice: 100m);
+        await SeedMinutesAsync(Monday5Jan2026Ms, count: 100 * 60, startPrice: 100m);
 
         var candles = await _repository.GetCandlesAsync(Symbol, ChartTimeframes.H1, limit: 200);
         Assert.Equal(100, candles.Count);

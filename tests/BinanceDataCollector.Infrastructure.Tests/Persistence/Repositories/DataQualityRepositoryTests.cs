@@ -23,10 +23,10 @@ public sealed class DataQualityRepositoryTests : IAsyncLifetime
     private DataQualityRepository _repository = null!;
     private string _connectionString = null!;
 
-    // 2025-01-01T00:00:00Z — попадает в партицию Trades_2025_01.
-    private const long Jan2025Ms = 1_735_689_600_000;
-    private static readonly DateTime PeriodFrom = new(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-    private static readonly DateTime PeriodTo = new(2025, 1, 20, 0, 0, 0, DateTimeKind.Utc);
+    // 2026-01-01T00:00:00Z — попадает в партицию Trades_2026_01.
+    private const long Jan2026Ms = 1_767_225_600_000;
+    private static readonly DateTime PeriodFrom = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime PeriodTo = new(2026, 1, 20, 0, 0, 0, DateTimeKind.Utc);
 
     public async Task InitializeAsync()
     {
@@ -237,7 +237,7 @@ public sealed class DataQualityRepositoryTests : IAsyncLifetime
     [Fact]
     public async Task RunChecks_RangeLongerThanMonth_IsRejected()
     {
-        var from = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var from = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var to = from.AddDays(45);   // больше 31 дня
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(
@@ -281,7 +281,7 @@ public sealed class DataQualityRepositoryTests : IAsyncLifetime
         Assert.Empty(errorsOnly);
     }
 
-    private static long Ms(int minuteOffset) => Jan2025Ms + minuteOffset * 60_000L;
+    private static long Ms(int minuteOffset) => Jan2026Ms + minuteOffset * 60_000L;
 
     private static long Count(IReadOnlyList<DataQualityFinding> findings, string checkType) =>
         findings.Single(f => f.CheckType == checkType).Count;
