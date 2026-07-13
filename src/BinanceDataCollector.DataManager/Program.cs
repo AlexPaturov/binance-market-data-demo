@@ -188,8 +188,14 @@ public class Program {
                     name: "pgbouncer",
                     timeout: TimeSpan.FromSeconds(5)); 
             
-            //PrintConfiguration(builder.Configuration); // TODO service information - delete
-            
+            // Дамп конфигурации содержит пароли и B2C client secret. В Production логи
+            // уходят в Seq — печатаем только локально, под отладчиком или в Development.
+            if (Debugger.IsAttached || builder.Environment.IsDevelopment())
+            {
+                PrintConfiguration(builder.Configuration);
+            }
+
+
             #region Общее место для хранения ключей
             var keysPath = builder.Environment.IsProduction()
                 ? "/opt/bdc_data/keys"
@@ -298,7 +304,12 @@ public class Program {
             Log.CloseAndFlush();
         }
     }
-    
+
+    /// <summary>
+    /// Полный дамп конфигурации — включая строки подключения, пароли и B2C client secret.
+    /// Вызывать ТОЛЬКО в Development или под отладчиком: в Production логи уезжают в Seq,
+    /// и секреты оказались бы в общем хранилище логов.
+    /// </summary>
     private static void PrintConfiguration(IConfiguration configuration)
     {
         Console.WriteLine("--- Configuration Debug View ---");

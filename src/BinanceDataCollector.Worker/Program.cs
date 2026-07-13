@@ -193,7 +193,13 @@ public class Program
 
             Log.Information("Hangfire запущен за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
-            PrintConfiguration(builder.Configuration);
+            // Дамп конфигурации содержит пароли и строки подключения. В Production логи
+            // уходят в Seq — печатаем только локально, под отладчиком или в Development.
+            if (Debugger.IsAttached || builder.Environment.IsDevelopment())
+            {
+                PrintConfiguration(builder.Configuration);
+            }
+
             var app = builder.Build();
             
             //-- log begin
@@ -270,6 +276,11 @@ public class Program
         }
     }
 
+    /// <summary>
+    /// Полный дамп конфигурации — включая строки подключения, пароли Postgres и RabbitMQ.
+    /// Вызывать ТОЛЬКО в Development или под отладчиком: в Production логи уезжают в Seq,
+    /// и секреты оказались бы в общем хранилище логов.
+    /// </summary>
     private static void PrintConfiguration(IConfiguration configuration)
     {
         Console.WriteLine("--- Configuration Debug View ---");
@@ -280,7 +291,7 @@ public class Program
 
         Console.WriteLine("--- End Configuration Debug View ---");
     }
-    
+
     // TODO не забыть использовать на стадии добавления версии
     static string GetFormattedAppVersion()
     {
