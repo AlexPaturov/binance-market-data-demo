@@ -128,7 +128,7 @@ Watermark'и для streaming-процессов. По одной записи �
 
 ### 3.7. `public."DataQualityReports"`
 
-Месячные отчёты о качестве сырых тиковых данных по паре: сколько сделок, разрывов последовательности `TradeId`, некорректных цен и ценовых выбросов найдено за период.
+**Карта покрытия проверками:** одна строка на пару «символ + месяц», перезаписывается при повторной проверке (upsert по `ix_dqr_symbol_month`). Отвечает на вопрос «какие месяцы истории проверены и какие из них грязные» — по ней видно состояние всей истории разом.
 
 | Поле | Тип | Описание |
 | :--- | :--- | :--- |
@@ -141,6 +141,27 @@ Watermark'и для streaming-процессов. По одной записи �
 | `"OutlierCount"` | `INT DEFAULT 0` | Количество сделок с ценой дальше 5σ от средней цены за период. |
 | `"Status"` | `VARCHAR(10) DEFAULT 'ok'` | Итоговый статус периода: `'ok'`, `'warning'` (есть разрывы или выбросы) либо `'error'` (нет сделок за месяц или есть некорректные цены). |
 | `"CheckedAt"` | `TIMESTAMPTZ DEFAULT now()` | Время выполнения проверки. |
+
+Заполняется кнопкой «Построить отчёт» на странице `/DataQuality`. `GetUncheckedMonthsAsync` показывает месяцы, где данные в партициях есть, а отчёта ещё нет.
+
+### 3.8. `public."DataQualityFindings"`
+
+**Журнал проверок:** одна строка на каждую сработавшую проверку в конкретном прогоне, append-only. Отвечает на вопрос «что нашли вот в этом запуске». Заполняется кнопками групп проверок на странице `/DataQuality`; период одного запуска ограничен 31 днём.
+
+| Поле | Тип | Описание |
+| :--- | :--- | :--- |
+| **`"Id"`** | `BIGINT` | **(PK)** Идентификатор находки (identity). |
+| `"CheckGroup"` | `VARCHAR(32)` | Группа проверок: `trades`, `ohlcv`, `features`, `pipeline`. |
+| `"CheckType"` | `VARCHAR(64)` | Конкретная проверка внутри группы (например, `trade_id_gaps`, `watermark_ahead_of_data`). |
+| `"Symbol"` | `VARCHAR(20) NULL` | Валютная пара. `NULL` — проверка не привязана к символу (группа `pipeline`). |
+| `"PeriodFrom"` | `TIMESTAMPTZ` | Начало проверенного периода. |
+| `"PeriodTo"` | `TIMESTAMPTZ` | Конец проверенного периода. |
+| `"Severity"` | `VARCHAR(10)` | `'ok'`, `'warning'` либо `'error'`. |
+| `"Count"` | `BIGINT DEFAULT 0` | Сколько записей нарушают проверку. |
+| `"Details"` | `JSONB NULL` | Подробности: список символов, значения watermark'ов и т.п. Состав зависит от `CheckType`. |
+| `"CheckedAt"` | `TIMESTAMPTZ DEFAULT now()` | Время выполнения проверки. |
+
+Каталог проверок и пороги — `src/BinanceDataCollector.Application/Common/DataQualityChecks.cs`, сами запросы — `DataQualityRepository.Run*ChecksAsync`.
 
 ---
 
@@ -258,6 +279,9 @@ Watermark'и для streaming-процессов. По одной записи �
 | `ix_dqr_symbol_month` (UNIQUE) | `DataQualityReports` | `(Symbol, PeriodMonth)` | Один отчёт на пару "символ+месяц"; обеспечивает `ON CONFLICT` при upsert. |
 | `ix_dqr_status` | `DataQualityReports` | `(Status)` частичный, `WHERE Status <> 'ok'` | Быстрая выборка проблемных отчётов (`warning`/`error`). |
 | `ix_dqr_checked_at` | `DataQualityReports` | `(CheckedAt DESC)` | Выборка последних по времени проверок. |
+| `ix_dqf_checked_at` | `DataQualityFindings` | `(CheckedAt DESC)` | Основная выборка страницы: последние находки сверху. |
+| `ix_dqf_severity` | `DataQualityFindings` | `(Severity)` частичный, `WHERE Severity <> 'ok'` | Быстрый доступ к проблемам. |
+| `ix_dqf_group_symbol` | `DataQualityFindings` | `(CheckGroup, Symbol)` | Фильтрация по группе проверок и символу. |
 
 ---
 
@@ -295,6 +319,7 @@ Watermark'и для streaming-процессов. По одной записи �
 - `Ohlcv_1min(Symbol, OpenTime)` ↔ `Ohlcv_Features(Symbol, OpenTime)`
 - `HistoricalAudit_Watermarks.Symbol` ↔ `TrackedSymbols.Symbol`
 - `DataQualityReports.Symbol` ↔ `TrackedSymbols.Symbol`
+- `DataQualityFindings.Symbol` ↔ `TrackedSymbols.Symbol` (может быть `NULL` — проверки группы `pipeline` не привязаны к символу)
 - `Processing_Watermarks.ProcessName` — имена процессов жёстко прописаны в коде (`OhlcvAggregator`, `FeatureCalculator`).
 
 **Почему так.** Целевая нагрузка — bulk-вставки тиков (десятки тысяч в секунду). FK-проверки на каждой вставке неприемлемы. Целостность поддерживается на уровне приложения: воркеры не пишут в таблицы для пар, которых нет в `TrackedSymbols`, а sp-процедуры используют `ON CONFLICT DO NOTHING` / `DO UPDATE` для устойчивости к гонкам.
