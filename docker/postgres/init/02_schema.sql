@@ -62,7 +62,9 @@ $$;
 -- Name: sp_aggregate_dirty_minutes(integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_aggregate_dirty_minutes(p_max_minutes integer DEFAULT 10000) RETURNS integer
+CREATE FUNCTION public.sp_aggregate_dirty_minutes(
+    p_max_minutes integer DEFAULT 10000
+) RETURNS integer
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -73,7 +75,7 @@ BEGIN
     CREATE TEMP TABLE batch ON COMMIT DROP AS
     SELECT "Symbol", "OpenTime"
     FROM public."DirtyMinutes"
-    ORDER BY "OpenTime"
+    ORDER BY "OpenTime" DESC
     LIMIT p_max_minutes
     FOR UPDATE SKIP LOCKED;
 
@@ -91,28 +93,34 @@ BEGIN
     END LOOP;
 
     -- Свеча пересчитывается целиком из всех тиков своей минуты — включая те, что уже
-    -- участвовали в прошлом расчёте. Поэтому докачанная дыра или архив, приехавший
-    -- «позади», дают тот же результат, что и данные, пришедшие по порядку.
+    -- участвовали в прошлом расчёте: результат не зависит от порядка прихода данных.
     --
-    -- MIN/MAX по массиву вместо array_agg(ORDER BY): массивы сравниваются поэлементно,
-    -- поэтому цена первой и последней сделки берутся потоковым агрегатом, без сортировки.
+    -- LATERAL обязателен, см. шапку файла. MIN/MAX по массиву вместо
+    -- array_agg(ORDER BY): цена первой и последней сделки берутся потоковым агрегатом,
+    -- без сортировки тиков минуты.
     INSERT INTO public."Ohlcv_1min"
         ("Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume", "ProcessingStatus")
     SELECT
-        t."Symbol",
+        b."Symbol",
         b."OpenTime",
-        (MIN(ARRAY[t."TradeTime"::numeric, t."TradeId"::numeric, t."Price"]))[3]::numeric(18,8) AS "OpenPrice",
-        MAX(t."Price")                                                                          AS "HighPrice",
-        MIN(t."Price")                                                                          AS "LowPrice",
-        (MAX(ARRAY[t."TradeTime"::numeric, t."TradeId"::numeric, t."Price"]))[3]::numeric(18,8) AS "ClosePrice",
-        SUM(t."Quantity")                                                                       AS "Volume",
+        c."OpenPrice", c."HighPrice", c."LowPrice", c."ClosePrice", c."Volume",
         'new'
     FROM batch b
-    JOIN public."Trades" t
-      ON t."Symbol" = b."Symbol"
-     AND t."TradeTime" >= b."OpenTime"
-     AND t."TradeTime" <  b."OpenTime" + 60000
-    GROUP BY t."Symbol", b."OpenTime"
+    CROSS JOIN LATERAL (
+        SELECT
+            (MIN(ARRAY[t."TradeTime"::numeric, t."TradeId"::numeric, t."Price"]))[3]::numeric(18,8) AS "OpenPrice",
+            MAX(t."Price")                                                                          AS "HighPrice",
+            MIN(t."Price")                                                                          AS "LowPrice",
+            (MAX(ARRAY[t."TradeTime"::numeric, t."TradeId"::numeric, t."Price"]))[3]::numeric(18,8) AS "ClosePrice",
+            SUM(t."Quantity")                                                                       AS "Volume"
+        FROM public."Trades" t
+        WHERE t."Symbol" = b."Symbol"
+          AND t."TradeTime" >= b."OpenTime"
+          AND t."TradeTime" <  b."OpenTime" + 60000
+    ) c
+    -- Минута без тиков (например, тики удалила ротация партиций): свечи не будет,
+    -- но из очереди минута всё равно уйдёт.
+    WHERE c."Volume" IS NOT NULL
     ON CONFLICT ("Symbol", "OpenTime") DO UPDATE SET
         "OpenPrice"  = EXCLUDED."OpenPrice",
         "HighPrice"  = EXCLUDED."HighPrice",

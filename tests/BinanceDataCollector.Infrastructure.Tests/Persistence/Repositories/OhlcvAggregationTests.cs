@@ -218,9 +218,10 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
         Assert.Equal(2, await _repository.AggregateDirtyMinutesAsync(2));
         Assert.Equal(1, await DirtyMinuteCountAsync());
 
-        // Разбирается от старых минут к свежим: осталась последняя.
+        // Разбирается от свежих минут к старым — после простоя живой график
+        // восстанавливается первой же пачкой. Осталась самая старая минута.
         Assert.Equal(2, await CandleCountAsync());
-        Assert.Equal(Minute(2), await QuerySingleAsync<long>(
+        Assert.Equal(Minute(0), await QuerySingleAsync<long>(
             @"SELECT ""OpenTime"" FROM public.""DirtyMinutes"";"));
 
         Assert.Equal(1, await _repository.AggregateDirtyMinutesAsync(BatchMinutes));
