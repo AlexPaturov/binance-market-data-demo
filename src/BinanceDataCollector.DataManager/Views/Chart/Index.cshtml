@@ -83,18 +83,48 @@
 <div id="macd-chart" style="height: 130px; display: none;"></div>
 <div id="cvd-chart" style="height: 130px; display: none;"></div>
 
+<div class="d-flex justify-content-end align-items-center gap-2 mt-1">
+    <label class="form-label small mb-0 text-secondary" for="timezone">Часовой пояс</label>
+    <select id="timezone" class="form-select form-select-sm" style="width: 260px;"></select>
+</div>
+
 @section Scripts {
     <script src="~/lib/lightweight-charts/lightweight-charts.standalone.production.js"></script>
     <script>
         (function () {
             const POLL_MS = 3000;
 
+            const TZ_STORAGE_KEY = 'chart.timezone';
+
+            // Зоны в списке — те же биржевые площадки, что и у Binance. Смещения не
+            // хардкодим: они зависят от даты (переход на летнее время), поэтому подпись
+            // считается из самой зоны при отрисовке списка.
+            const TIME_ZONES = [
+                'UTC',
+                'America/Los_Angeles',
+                'America/New_York',
+                'America/Sao_Paulo',
+                'Europe/London',
+                'Europe/Berlin',
+                'Europe/Moscow',
+                'Asia/Dubai',
+                'Asia/Kolkata',
+                'Asia/Bangkok',
+                'Asia/Shanghai',
+                'Asia/Singapore',
+                'Asia/Tokyo',
+                'Australia/Sydney'
+            ];
+
+            const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
             const state = {
                 symbol: $('#symbol').val(),
                 timeframe: '1h',
                 enabled: { ma: false, rsi: false, macd: false, cvd: false },
                 lastBarTime: null,
-                timer: null
+                timer: null,
+                timezone: localStorage.getItem(TZ_STORAGE_KEY) || 'UTC'
             };
 
             const chartOptions = {
@@ -143,8 +173,65 @@
                 });
             });
 
+            // --- Часовой пояс ---
+            // Библиотека рисует UTCTimestamp как UTC и своего понятия о зонах не имеет.
+            // Поэтому отметки времени сдвигаются на смещение выбранной зоны: подпись «12:00»
+            // на оси означает полдень в этой зоне. Сдвиг считается для каждого момента
+            // отдельно — иначе бары до и после перехода на летнее время разъехались бы.
+            const offsetCache = new Map();
+
+            function zoneOffsetMs(zone, ms) {
+                if (zone === 'UTC') return 0;
+
+                const hourKey = `${zone}|${Math.floor(ms / 3_600_000)}`;   // переходы DST случаются на границе часа
+                const cached = offsetCache.get(hourKey);
+                if (cached !== undefined) return cached;
+
+                const parts = new Intl.DateTimeFormat('en-US', {
+                    timeZone: zone, hour12: false,
+                    year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit'
+                }).formatToParts(new Date(ms))
+                  .reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+
+                const wallClockUtc = Date.UTC(
+                    +parts.year, +parts.month - 1, +parts.day,
+                    +parts.hour % 24, +parts.minute, +parts.second);
+
+                const offset = wallClockUtc - Math.floor(ms / 1000) * 1000;
+                offsetCache.set(hourKey, offset);
+                return offset;
+            }
+
+            /// Подпись зоны в списке: смещение берётся на текущий момент.
+            function zoneLabel(zone) {
+                if (zone === 'UTC') return 'UTC';
+
+                const minutes = zoneOffsetMs(zone, Date.now()) / 60_000;
+                const sign = minutes < 0 ? '-' : '+';
+                const abs = Math.abs(minutes);
+                const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+                const mm = String(abs % 60).padStart(2, '0');
+                const city = zone.split('/').pop().replace(/_/g, ' ');
+
+                return `(UTC${sign}${hh}:${mm}) ${city}`;
+            }
+
+            function fillTimezones() {
+                const zones = TIME_ZONES.includes(localZone) ? TIME_ZONES : [localZone, ...TIME_ZONES];
+
+                if (!zones.includes(state.timezone)) state.timezone = 'UTC';
+
+                $('#timezone').html(zones.map(z => {
+                    const suffix = z === localZone && z !== 'UTC' ? ' — местное время' : '';
+                    return `<option value="${z}">${zoneLabel(z)}${suffix}</option>`;
+                }).join(''));
+
+                $('#timezone').val(state.timezone);
+            }
+
             // --- Преобразование данных ---
-            const sec = ms => Math.floor(ms / 1000);
+            const sec = ms => Math.floor((ms + zoneOffsetMs(state.timezone, ms)) / 1000);
 
             const toCandles = c => c.map(x => ({
                 time: sec(x.openTime), open: +x.openPrice, high: +x.highPrice,
@@ -292,6 +379,14 @@
 
             $('#apply').on('click', reload);
 
+            // Смена зоны меняет отметки времени у всех уже отрисованных точек, поэтому
+            // серии перезаполняются целиком — обновить только хвост нельзя.
+            $('#timezone').on('change', function () {
+                state.timezone = this.value;
+                localStorage.setItem(TZ_STORAGE_KEY, state.timezone);
+                reload();
+            });
+
             $(window).on('resize', () => {
                 charts.forEach(c => {
                     const el = c.chartElement().parentElement;
@@ -299,6 +394,7 @@
                 });
             });
 
+            fillTimezones();
             applyPanels();
             reload();
             restartPolling();
