@@ -1,0 +1,307 @@
+@model ChartViewModel
+@{
+    ViewData["Title"] = "Chart";
+}
+
+<div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+    <select id="symbol" class="form-select form-select-sm" style="width: 160px;">
+        @foreach (var s in Model.ActiveSymbols)
+        {
+            <option value="@s">@s</option>
+        }
+    </select>
+
+    <div class="btn-group btn-group-sm" role="group" id="timeframes">
+        @foreach (var tf in Model.Timeframes)
+        {
+            <button type="button" class="btn btn-outline-secondary tf-btn @(tf == "1h" ? "active" : "")" data-tf="@tf">@tf</button>
+        }
+    </div>
+
+    <div class="vr mx-1"></div>
+
+    <div class="btn-group btn-group-sm" role="group">
+        <button type="button" class="btn btn-outline-primary ind-btn" data-ind="ma">MA</button>
+        <button type="button" class="btn btn-outline-primary ind-btn" data-ind="rsi">RSI</button>
+        <button type="button" class="btn btn-outline-primary ind-btn" data-ind="macd">MACD</button>
+        <button type="button" class="btn btn-outline-primary ind-btn" data-ind="cvd">CVD</button>
+    </div>
+
+    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#settings">
+        <i class="bi bi-sliders"></i>
+    </button>
+
+    <span class="ms-auto small text-secondary" id="status">—</span>
+</div>
+
+<div class="collapse mb-2" id="settings">
+    <div class="card card-body py-2">
+        <div class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label class="form-label small mb-0">MA быстрая</label>
+                <input type="number" id="maFast" class="form-control form-control-sm" value="50" min="2" max="1000" style="width: 90px;">
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-0">MA медленная</label>
+                <input type="number" id="maSlow" class="form-control form-control-sm" value="200" min="2" max="1000" style="width: 90px;">
+            </div>
+            <div class="col-auto">
+                <div class="form-check mb-1">
+                    <input class="form-check-input" type="checkbox" id="useEma">
+                    <label class="form-check-label small" for="useEma">EMA</label>
+                </div>
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-0">RSI</label>
+                <input type="number" id="rsiPeriod" class="form-control form-control-sm" value="14" min="2" max="200" style="width: 80px;">
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-0">MACD (f/s/sig)</label>
+                <div class="d-flex gap-1">
+                    <input type="number" id="macdFast" class="form-control form-control-sm" value="12" style="width: 65px;">
+                    <input type="number" id="macdSlow" class="form-control form-control-sm" value="26" style="width: 65px;">
+                    <input type="number" id="macdSignal" class="form-control form-control-sm" value="9" style="width: 65px;">
+                </div>
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-0">Баров</label>
+                <input type="number" id="limit" class="form-control form-control-sm" value="@Model.DefaultLimit" min="50" max="1500" style="width: 90px;">
+            </div>
+            <div class="col-auto">
+                <button id="apply" class="btn btn-sm btn-primary">Применить</button>
+            </div>
+        </div>
+        <div class="form-text mt-1">
+            Периоды MA — в барах текущего таймфрейма: MA(200) на 1д — это 200 дней.
+            Индикаторы пересчитываются из свечей выбранного таймфрейма.
+        </div>
+    </div>
+</div>
+
+<div id="price-chart" style="height: 460px;"></div>
+<div id="rsi-chart" style="height: 130px; display: none;"></div>
+<div id="macd-chart" style="height: 130px; display: none;"></div>
+<div id="cvd-chart" style="height: 130px; display: none;"></div>
+
+@section Scripts {
+    <script src="~/lib/lightweight-charts/lightweight-charts.standalone.production.js"></script>
+    <script>
+        (function () {
+            const POLL_MS = 3000;
+
+            const state = {
+                symbol: $('#symbol').val(),
+                timeframe: '1h',
+                enabled: { ma: false, rsi: false, macd: false, cvd: false },
+                lastBarTime: null,
+                timer: null
+            };
+
+            const chartOptions = {
+                layout: { background: { color: '#ffffff' }, textColor: '#333' },
+                grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
+                timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#ddd' },
+                rightPriceScale: { borderColor: '#ddd' },
+                crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
+            };
+
+            // --- Графики: цена + отдельные панели под осцилляторы ---
+            const priceChart = LightweightCharts.createChart(document.getElementById('price-chart'), chartOptions);
+            const rsiChart   = LightweightCharts.createChart(document.getElementById('rsi-chart'), chartOptions);
+            const macdChart  = LightweightCharts.createChart(document.getElementById('macd-chart'), chartOptions);
+            const cvdChart   = LightweightCharts.createChart(document.getElementById('cvd-chart'), chartOptions);
+
+            const candleSeries = priceChart.addCandlestickSeries({
+                upColor: '#26a69a', downColor: '#ef5350',
+                borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+            });
+
+            const volumeSeries = priceChart.addHistogramSeries({
+                color: '#c8d6e5', priceFormat: { type: 'volume' }, priceScaleId: ''
+            });
+            volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+
+            const maFastSeries = priceChart.addLineSeries({ color: '#f39c12', lineWidth: 2, visible: false });
+            const maSlowSeries = priceChart.addLineSeries({ color: '#8e44ad', lineWidth: 2, visible: false });
+
+            const rsiSeries        = rsiChart.addLineSeries({ color: '#2980b9', lineWidth: 2 });
+            const macdLineSeries   = macdChart.addLineSeries({ color: '#2980b9', lineWidth: 2 });
+            const macdSignalSeries = macdChart.addLineSeries({ color: '#e67e22', lineWidth: 2 });
+            const macdHistSeries   = macdChart.addHistogramSeries({ color: '#95a5a6' });
+            const cvdSeries        = cvdChart.addLineSeries({ color: '#16a085', lineWidth: 2 });
+
+            // Уровни перекупленности/перепроданности
+            rsiSeries.createPriceLine({ price: 70, color: '#ef5350', lineStyle: 2, lineWidth: 1, title: '70' });
+            rsiSeries.createPriceLine({ price: 30, color: '#26a69a', lineStyle: 2, lineWidth: 1, title: '30' });
+
+            // Синхронизация временных осей всех панелей
+            const charts = [priceChart, rsiChart, macdChart, cvdChart];
+            charts.forEach(src => {
+                src.timeScale().subscribeVisibleLogicalRangeChange(range => {
+                    if (!range) return;
+                    charts.forEach(dst => { if (dst !== src) dst.timeScale().setVisibleLogicalRange(range); });
+                });
+            });
+
+            // --- Преобразование данных ---
+            const sec = ms => Math.floor(ms / 1000);
+
+            const toCandles = c => c.map(x => ({
+                time: sec(x.openTime), open: +x.openPrice, high: +x.highPrice,
+                low: +x.lowPrice, close: +x.closePrice
+            }));
+
+            const toVolume = c => c.map(x => ({
+                time: sec(x.openTime), value: +x.volume,
+                color: +x.closePrice >= +x.openPrice ? 'rgba(38,166,154,0.4)' : 'rgba(239,83,80,0.4)'
+            }));
+
+            const toLine = pts => pts.map(p => ({ time: sec(p.openTime), value: +p.value }));
+
+            const toHist = pts => pts.map(p => ({
+                time: sec(p.openTime), value: +p.value,
+                color: +p.value >= 0 ? 'rgba(38,166,154,0.6)' : 'rgba(239,83,80,0.6)'
+            }));
+
+            function settings() {
+                return {
+                    limit: $('#limit').val(),
+                    rsiPeriod: $('#rsiPeriod').val(),
+                    macdFast: $('#macdFast').val(),
+                    macdSlow: $('#macdSlow').val(),
+                    macdSignal: $('#macdSignal').val(),
+                    maFastPeriod: $('#maFast').val(),
+                    maSlowPeriod: $('#maSlow').val(),
+                    useEma: $('#useEma').is(':checked'),
+                    withCvd: state.enabled.cvd
+                };
+            }
+
+            function status(text, isError) {
+                $('#status').text(text).css('color', isError ? '#dc3545' : '');
+            }
+
+            // --- Полная перерисовка ---
+            function reload() {
+                const params = Object.assign({ symbol: state.symbol, timeframe: state.timeframe }, settings());
+
+                $.getJSON('@Url.Action("Data", "Chart")', params)
+                    .done(data => {
+                        if (!data.candles || data.candles.length === 0) {
+                            candleSeries.setData([]); volumeSeries.setData([]);
+                            status('Нет данных: свечи за этот период не рассчитаны', true);
+                            state.lastBarTime = null;
+                            return;
+                        }
+
+                        candleSeries.setData(toCandles(data.candles));
+                        volumeSeries.setData(toVolume(data.candles));
+
+                        const i = data.indicators;
+                        maFastSeries.setData(toLine(i.maFast));
+                        maSlowSeries.setData(toLine(i.maSlow));
+                        rsiSeries.setData(toLine(i.rsi));
+                        macdLineSeries.setData(toLine(i.macdLine));
+                        macdSignalSeries.setData(toLine(i.macdSignal));
+                        macdHistSeries.setData(toHist(i.macdHistogram));
+                        cvdSeries.setData(toLine(i.cvd));
+
+                        state.lastBarTime = data.candles[data.candles.length - 1].openTime;
+                        priceChart.timeScale().fitContent();
+                        status(`${data.candles.length} баров · ${state.symbol} · ${state.timeframe}`);
+                    })
+                    .fail(xhr => status(xhr.responseText || 'Ошибка загрузки', true));
+            }
+
+            // --- Дозагрузка свежих баров (раз в 3 секунды) ---
+            function poll() {
+                if (state.lastBarTime === null) return;
+
+                const params = Object.assign(
+                    { symbol: state.symbol, timeframe: state.timeframe, sinceMs: state.lastBarTime },
+                    settings());
+
+                $.getJSON('@Url.Action("Data", "Chart")', params)
+                    .done(data => {
+                        if (!data.candles || data.candles.length === 0) return;
+
+                        // Первый бар — тот, что мог дорасти с прошлого опроса; update перезапишет его.
+                        data.candles.forEach(c => candleSeries.update({
+                            time: sec(c.openTime), open: +c.openPrice, high: +c.highPrice,
+                            low: +c.lowPrice, close: +c.closePrice
+                        }));
+
+                        toVolume(data.candles).forEach(v => volumeSeries.update(v));
+
+                        const i = data.indicators;
+                        toLine(i.maFast).forEach(p => maFastSeries.update(p));
+                        toLine(i.maSlow).forEach(p => maSlowSeries.update(p));
+                        toLine(i.rsi).forEach(p => rsiSeries.update(p));
+                        toLine(i.macdLine).forEach(p => macdLineSeries.update(p));
+                        toLine(i.macdSignal).forEach(p => macdSignalSeries.update(p));
+                        toHist(i.macdHistogram).forEach(p => macdHistSeries.update(p));
+                        toLine(i.cvd).forEach(p => cvdSeries.update(p));
+
+                        state.lastBarTime = data.candles[data.candles.length - 1].openTime;
+                    });
+            }
+
+            function restartPolling() {
+                if (state.timer) clearInterval(state.timer);
+                state.timer = setInterval(poll, POLL_MS);
+            }
+
+            // --- Панели индикаторов ---
+            function applyPanels() {
+                maFastSeries.applyOptions({ visible: state.enabled.ma });
+                maSlowSeries.applyOptions({ visible: state.enabled.ma });
+                $('#rsi-chart').toggle(state.enabled.rsi);
+                $('#macd-chart').toggle(state.enabled.macd);
+                $('#cvd-chart').toggle(state.enabled.cvd);
+
+                // Панели скрыты через display:none — после показа им нужен пересчёт размеров.
+                [['rsi', rsiChart], ['macd', macdChart], ['cvd', cvdChart]].forEach(([key, chart]) => {
+                    if (state.enabled[key]) {
+                        const el = document.getElementById(`${key}-chart`);
+                        chart.resize(el.clientWidth, el.clientHeight);
+                    }
+                });
+            }
+
+            // --- События ---
+            $('#symbol').on('change', function () {
+                state.symbol = this.value;
+                reload();
+            });
+
+            $('.tf-btn').on('click', function () {
+                $('.tf-btn').removeClass('active');
+                $(this).addClass('active');
+                state.timeframe = $(this).data('tf');
+                reload();
+            });
+
+            $('.ind-btn').on('click', function () {
+                const ind = $(this).data('ind');
+                state.enabled[ind] = !state.enabled[ind];
+                $(this).toggleClass('active', state.enabled[ind]);
+                applyPanels();
+                // CVD тянется из БД отдельным запросом — нужен полный перезапрос.
+                if (ind === 'cvd' && state.enabled.cvd) reload();
+            });
+
+            $('#apply').on('click', reload);
+
+            $(window).on('resize', () => {
+                charts.forEach(c => {
+                    const el = c.chartElement().parentElement;
+                    if (el && el.clientWidth) c.resize(el.clientWidth, el.clientHeight);
+                });
+            });
+
+            applyPanels();
+            reload();
+            restartPolling();
+        })();
+    </script>
+}

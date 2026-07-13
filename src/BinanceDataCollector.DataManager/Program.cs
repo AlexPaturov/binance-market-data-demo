@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using BinanceDataCollector.Application.Analytics;
 using BinanceDataCollector.Application.Archives.Interfaces;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Common;
@@ -164,6 +165,8 @@ public class Program {
             builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
             builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
             builder.Services.AddScoped<IDataQualityRepository, DataQualityRepository>();
+            builder.Services.AddScoped<IChartRepository, ChartRepository>();
+            builder.Services.AddTransient<IChartIndicatorService, ChartIndicatorService>();
             builder.Services.AddScoped<IArchiveService, ArchiveService>();
             builder.Services.AddHostedService<RabbitMQListenerService>();
             builder.Services.AddScoped<IDatabaseMonitoringService, DatabaseMonitoringService>();
