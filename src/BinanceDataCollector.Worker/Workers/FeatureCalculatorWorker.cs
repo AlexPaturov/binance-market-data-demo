@@ -36,7 +36,10 @@ public class FeatureCalculatorWorker
         _analysisRepository = analysisRepository;
     }
 
-    [Queue("default")] // Тоже задача среднего приоритета
+    // Очередь приоритетного сервера: индикаторы идут следом за свечами и должны поспевать
+    // за ними. В `default` расчёт делил воркеров с импортом архивов и голодал вместе с
+    // агрегатором.
+    [Queue("realtime")]
     [DisableConcurrentExecution(30 * 60)] // Даем 20 минут на расчет
     public async Task CalculateFeaturesAsync()
     {

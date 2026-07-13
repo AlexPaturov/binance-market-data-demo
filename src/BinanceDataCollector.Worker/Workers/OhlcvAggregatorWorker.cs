@@ -16,7 +16,11 @@ namespace BinanceDataCollector.Worker.Workers;
 /// Свеча пересчитывается целиком из всех тиков минуты, поэтому повторный прогон
 /// на тех же данных даёт тот же результат.
 /// </summary>
-[Queue("historical_audit")]
+// Очередь приоритетного сервера: свечи — основа графика, индикаторов и фич, они нужны
+// в темпе поступления тиков. На фоновом сервере агрегатор делил воркеров с импортом
+// архивов и вставал вместе с ним: пачка распаковки занимала всех воркеров, свечи
+// переставали считаться на часы.
+[Queue("realtime")]
 [DisableConcurrentExecution(30 * 60)]
 [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
 public class OhlcvAggregatorWorker

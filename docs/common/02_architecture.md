@@ -39,17 +39,17 @@ Binance WebSocket ──► книга в памяти ──► OrderBook_Featu
 
 ## Периодические задачи (Hangfire)
 
-| Джоба | Воркер | Расписание | Что делает |
-| :--- | :--- | :--- | :--- |
-| `update-symbols` | `SymbolUpdateWorker` | раз в день | Сканирует рынок, отбирает топ-40 ликвидных торгуемых (`status = TRADING`) пар в `TrackedSymbols` |
-| `ohlcv-aggregator` | `OhlcvAggregatorWorker` | раз в минуту | Тики → минутные свечи |
-| `feature-calculator` | `FeatureCalculatorWorker` | раз в 2 минуты | Свечи → RSI, MACD, CVD |
-| `quick_audit` | `QuickAuditorWorker` | раз в 10 минут | Дыры за последние 24 часа — то, что оставляет обрыв связи |
-| `historical-audit` | `HistoricalAuditorWorker` | раз в 6 часов | Глубокая проверка истории на пропуски |
-| `audit-initializer` | `AuditInitializationWorker` | раз в день | Вотермарки аудита для новых символов |
-| `partition-maintenance` | `PartitionMaintenanceWorker` | раз в день | Ротация партиций по размеру диска |
+| Джоба | Воркер | Расписание | Очередь | Что делает |
+| :--- | :--- | :--- | :--- | :--- |
+| `update-symbols` | `SymbolUpdateWorker` | раз в день | `realtime` | Сканирует рынок, отбирает топ-40 ликвидных торгуемых (`status = TRADING`) пар в `TrackedSymbols` |
+| `ohlcv-aggregator` | `OhlcvAggregatorWorker` | раз в минуту | `realtime` | Тики → минутные свечи |
+| `feature-calculator` | `FeatureCalculatorWorker` | раз в 2 минуты | `realtime` | Свечи → RSI, MACD, CVD |
+| `quick_audit` | `QuickAuditorWorker` | раз в 10 минут | `quick_audit` | Дыры за последние 24 часа — то, что оставляет обрыв связи |
+| `historical-audit` | `HistoricalAuditorWorker` | раз в 6 часов | `historical_audit` | Глубокая проверка истории на пропуски |
+| `audit-initializer` | `AuditInitializationWorker` | раз в день | `default` | Вотермарки аудита для новых символов |
+| `partition-maintenance` | `PartitionMaintenanceWorker` | раз в день | `default` | Ротация партиций по размеру диска |
 
-Очереди разнесены по двум серверам Hangfire, чтобы тяжёлая история не блокировала быстрые задачи — [ADR 0003](../adr/0003-hangfire-queue-model.md).
+Очереди разнесены по двум серверам Hangfire: `realtime` и `quick_audit` разбирает `PriorityServer`, остальные — `BackgroundServer`. Весь конвейер реального времени (агрегация свечей, расчёт индикаторов) стоит на приоритетном сервере, чтобы импорт архивов не мог его вытеснить — [ADR 0003](../adr/0003-hangfire-queue-model.md).
 
 ---
 
