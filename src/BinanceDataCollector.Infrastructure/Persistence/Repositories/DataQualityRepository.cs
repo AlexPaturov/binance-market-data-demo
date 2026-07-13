@@ -428,13 +428,14 @@ public class DataQualityRepository : IDataQualityRepository
             missing.Count > 0 ? $"{{\"processes\": [{string.Join(",", missing.Select(m => $"\"{m}\""))}]}}" : null));
 
         // 3. Watermark завис: не двигался больше часа, хотя необработанные записи есть.
+        //    Для агрегатора «есть работа» — это непустая очередь грязных минут.
         const string stalledSql = @"
             SELECT COUNT(*)
             FROM public.""Processing_Watermarks"" w
             WHERE w.""LastUpdate_UTC"" < NOW() - INTERVAL '1 hour'
               AND (
                   (w.""ProcessName"" = 'OhlcvAggregator'
-                   AND EXISTS (SELECT 1 FROM public.""Trades"" WHERE ""ProcessingStatus"" = 'new'))
+                   AND EXISTS (SELECT 1 FROM public.""DirtyMinutes""))
                   OR
                   (w.""ProcessName"" = 'FeatureCalculator'
                    AND EXISTS (SELECT 1 FROM public.""Ohlcv_1min"" WHERE ""ProcessingStatus"" = 'new'))

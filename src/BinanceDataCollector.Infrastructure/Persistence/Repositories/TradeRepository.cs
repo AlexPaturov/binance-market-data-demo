@@ -118,12 +118,12 @@ public class TradeRepository : ITradeRepository
         return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol }, commandTimeout: 120);
     }
 
-    public async Task<int> AggregateNewTradesAsync(long windowMs)
+    public async Task<int> AggregateDirtyMinutesAsync(int maxMinutes)
     {
         using var db = Connection;
         return await db.ExecuteScalarAsync<int>(
-            "SELECT public.sp_aggregate_new_trades(@WindowMs)",
-            new { WindowMs = windowMs },
+            "SELECT public.sp_aggregate_dirty_minutes(@MaxMinutes)",
+            new { MaxMinutes = maxMinutes },
             commandTimeout: 600);
     }
 

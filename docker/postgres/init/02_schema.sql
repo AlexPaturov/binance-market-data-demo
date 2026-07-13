@@ -59,114 +59,82 @@ $$;
 
 
 --
--- Name: sp_aggregate_new_trades(bigint); Type: FUNCTION; Schema: public; Owner: -
+-- Name: sp_aggregate_dirty_minutes(integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_aggregate_new_trades(p_window_ms bigint DEFAULT 21600000) RETURNS integer
+CREATE FUNCTION public.sp_aggregate_dirty_minutes(p_max_minutes integer DEFAULT 10000) RETURNS integer
     LANGUAGE plpgsql
     AS $$
 DECLARE
-    v_from    BIGINT;
-    v_to      BIGINT;
-    v_symbols VARCHAR[];
     v_candles INT := 0;
-    m         BIGINT;
+    v_max_time BIGINT;
+    m BIGINT;
 BEGIN
-    -- Самый старый необработанный тик, округлённый вниз до минуты: свечу надо
-    -- пересчитать целиком, а тик может стоять в середине минуты.
-    -- Частичный индекс ix_trades_new_tradetime делает это index-only.
-    SELECT (MIN("TradeTime") / 60000) * 60000 INTO v_from
-    FROM public."Trades"
-    WHERE "ProcessingStatus" = 'new';
+    CREATE TEMP TABLE batch ON COMMIT DROP AS
+    SELECT "Symbol", "OpenTime"
+    FROM public."DirtyMinutes"
+    ORDER BY "OpenTime"
+    LIMIT p_max_minutes
+    FOR UPDATE SKIP LOCKED;
 
-    IF v_from IS NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM batch) THEN
         RETURN 0;
     END IF;
 
-    v_to := v_from + p_window_ms;
-
-    -- Символы, у которых в окне есть необработанные тики.
-    --
-    -- Список нужен, чтобы запрос лёг на индекс (Symbol, TradeTime): без ограничения
-    -- по символу диапазон по одному TradeTime вырождается в seq scan всей партиции
-    -- (десятки ГБ). Символы берём из самих данных, а НЕ из TrackedSymbols: тик по
-    -- неотслеживаемой паре иначе остался бы 'new' навсегда и заблокировал бы окно.
-    SELECT array_agg(DISTINCT "Symbol") INTO v_symbols
-    FROM public."Trades"
-    WHERE "ProcessingStatus" = 'new'
-      AND "TradeTime" >= v_from
-      AND "TradeTime" <  v_to;
-
-    IF v_symbols IS NULL THEN
-        RETURN 0;
-    END IF;
-
-    -- Партиции под месяцы окна.
+    -- Партиции под месяцы пачки.
     FOR m IN
-        SELECT DISTINCT (EXTRACT(EPOCH FROM d)::BIGINT) * 1000
-        FROM generate_series(
-            DATE_TRUNC('month', TO_TIMESTAMP(v_from / 1000.0) AT TIME ZONE 'UTC'),
-            DATE_TRUNC('month', TO_TIMESTAMP(v_to   / 1000.0) AT TIME ZONE 'UTC'),
-            INTERVAL '1 month') AS d
+        SELECT DISTINCT (EXTRACT(EPOCH FROM DATE_TRUNC('month',
+            TO_TIMESTAMP("OpenTime" / 1000.0) AT TIME ZONE 'UTC'))::BIGINT) * 1000
+        FROM batch
     LOOP
         PERFORM public.sp_ensure_month_partitions(m);
     END LOOP;
 
-    -- Пересчёт свечей окна ЦЕЛИКОМ из всех тиков минуты — включая уже обработанные.
-    -- Только так результат не зависит от порядка прихода данных: докачанная дыра
-    -- или архив, приехавший «позади», просто попадают в пересчёт.
+    -- Свеча пересчитывается целиком из всех тиков своей минуты — включая те, что уже
+    -- участвовали в прошлом расчёте. Поэтому докачанная дыра или архив, приехавший
+    -- «позади», дают тот же результат, что и данные, пришедшие по порядку.
     --
-    -- MIN/MAX по массиву вместо array_agg(ORDER BY): массивы сравниваются
-    -- поэлементно, поэтому цена первой и последней сделки берутся потоковым
-    -- агрегатом, без сортировки всего окна (она уходила в temp-файлы на диск).
+    -- MIN/MAX по массиву вместо array_agg(ORDER BY): массивы сравниваются поэлементно,
+    -- поэтому цена первой и последней сделки берутся потоковым агрегатом, без сортировки.
     INSERT INTO public."Ohlcv_1min"
         ("Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume", "ProcessingStatus")
     SELECT
-        "Symbol",
-        ("TradeTime" / 60000) * 60000                                                  AS "OpenTime",
-        (MIN(ARRAY["TradeTime"::numeric, "TradeId"::numeric, "Price"]))[3]::numeric(18,8) AS "OpenPrice",
-        MAX("Price")                                                                   AS "HighPrice",
-        MIN("Price")                                                                   AS "LowPrice",
-        (MAX(ARRAY["TradeTime"::numeric, "TradeId"::numeric, "Price"]))[3]::numeric(18,8) AS "ClosePrice",
-        SUM("Quantity")                                                                AS "Volume",
+        t."Symbol",
+        b."OpenTime",
+        (MIN(ARRAY[t."TradeTime"::numeric, t."TradeId"::numeric, t."Price"]))[3]::numeric(18,8) AS "OpenPrice",
+        MAX(t."Price")                                                                          AS "HighPrice",
+        MIN(t."Price")                                                                          AS "LowPrice",
+        (MAX(ARRAY[t."TradeTime"::numeric, t."TradeId"::numeric, t."Price"]))[3]::numeric(18,8) AS "ClosePrice",
+        SUM(t."Quantity")                                                                       AS "Volume",
         'new'
-    FROM public."Trades"
-    WHERE "Symbol" = ANY(v_symbols)
-      AND "TradeTime" >= v_from
-      AND "TradeTime" <  v_to
-      -- Только минуты, где действительно есть необработанные тики. Иначе окно в 6 часов
-      -- пересчитывало бы и уже готовые свечи, помечая их 'new' — и feature-pipeline
-      -- заново считал бы по ним индикаторы впустую.
-      AND (("TradeTime" / 60000) * 60000) IN (
-          SELECT DISTINCT ("TradeTime" / 60000) * 60000
-          FROM public."Trades"
-          WHERE "ProcessingStatus" = 'new'
-            AND "TradeTime" >= v_from
-            AND "TradeTime" <  v_to
-      )
-    GROUP BY 1, 2
+    FROM batch b
+    JOIN public."Trades" t
+      ON t."Symbol" = b."Symbol"
+     AND t."TradeTime" >= b."OpenTime"
+     AND t."TradeTime" <  b."OpenTime" + 60000
+    GROUP BY t."Symbol", b."OpenTime"
     ON CONFLICT ("Symbol", "OpenTime") DO UPDATE SET
         "OpenPrice"  = EXCLUDED."OpenPrice",
         "HighPrice"  = EXCLUDED."HighPrice",
         "LowPrice"   = EXCLUDED."LowPrice",
         "ClosePrice" = EXCLUDED."ClosePrice",
         "Volume"     = EXCLUDED."Volume",
-        -- Свеча пересчитана → индикаторы устарели, feature-pipeline возьмёт её заново.
+        -- Свеча пересчитана → индикаторы по ней устарели, feature-pipeline возьмёт её заново.
         "ProcessingStatus" = 'new';
 
     GET DIAGNOSTICS v_candles = ROW_COUNT;
 
-    UPDATE public."Trades"
-    SET "ProcessingStatus" = 'processed'
-    WHERE "Symbol" = ANY(v_symbols)
-      AND "TradeTime" >= v_from
-      AND "TradeTime" <  v_to
-      AND "ProcessingStatus" = 'new';
+    DELETE FROM public."DirtyMinutes" d
+    USING batch b
+    WHERE d."Symbol" = b."Symbol"
+      AND d."OpenTime" = b."OpenTime";
 
-    -- Watermark — только индикатор прогресса. Корректность на нём больше не держится.
+    SELECT MAX("OpenTime") INTO v_max_time FROM batch;
+
+    -- Watermark — индикатор прогресса. Корректность на нём не держится: работу находит очередь.
     INSERT INTO public."Processing_Watermarks"
         ("ProcessName", "LastProcessedTimestamp", "Status", "LastUpdate_UTC")
-    VALUES ('OhlcvAggregator', v_to, 'Pending', NOW())
+    VALUES ('OhlcvAggregator', v_max_time + 60000, 'Pending', NOW())
     ON CONFLICT ("ProcessName") DO UPDATE SET
         "LastProcessedTimestamp" = GREATEST(
             public."Processing_Watermarks"."LastProcessedTimestamp", EXCLUDED."LastProcessedTimestamp"),
@@ -186,15 +154,25 @@ CREATE FUNCTION public.sp_bulk_insert_trades(p_trade_ids bigint[], p_symbols cha
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    INSERT INTO public."Trades" (
-        "TradeId", "Symbol", "Price", "Quantity", "QuoteQuantity",
-        "TradeTime", "IsBuyerMaker", "IsBestMatch"
+    -- Грязными помечаем минуты только тех тиков, что действительно вставились (RETURNING).
+    -- Повторный импорт того же архива упирается в ON CONFLICT DO NOTHING и очередь не пачкает:
+    -- пересчитывать свечу, в которой ничего не изменилось, незачем.
+    WITH inserted AS (
+        INSERT INTO public."Trades" (
+            "TradeId", "Symbol", "Price", "Quantity", "QuoteQuantity",
+            "TradeTime", "IsBuyerMaker", "IsBestMatch"
+        )
+        SELECT * FROM UNNEST(
+            p_trade_ids, p_symbols, p_prices, p_quantities, p_quote_quantities,
+            p_trade_times, p_is_buyer_makers, p_is_best_matches
+        )
+        ON CONFLICT ("TradeId", "Symbol", "TradeTime") DO NOTHING
+        RETURNING "Symbol", "TradeTime"
     )
-    SELECT * FROM UNNEST(
-        p_trade_ids, p_symbols, p_prices, p_quantities, p_quote_quantities,
-        p_trade_times, p_is_buyer_makers, p_is_best_matches
-    )
-    ON CONFLICT ("TradeId", "Symbol", "TradeTime") DO NOTHING;
+    INSERT INTO public."DirtyMinutes" ("Symbol", "OpenTime")
+    SELECT DISTINCT "Symbol", ("TradeTime" / 60000) * 60000
+    FROM inserted
+    ON CONFLICT DO NOTHING;
 END;
 $$;
 
@@ -460,7 +438,7 @@ $$;
 
 
 --
--- Name: sp_update_tracked_symbols(character varying[]); Type: FUNCTION; Schema: public; Owner: -
+-- Name: sp_update_tracked_symbols(character varying[], integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.sp_update_tracked_symbols(p_symbols character varying[], p_max_missed_scans integer DEFAULT 3) RETURNS void
@@ -1429,6 +1407,17 @@ ALTER TABLE public."DataQualityReports" ALTER COLUMN "Id" ADD GENERATED BY DEFAU
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: DirtyMinutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DirtyMinutes" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -3015,8 +3004,7 @@ CREATE TABLE public."Trades" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 )
 PARTITION BY RANGE ("TradeTime");
 
@@ -3037,8 +3025,7 @@ CREATE TABLE public."Trades_2026_01" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3058,8 +3045,7 @@ CREATE TABLE public."Trades_2026_02" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3079,8 +3065,7 @@ CREATE TABLE public."Trades_2026_03" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3100,8 +3085,7 @@ CREATE TABLE public."Trades_2026_04" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3121,8 +3105,7 @@ CREATE TABLE public."Trades_2026_05" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3142,8 +3125,7 @@ CREATE TABLE public."Trades_2026_06" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3163,8 +3145,7 @@ CREATE TABLE public."Trades_2026_07" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3184,8 +3165,7 @@ CREATE TABLE public."Trades_2026_08" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3205,8 +3185,7 @@ CREATE TABLE public."Trades_2026_09" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3226,8 +3205,7 @@ CREATE TABLE public."Trades_2026_10" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3247,8 +3225,7 @@ CREATE TABLE public."Trades_2026_11" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3268,8 +3245,7 @@ CREATE TABLE public."Trades_2026_12" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3289,8 +3265,7 @@ CREATE TABLE public."Trades_2027_01" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3310,8 +3285,7 @@ CREATE TABLE public."Trades_2027_02" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3331,8 +3305,7 @@ CREATE TABLE public."Trades_2027_03" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3352,8 +3325,7 @@ CREATE TABLE public."Trades_2027_04" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3373,8 +3345,7 @@ CREATE TABLE public."Trades_2027_05" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3394,8 +3365,7 @@ CREATE TABLE public."Trades_2027_06" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3415,8 +3385,7 @@ CREATE TABLE public."Trades_2027_07" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3436,8 +3405,7 @@ CREATE TABLE public."Trades_2027_08" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3457,8 +3425,7 @@ CREATE TABLE public."Trades_2027_09" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3478,8 +3445,7 @@ CREATE TABLE public."Trades_2027_10" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3499,8 +3465,7 @@ CREATE TABLE public."Trades_2027_11" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -3520,8 +3485,7 @@ CREATE TABLE public."Trades_2027_12" (
     "OrderId" bigint,
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "IsMyTrade" boolean DEFAULT false NOT NULL
 );
 
 
@@ -5542,6 +5506,14 @@ ALTER TABLE ONLY public."OrderBook_Features_2027_12"
 
 
 --
+-- Name: DirtyMinutes PK_DirtyMinutes; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DirtyMinutes"
+    ADD CONSTRAINT "PK_DirtyMinutes" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
 -- Name: Processing_Watermarks Processing_Watermarks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6808,6 +6780,13 @@ CREATE UNIQUE INDEX "DataQualityReports_2027_12_Symbol_PeriodMonth_idx" ON publi
 
 
 --
+-- Name: IX_DirtyMinutes_OpenTime; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "IX_DirtyMinutes_OpenTime" ON public."DirtyMinutes" USING btree ("OpenTime");
+
+
+--
 -- Name: IX_HistoricalAudit_Watermarks_Status; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7186,31 +7165,10 @@ CREATE INDEX "Trades_2026_01_Symbol_TradeTime_idx" ON public."Trades_2026_01" US
 
 
 --
--- Name: ix_trades_new_tradetime; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_trades_new_tradetime ON ONLY public."Trades" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2026_01_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_01_TradeTime_idx" ON public."Trades_2026_01" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2026_02_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2026_02_Symbol_TradeTime_idx" ON public."Trades_2026_02" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2026_02_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_02_TradeTime_idx" ON public."Trades_2026_02" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7221,24 +7179,10 @@ CREATE INDEX "Trades_2026_03_Symbol_TradeTime_idx" ON public."Trades_2026_03" US
 
 
 --
--- Name: Trades_2026_03_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_03_TradeTime_idx" ON public."Trades_2026_03" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2026_04_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2026_04_Symbol_TradeTime_idx" ON public."Trades_2026_04" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2026_04_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_04_TradeTime_idx" ON public."Trades_2026_04" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7249,24 +7193,10 @@ CREATE INDEX "Trades_2026_05_Symbol_TradeTime_idx" ON public."Trades_2026_05" US
 
 
 --
--- Name: Trades_2026_05_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_05_TradeTime_idx" ON public."Trades_2026_05" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2026_06_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2026_06_Symbol_TradeTime_idx" ON public."Trades_2026_06" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2026_06_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_06_TradeTime_idx" ON public."Trades_2026_06" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7277,24 +7207,10 @@ CREATE INDEX "Trades_2026_07_Symbol_TradeTime_idx" ON public."Trades_2026_07" US
 
 
 --
--- Name: Trades_2026_07_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_07_TradeTime_idx" ON public."Trades_2026_07" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2026_08_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2026_08_Symbol_TradeTime_idx" ON public."Trades_2026_08" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2026_08_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_08_TradeTime_idx" ON public."Trades_2026_08" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7305,24 +7221,10 @@ CREATE INDEX "Trades_2026_09_Symbol_TradeTime_idx" ON public."Trades_2026_09" US
 
 
 --
--- Name: Trades_2026_09_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_09_TradeTime_idx" ON public."Trades_2026_09" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2026_10_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2026_10_Symbol_TradeTime_idx" ON public."Trades_2026_10" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2026_10_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_10_TradeTime_idx" ON public."Trades_2026_10" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7333,24 +7235,10 @@ CREATE INDEX "Trades_2026_11_Symbol_TradeTime_idx" ON public."Trades_2026_11" US
 
 
 --
--- Name: Trades_2026_11_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_11_TradeTime_idx" ON public."Trades_2026_11" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2026_12_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2026_12_Symbol_TradeTime_idx" ON public."Trades_2026_12" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2026_12_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_12_TradeTime_idx" ON public."Trades_2026_12" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7361,24 +7249,10 @@ CREATE INDEX "Trades_2027_01_Symbol_TradeTime_idx" ON public."Trades_2027_01" US
 
 
 --
--- Name: Trades_2027_01_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_01_TradeTime_idx" ON public."Trades_2027_01" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2027_02_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2027_02_Symbol_TradeTime_idx" ON public."Trades_2027_02" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2027_02_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_02_TradeTime_idx" ON public."Trades_2027_02" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7389,24 +7263,10 @@ CREATE INDEX "Trades_2027_03_Symbol_TradeTime_idx" ON public."Trades_2027_03" US
 
 
 --
--- Name: Trades_2027_03_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_03_TradeTime_idx" ON public."Trades_2027_03" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2027_04_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2027_04_Symbol_TradeTime_idx" ON public."Trades_2027_04" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2027_04_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_04_TradeTime_idx" ON public."Trades_2027_04" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7417,24 +7277,10 @@ CREATE INDEX "Trades_2027_05_Symbol_TradeTime_idx" ON public."Trades_2027_05" US
 
 
 --
--- Name: Trades_2027_05_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_05_TradeTime_idx" ON public."Trades_2027_05" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2027_06_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2027_06_Symbol_TradeTime_idx" ON public."Trades_2027_06" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2027_06_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_06_TradeTime_idx" ON public."Trades_2027_06" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7445,24 +7291,10 @@ CREATE INDEX "Trades_2027_07_Symbol_TradeTime_idx" ON public."Trades_2027_07" US
 
 
 --
--- Name: Trades_2027_07_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_07_TradeTime_idx" ON public."Trades_2027_07" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2027_08_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2027_08_Symbol_TradeTime_idx" ON public."Trades_2027_08" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2027_08_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_08_TradeTime_idx" ON public."Trades_2027_08" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7473,24 +7305,10 @@ CREATE INDEX "Trades_2027_09_Symbol_TradeTime_idx" ON public."Trades_2027_09" US
 
 
 --
--- Name: Trades_2027_09_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_09_TradeTime_idx" ON public."Trades_2027_09" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2027_10_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2027_10_Symbol_TradeTime_idx" ON public."Trades_2027_10" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2027_10_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_10_TradeTime_idx" ON public."Trades_2027_10" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -7501,24 +7319,10 @@ CREATE INDEX "Trades_2027_11_Symbol_TradeTime_idx" ON public."Trades_2027_11" US
 
 
 --
--- Name: Trades_2027_11_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_11_TradeTime_idx" ON public."Trades_2027_11" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: Trades_2027_12_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX "Trades_2027_12_Symbol_TradeTime_idx" ON public."Trades_2027_12" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2027_12_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2027_12_TradeTime_idx" ON public."Trades_2027_12" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -9713,13 +9517,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2026_01_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_01_TradeTime_idx";
-
-
---
 -- Name: Trades_2026_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -9731,13 +9528,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_01_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_02_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2026_02_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_02_TradeTime_idx";
 
 
 --
@@ -9755,13 +9545,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2026_03_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_03_TradeTime_idx";
-
-
---
 -- Name: Trades_2026_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -9773,13 +9556,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_03_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_04_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2026_04_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_04_TradeTime_idx";
 
 
 --
@@ -9797,13 +9573,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2026_05_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_05_TradeTime_idx";
-
-
---
 -- Name: Trades_2026_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -9815,13 +9584,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_05_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_06_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2026_06_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_06_TradeTime_idx";
 
 
 --
@@ -9839,13 +9601,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2026_07_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_07_TradeTime_idx";
-
-
---
 -- Name: Trades_2026_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -9857,13 +9612,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_07_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_08_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2026_08_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_08_TradeTime_idx";
 
 
 --
@@ -9881,13 +9629,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2026_09_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_09_TradeTime_idx";
-
-
---
 -- Name: Trades_2026_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -9899,13 +9640,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_09_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_10_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2026_10_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_10_TradeTime_idx";
 
 
 --
@@ -9923,13 +9657,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2026_11_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_11_TradeTime_idx";
-
-
---
 -- Name: Trades_2026_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -9941,13 +9668,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_11_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_12_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2026_12_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_12_TradeTime_idx";
 
 
 --
@@ -9965,13 +9685,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2027_01_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_01_TradeTime_idx";
-
-
---
 -- Name: Trades_2027_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -9983,13 +9696,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_01_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_02_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2027_02_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_02_TradeTime_idx";
 
 
 --
@@ -10007,13 +9713,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2027_03_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_03_TradeTime_idx";
-
-
---
 -- Name: Trades_2027_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -10025,13 +9724,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_03_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_04_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2027_04_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_04_TradeTime_idx";
 
 
 --
@@ -10049,13 +9741,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2027_05_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_05_TradeTime_idx";
-
-
---
 -- Name: Trades_2027_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -10067,13 +9752,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_05_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_06_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2027_06_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_06_TradeTime_idx";
 
 
 --
@@ -10091,13 +9769,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2027_07_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_07_TradeTime_idx";
-
-
---
 -- Name: Trades_2027_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -10109,13 +9780,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_07_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_08_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2027_08_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_08_TradeTime_idx";
 
 
 --
@@ -10133,13 +9797,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2027_09_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_09_TradeTime_idx";
-
-
---
 -- Name: Trades_2027_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -10151,13 +9808,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_09_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_10_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2027_10_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_10_TradeTime_idx";
 
 
 --
@@ -10175,13 +9825,6 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 
 
 --
--- Name: Trades_2027_11_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_11_TradeTime_idx";
-
-
---
 -- Name: Trades_2027_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
@@ -10193,13 +9836,6 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_11_pkey";
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_12_Symbol_TradeTime_idx";
-
-
---
--- Name: Trades_2027_12_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_12_TradeTime_idx";
 
 
 --

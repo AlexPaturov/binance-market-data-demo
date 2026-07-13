@@ -9,14 +9,13 @@ using Testcontainers.PostgreSql;
 namespace BinanceDataCollector.Infrastructure.Tests.Persistence.Repositories;
 
 /// <summary>
-/// Агрегация тиков в свечи идёт от СТАТУСА тиков, а не от watermark'а по времени.
+/// Агрегация идёт по очереди грязных минут: минуту в очередь ставит сама вставка тиков.
 ///
-/// Раньше агрегатор шёл вперёд окнами от watermark'а, и всё, что вставлялось «позади»
-/// уже пройденной отметки, не агрегировалось никогда. А старые тики вставляют штатные
-/// пути: закрытие дыр (FillGapWorker), импорт архивов вразнобой (CsvImportWorker),
-/// историческая дозагрузка. То есть закрытая дыра не попадала в свечи.
+/// Старые тики вставляют штатные пути — закрытие дыр (FillGapWorker), импорт архивов
+/// вразнобой (CsvImportWorker), историческая дозагрузка. Раньше агрегатор шёл окнами от
+/// watermark'а, и такие тики не агрегировались никогда: закрытая дыра не попадала в свечи.
 ///
-/// Эти тесты фиксируют, что порядок прихода данных больше не имеет значения.
+/// Эти тесты фиксируют, что порядок прихода данных не имеет значения.
 /// </summary>
 public sealed class OhlcvAggregationTests : IAsyncLifetime
 {
@@ -30,7 +29,7 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
 
     private const string Symbol = "BTCUSDT";
     private const long Jan2026Ms = 1_767_225_600_000;   // 2026-01-01T00:00:00Z
-    private const long SixHoursMs = 21_600_000;
+    private const int BatchMinutes = 10_000;
 
     public async Task InitializeAsync()
     {
@@ -67,7 +66,7 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
             (3, Minute(0) + 3_000,  95m, 3m),
             (4, Minute(0) + 4_000, 102m, 4m));
 
-        var candles = await _repository.AggregateNewTradesAsync(SixHoursMs);
+        var candles = await _repository.AggregateDirtyMinutesAsync(BatchMinutes);
         Assert.Equal(1, candles);
 
         var candle = await SingleCandleAsync(Minute(0));
@@ -80,9 +79,8 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// Главный сценарий, ради которого всё переписывалось: тик, приехавший ПОСЛЕ того,
-    /// как минута уже была агрегирована (закрытие дыры), должен попасть в свечу.
-    /// В старой схеме он оставался бы 'new' навсегда, а свеча — неполной.
+    /// Главный сценарий: тик, приехавший ПОСЛЕ того, как минута уже была агрегирована
+    /// (закрытие дыры), должен попасть в свечу — его вставка снова пачкает минуту.
     /// </summary>
     [Fact]
     public async Task Aggregation_PicksUpBackfilledTicks_AfterMinuteWasAlreadyAggregated()
@@ -91,7 +89,7 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
             (1, Minute(0) + 1_000, 100m, 1m),
             (3, Minute(0) + 3_000, 102m, 1m));
 
-        await _repository.AggregateNewTradesAsync(SixHoursMs);
+        await _repository.AggregateDirtyMinutesAsync(BatchMinutes);
 
         var before = await SingleCandleAsync(Minute(0));
         Assert.Equal(102m, before.ClosePrice);
@@ -101,7 +99,7 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
         // и её цена выше всех: свеча обязана пересчитаться.
         await InsertTradesAsync((2, Minute(0) + 2_000, 150m, 5m));
 
-        var candles = await _repository.AggregateNewTradesAsync(SixHoursMs);
+        var candles = await _repository.AggregateDirtyMinutesAsync(BatchMinutes);
         Assert.Equal(1, candles);
 
         var after = await SingleCandleAsync(Minute(0));
@@ -114,22 +112,21 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
 
     /// <summary>
     /// Тики, приехавшие «позади» уже обработанного участка (архивы импортируются
-    /// джобами вразнобой), не должны потеряться: окно всегда начинается с самого
-    /// старого необработанного тика, а не от watermark'а.
+    /// джобами вразнобой), не должны потеряться: очередь минут не знает про watermark.
     /// </summary>
     [Fact]
     public async Task Aggregation_ProcessesOlderTicks_ArrivingAfterNewerOnesWereDone()
     {
         // Сначала приезжает поздний час.
         await InsertTradesAsync((100, Minute(300) + 1_000, 200m, 1m));
-        await _repository.AggregateNewTradesAsync(SixHoursMs);
+        await _repository.AggregateDirtyMinutesAsync(BatchMinutes);
 
         Assert.Equal(1, await CandleCountAsync());
 
-        // Потом — ранний. Watermark уже «прошёл» это время.
+        // Потом — ранний. По старой схеме watermark уже «прошёл» это время.
         await InsertTradesAsync((1, Minute(0) + 1_000, 100m, 1m));
 
-        var candles = await _repository.AggregateNewTradesAsync(SixHoursMs);
+        var candles = await _repository.AggregateDirtyMinutesAsync(BatchMinutes);
 
         Assert.Equal(1, candles);
         Assert.Equal(2, await CandleCountAsync());
@@ -142,7 +139,7 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
     public async Task Aggregation_MarksRecomputedCandleAsNew_SoIndicatorsAreRecalculated()
     {
         await InsertTradesAsync((1, Minute(0) + 1_000, 100m, 1m));
-        await _repository.AggregateNewTradesAsync(SixHoursMs);
+        await _repository.AggregateDirtyMinutesAsync(BatchMinutes);
 
         // Индикаторы посчитаны — свеча обработана.
         await ExecuteAsync(
@@ -150,7 +147,7 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
 
         // Приезжает пропущенный тик → свеча пересчитывается → индикаторы устарели.
         await InsertTradesAsync((2, Minute(0) + 2_000, 150m, 1m));
-        await _repository.AggregateNewTradesAsync(SixHoursMs);
+        await _repository.AggregateDirtyMinutesAsync(BatchMinutes);
 
         var status = await QuerySingleAsync<string>(
             @"SELECT ""ProcessingStatus"" FROM public.""Ohlcv_1min"" WHERE ""OpenTime"" = @T;",
@@ -166,10 +163,10 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
             (1, Minute(0) + 1_000, 100m, 1m),
             (2, Minute(0) + 2_000, 110m, 2m));
 
-        Assert.Equal(1, await _repository.AggregateNewTradesAsync(SixHoursMs));
+        Assert.Equal(1, await _repository.AggregateDirtyMinutesAsync(BatchMinutes));
 
-        // Необработанных тиков не осталось — второй прогон не делает ничего.
-        Assert.Equal(0, await _repository.AggregateNewTradesAsync(SixHoursMs));
+        // Очередь пуста — второй прогон не делает ничего.
+        Assert.Equal(0, await _repository.AggregateDirtyMinutesAsync(BatchMinutes));
 
         var candle = await SingleCandleAsync(Minute(0));
         Assert.Equal(3m, candle.Volume);   // объём не удвоился
@@ -177,24 +174,63 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Aggregation_MarksProcessedTicks_LeavingNothingBehind()
+    public async Task Aggregation_EmptiesTheQueue_LeavingNothingBehind()
     {
         await InsertTradesAsync(
             (1, Minute(0) + 1_000, 100m, 1m),
             (2, Minute(5) + 1_000, 110m, 1m));
 
-        await _repository.AggregateNewTradesAsync(SixHoursMs);
+        Assert.Equal(2, await DirtyMinuteCountAsync());   // две разные минуты
 
-        var unprocessed = await QuerySingleAsync<long>(
-            @"SELECT count(*) FROM public.""Trades"" WHERE ""ProcessingStatus"" = 'new';");
+        await _repository.AggregateDirtyMinutesAsync(BatchMinutes);
 
-        Assert.Equal(0, unprocessed);
+        Assert.Equal(0, await DirtyMinuteCountAsync());
+    }
+
+    /// <summary>
+    /// Повторный импорт того же архива не должен заставлять агрегатор пересчитывать
+    /// свечи заново: тики упираются в ON CONFLICT DO NOTHING, менять в свече нечего.
+    /// </summary>
+    [Fact]
+    public async Task Insert_DoesNotDirtyTheMinute_WhenTicksAlreadyExist()
+    {
+        await InsertTradesAsync((1, Minute(0) + 1_000, 100m, 1m));
+        await _repository.AggregateDirtyMinutesAsync(BatchMinutes);
+
+        await InsertTradesAsync((1, Minute(0) + 1_000, 100m, 1m));   // тот же тик ещё раз
+
+        Assert.Equal(0, await DirtyMinuteCountAsync());
+        Assert.Equal(0, await _repository.AggregateDirtyMinutesAsync(BatchMinutes));
+    }
+
+    /// <summary>
+    /// Проход обязан укладываться в командный таймаут, поэтому очередь разбирается
+    /// пачками: остаток остаётся в очереди и достаётся следующему проходу.
+    /// </summary>
+    [Fact]
+    public async Task Aggregation_TakesOnlyTheRequestedNumberOfMinutes_LeavingTheRestQueued()
+    {
+        await InsertTradesAsync(
+            (1, Minute(0) + 1_000, 100m, 1m),
+            (2, Minute(1) + 1_000, 110m, 1m),
+            (3, Minute(2) + 1_000, 120m, 1m));
+
+        Assert.Equal(2, await _repository.AggregateDirtyMinutesAsync(2));
+        Assert.Equal(1, await DirtyMinuteCountAsync());
+
+        // Разбирается от старых минут к свежим: осталась последняя.
+        Assert.Equal(2, await CandleCountAsync());
+        Assert.Equal(Minute(2), await QuerySingleAsync<long>(
+            @"SELECT ""OpenTime"" FROM public.""DirtyMinutes"";"));
+
+        Assert.Equal(1, await _repository.AggregateDirtyMinutesAsync(BatchMinutes));
+        Assert.Equal(0, await DirtyMinuteCountAsync());
     }
 
     [Fact]
     public async Task Aggregation_WhenNothingUnprocessed_ReturnsZero()
     {
-        Assert.Equal(0, await _repository.AggregateNewTradesAsync(SixHoursMs));
+        Assert.Equal(0, await _repository.AggregateDirtyMinutesAsync(BatchMinutes));
     }
 
     // --- вспомогательное ---
@@ -227,6 +263,9 @@ public sealed class OhlcvAggregationTests : IAsyncLifetime
 
     private async Task<long> CandleCountAsync() =>
         await QuerySingleAsync<long>(@"SELECT count(*) FROM public.""Ohlcv_1min"";");
+
+    private async Task<long> DirtyMinuteCountAsync() =>
+        await QuerySingleAsync<long>(@"SELECT count(*) FROM public.""DirtyMinutes"";");
 
     private async Task<T> QuerySingleAsync<T>(string sql, object? param = null)
     {
