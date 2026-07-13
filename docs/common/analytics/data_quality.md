@@ -1,130 +1,80 @@
-# Data Quality — Layer 1: целостность сырых данных
+# Проверки качества данных
 
-Этот документ описывает систему проверки целостности тиковых данных (таблица `Trades`).
+Все производные показатели (свечи, RSI, MACD, CVD, фичи стакана) считаются поверх сырых тиков. Если тики кривые — кривыми будут и индикаторы, просто это будет незаметно. Проверки смотрят на данные **до** того, как на них обучится модель.
 
----
+**Запускаются только вручную**, кнопкой на странице `/DataQuality` в DataManager. В расписании не стоят: скан по `Trades` — это сотни ГБ, и оператор сам решает, когда его гонять.
 
-## Зачем
-
-Все производные показатели (OHLCV, RSI, MACD, CVD) вычисляются поверх сырых тредов. Если тиковые данные кривые — все индикаторы будут кривыми тоже, просто это будет незаметно. Layer 1 проверяет данные **до** расчёта индикаторов, на уровне сырых значений.
+Выполняются в фоне через Hangfire (в таймаут HTTP-запроса такой скан не укладывается), прогресс идёт в браузер через SignalR.
 
 ---
 
-## Что проверяется
+## Две таблицы, два вопроса
 
-Проверки выполняются **по каждому символу** за указанный месяц:
-
-| Проверка | Описание | Влияние на статус |
-|---|---|---|
-| **TradeCount** | Количество тредов в периоде | 0 → `error` |
-| **GapCount** | Пробелы в последовательности `TradeId` | > 0 → `warning` |
-| **InvalidPriceCount** | Треды с `Price <= 0` или `Quantity <= 0` | > 0 → `error` |
-| **OutlierCount** | Цена отклоняется от среднего более чем на 5σ | > 0 → `warning` |
-
-### Логика статусов
-
-- **`error`** — данные непригодны для расчёта индикаторов. Нужно разобраться и перегрузить.
-- **`warning`** — данные частично неполные (пропуски в ID) или содержат аномалии. Индикаторы считаются, но с оговорками.
-- **`ok`** — всё чисто.
-
-> **Про GapCount:** пробел в `TradeId` означает, что трейды с этими ID у нас отсутствуют. Для Binance это нормально — биржа иногда пропускает ID. Маленькое количество пробелов — warning, не error.
+| Таблица | Отвечает на вопрос | Форма |
+| :--- | :--- | :--- |
+| `DataQualityFindings` | **Что нашли в этом прогоне?** | Журнал: строка на каждую сработавшую проверку, append-only |
+| `DataQualityReports` | **Какие месяцы истории проверены и какие грязные?** | Карта покрытия: строка на пару «символ + месяц», перезаписывается |
 
 ---
 
-## Как запустить
+## Проверки
 
-### Из Hangfire Dashboard
+Диапазон одного запуска ограничен **31 днём** — жёстко, в трёх местах (браузер, контроллер, репозиторий). Без ограничения любая проверка вырождается в полный скан всей истории.
 
-> Использовать дашборд **Worker** (`:7001`), не DataManager (`:7002`).
-> DataManager видит все джобы в общей БД, но не может десериализовать Worker-типы.
+### Сырые тики (`trades`)
 
-1. Открыть `http://localhost:7001/hangfire`
-2. Перейти в **Jobs → Recurring** или **Jobs → Create**
-3. Тип: `BinanceDataCollector.Worker.Workers.DataQualityWorker`
-4. Метод: `CheckMonthAsync`
-5. Параметры: `year=2025, month=4`
+| Проверка | Что ловит | Статус |
+| :--- | :--- | :--- |
+| `trade_id_gaps` | Разрывы в последовательности `TradeId` | warning |
+| `invalid_price_or_quantity` | `Price <= 0` или `Quantity <= 0` | error |
+| `price_outliers_5sigma` | Цена дальше 5σ от средней за период | warning |
+| `duplicate_trade_id` | Та же сделка с разным `TradeTime` (PK — тройка, такое возможно) | error |
+| `untracked_symbol` | Сделки по паре, которой нет в `TrackedSymbols` | warning |
+| `trade_time_in_future` | Время сделки в будущем | error |
 
-Или через **Enqueue** прямо из дашборда — воркер появится в очереди `default`.
+### Свечи (`ohlcv`)
 
-### Программно (из другого джоба)
+| Проверка | Что ловит | Статус |
+| :--- | :--- | :--- |
+| `high_below_low` | `High < Low` — такой свечи не бывает | error |
+| `open_close_outside_range` | `Open`/`Close` вне `[Low, High]` | error |
+| `opentime_not_minute_aligned` | `OpenTime` не кратен минуте | error |
+| `negative_volume` | Отрицательный объём | error |
+| `missing_minutes` | Пропущенные минуты в ряду свечей | warning |
+| `zero_volume_with_trades` | Объём 0, хотя тики за эту минуту есть — сбой агрегации | error |
 
-```csharp
-BackgroundJob.Enqueue<DataQualityWorker>(w => w.CheckMonthAsync(2025, 4));
-```
+### Индикаторы (`features`)
 
----
+| Проверка | Что ловит | Статус |
+| :--- | :--- | :--- |
+| `rsi_out_of_range` | RSI вне `[0, 100]` | error |
+| `processed_candle_without_features` | Свеча помечена обработанной, а индикаторов нет — тихая потеря | error |
+| `orphan_features` | Индикаторы без свечи | warning |
 
-## Где смотреть результаты
+### Пайплайн (`pipeline`)
 
-### Seq
+Самое опасное — тихая потеря данных, а не видимая ошибка.
 
-Каждый символ логируется отдельной строкой. Фильтр в Seq:
-
-```
-@Level = 'Error' and SourceContext like '%DataQualityWorker%'
-```
-
-### База данных
-
-Таблица `public."DataQualityReports"`:
-
-```sql
-SELECT * FROM "DataQualityReports"
-WHERE "PeriodMonth" = '2025-04-01'
-ORDER BY "Status" DESC, "Symbol";
-```
-
-Сводка по месяцу:
-
-```sql
-SELECT "Status", COUNT(*) AS symbols
-FROM "DataQualityReports"
-WHERE "PeriodMonth" = '2025-04-01'
-GROUP BY "Status";
-```
-
-Все проблемные символы:
-
-```sql
-SELECT "Symbol", "PeriodMonth", "TradeCount", "GapCount", "InvalidPriceCount", "OutlierCount"
-FROM "DataQualityReports"
-WHERE "Status" <> 'ok'
-ORDER BY "PeriodMonth", "Symbol";
-```
+| Проверка | Что ловит | Статус |
+| :--- | :--- | :--- |
+| `watermark_ahead_of_data` | Watermark обогнал данные | error |
+| `watermark_missing` | Нет строки watermark'а для процесса, который на неё опирается | error |
+| `watermark_stalled` | Watermark не двигается, хотя необработанные записи есть | warning |
+| `audit_retries_exhausted` | Символ исчерпал попытки аудита — по текущему запросу выборки он **больше никогда** в неё не попадёт | error |
+| `inactive_symbol_pending_audit` | Символ деактивирован, но висит в аудите как `Pending` | warning |
 
 ---
 
-## Архитектура
+## Где что лежит
 
-```
-DataQualityWorker.CheckMonthAsync(year, month)
-    │
-    ├── ITrackedSymbolRepository.GetActiveSymbolsAsync()   — список активных символов
-    │
-    └── для каждого символа:
-            IDataQualityRepository.CheckSymbolMonthAsync() — один SQL-запрос (CTE)
-            IDataQualityRepository.UpsertReportAsync()     — сохраняет/обновляет отчёт
-```
-
-Проверка реализована как **один SQL CTE-запрос** по партиции `Trades_YYYY_MM`:
-- `LAG(TradeId)` — считает пробелы в последовательности ID
-- `STDDEV(Price)` — база для 5-sigma outlier detection
-- Все метрики за один проход по данным
-
-Таблица `DataQualityReports` использует upsert по `(Symbol, PeriodMonth)` — повторный запуск обновляет существующий отчёт.
+- Каталог групп и порогов — `src/BinanceDataCollector.Application/Common/DataQualityChecks.cs`
+- Сами запросы — `DataQualityRepository.Run*ChecksAsync`
+- **Что именно ловит каждая проверка** — тесты `DataQualityRepositoryTests`: они сажают в базу заведомо битые данные и проверяют, что проверка их находит. Это точнее любого описания.
 
 ---
 
-## Когда запускать
+## Осознанно не сделано
 
-| Ситуация | Действие |
-|---|---|
-| После загрузки данных за месяц | Запустить `CheckMonthAsync(year, month)` |
-| Перед переносом партиций на прод | Убедиться что все символы `ok` или разобрать `warning`/`error` |
-| После перезаливки данных (re-import) | Повторный запуск обновит отчёт |
-
----
-
-## Миграция
-
-Таблица создаётся из: `sqlScripts/migrations/002_data_quality_reports.sql`
+- **`CHECK`-констрейнты** на дешёвые инварианты (`High >= Low`, `RSI` в `[0,100]`, кратность `OpenTime`). Ловили бы порчу в момент записи, а не при запуске проверки. Размен «предотвращение → обнаружение» сделан сознательно.
+- **Сверка агрегата свечи с пересчётом** из тиков — тяжёлая проверка, требует полного пересчёта окна.
+- **Порог выбросов** зафиксирован на 5σ. MAD устойчивее к «толстым хвостам» крипторынка, но пока не сделано.

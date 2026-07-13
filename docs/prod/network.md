@@ -1,4 +1,4 @@
-# Документация по настройке сети и безопасности сервера (analserver)
+# Сеть и безопасность прод-сервера
 
 **Последнее обновление:** май 2026  
 **Сервер:** `analserver` — GMKtec G2 (Intel N150), Ubuntu 24.04 LTS  
@@ -151,7 +151,38 @@ sudo tailscale down
 
 ---
 
-## 4. Команды быстрой диагностики
+## 4. Docker-сети и порты
+
+### Сети
+
+| Сеть | Тип | Кто подключён | Назначение |
+| :--- | :--- | :--- | :--- |
+| `internal_network` | bridge, external | Postgres, PgBouncer, RabbitMQ, Seq, Worker, DataManager | Внутренняя связь сервисов. Наружу не выходит. |
+| `binancecollector_web` | external | Traefik, Cloudflare Tunnel, Seq, Uptime Kuma, Worker, DataManager | Единственная точка входа HTTP(S) — только через Traefik. |
+
+Обе сети создаются **вручную один раз** и не пересоздаются Compose'ом.
+
+### Порты
+
+| Сервис | Порт | Где доступен | Комментарий |
+| :--- | :--- | :--- | :--- |
+| Traefik | 80 / 443 | Интернет (через Cloudflare Tunnel) | Точки входа HTTP/HTTPS |
+| Traefik | 8080 | Сервер | Дашборд |
+| Postgres | 5432 | **только Tailscale IP** `100.96.120.16` | Осознанное исключение — для DBeaver. Единственная точка прямого доступа к БД. |
+| PgBouncer | 6432 | Сервер | Пул подключений |
+| RabbitMQ | 5672 | internal_network | AMQP |
+| RabbitMQ | 15672 | **не публикуется** | Management UI намеренно закрыт |
+| Seq | 5341 | internal_network | Приём логов (Serilog) |
+| Seq | 80 | через Traefik | UI |
+| Uptime Kuma | 3001 | через Traefik | UI |
+
+Health-эндпоинты Worker'а и DataManager'а (`/health/live`, `/health/ready`) доступны только через Traefik — их опрашивают Traefik и Uptime Kuma.
+
+**Запрещено:** публиковать сервисы в обход Traefik и добавлять новые published-порты без записи в этой таблице.
+
+---
+
+## 5. Команды быстрой диагностики
 
 Все команды read-only, ничего не меняют. Запускать на самом сервере (после `ssh prod`).
 
@@ -210,7 +241,7 @@ Traefik по доменам `*.jahasim.com`.
 
 ---
 
-## 5. UFW: дополнительные команды
+## 6. UFW: дополнительные команды
 
 ```bash
 # Просмотр всех правил с номерами
@@ -233,7 +264,7 @@ sudo tail -f /var/log/ufw.log
 
 ---
 
-## 6. Известные проблемы
+## 7. Известные проблемы
 
 Сетевые / инфраструктурные проблемы и долги — в `docs/TECH_DEBT.md`.
 Из относящихся к этому документу:

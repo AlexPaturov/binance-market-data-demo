@@ -1,74 +1,63 @@
-# Документация: ARCHITECTURE_PROD — PROD-окружение
+# PROD — устройство и эксплуатация
 
-Этот документ описывает физическую и сетевую модель **прод-окружения** проекта `BinanceDataCollector`.
+Железо, сеть, хранилища и порядок запуска прод-окружения.
 
-> Для практической эксплуатации (как деплоить, что считается аварией и т.д.) см. `docker/docs/README_PRODUCTION.md`. Здесь — про **железо, сеть и состав сервисов**.
+> Смежное: [`04_deployment.md`](./04_deployment.md) — CI/CD · [`network.md`](./network.md) — порты и firewall · [`../../docker/docs/README_VOLUMES.md`](../../docker/docs/README_VOLUMES.md) — что нельзя удалять.
 
 ---
 
-## 1. Физическая инфраструктура
+## 1. Железо
 
-- **Сервер:** GMKtec G2 (mini-PC), CPU **Intel N150**.
-- **Hostname:** `analserver`.
+- **Сервер:** GMKtec G2 (mini-PC), CPU Intel N150, hostname `analserver`.
 - **ОС:** Ubuntu 24.04 LTS.
-- **Размещение:** сервер стоит дома, подключён к локальной сети роутера, **прямого внешнего IP не имеет**.
-- **Доступ извне:** только через **Cloudflare Tunnel** (без проброса портов на роутере).
-- **Доступ для админа:** SSH из локалки и через Tailscale.
+- **Размещение:** дома, за роутером, внешнего IP нет.
+- **Доступ извне:** только Cloudflare Tunnel — портов на роутере не проброшено.
+- **Доступ админа:** SSH из локалки и через Tailscale (`100.96.120.16:2237`).
 
-Всё прикладное ПО работает **в Docker**. Никаких .NET-приложений на хост-системе, в отличие от dev'а.
+Всё прикладное ПО работает в Docker.
 
 ---
 
 ## 2. Состав сервисов
 
-В prod-стэке параллельно работают:
+| Контейнер | Роль |
+| :--- | :--- |
+| Traefik | reverse proxy, TLS между туннелем и сервисами |
+| Cloudflare Tunnel | единственный вход снаружи |
+| `bdc_db` | PostgreSQL 16 |
+| `bdc_pgbouncer` | пул подключений |
+| `bdc_rabbitmq` | брокер сообщений |
+| `bdc_seq` | централизованные логи |
+| `bdc_worker` | сбор, агрегация, индикаторы, Hangfire |
+| `bdc_datamanager` | backoffice, графики, панель качества данных |
+| Uptime Kuma | мониторинг доступности |
 
-- **Traefik** — reverse proxy, TLS-терминация для внутренних сервисов.
-- **Cloudflare Tunnel** — единственный канал для внешнего трафика.
-- **Postgres 16** (`bdc_db`) — основная СУБД.
-- **PgBouncer** (`bdc_pgbouncer`) — пул подключений перед Postgres.
-- **RabbitMQ** (`bdc_rabbitmq`) — брокер сообщений.
-- **Seq** (`bdc_seq`) — централизованные логи.
-- **Worker** (`bdc_worker`) — сбор и агрегация данных с Binance.
-- **DataManager** (`bdc_datamanager`) — backoffice / управление.
-- **Uptime Kuma** — мониторинг доступности.
-
-Образы Worker и DataManager берутся из GHCR (`ghcr.io/alexpaturov/binancedatacollector/*`). CI/CD — GitHub Actions с self-hosted runner на самом сервере; push в `master` ⇒ автоматический redeploy.
+Образы Worker и DataManager — из GHCR, тег = SHA коммита.
 
 ---
 
-## 3. Сетевая модель
+## 3. Сеть
 
 ```
-   Internet
-      │
-      ▼
- Cloudflare (TLS)
-      │
-      ▼
- Cloudflare Tunnel ───► Traefik ──► Worker / DataManager / Seq / Kuma
-                                        │
-                                        ▼
-                          Postgres / PgBouncer / RabbitMQ
-                          (только во внутренней Docker-сети)
+Internet → Cloudflare (TLS) → Cloudflare Tunnel → Traefik → Worker / DataManager / Seq / Kuma
+                                                               │
+                                                               ▼
+                                              Postgres / PgBouncer / RabbitMQ
+                                              (только внутренняя Docker-сеть)
 ```
 
-- Внешний трафик попадает на сервер **только** через Cloudflare Tunnel — никаких проброшенных портов на роутере нет.
-- TLS терминируется дважды: Cloudflare (наружу) и Traefik (между туннелем и сервисами).
-- Сервисы домена **`jahasim.com`** маршрутизируются Traefik'ом.
-- Postgres из внешнего мира недоступен. Для DBeaver используется **Tailscale IP `100.96.120.16:5432`** — это единственная легальная точка прямого доступа к БД.
-- Две Docker-сети: `binancecollector_web` (external) и `internal_network` (external). Обе создаются вручную один раз и **не пересоздаются** Compose'ом.
+- Домены `jahasim.com` маршрутизирует Traefik.
+- Postgres снаружи недоступен. Для DBeaver — Tailscale `100.96.120.16:5432`.
+- Две external-сети: `binancecollector_web` и `internal_network`. Создаются один раз вручную, Compose их не пересоздаёт.
 
 ---
 
 ## 4. Базы данных
 
-Внутри Postgres-контейнера работают **две независимых БД**:
+- **`market_analytics`** — рабочая: тики, свечи, индикаторы, фичи стакана, качество данных.
+- **`market_analytics_jobs`** — Hangfire: очереди, расписания, состояния джобов.
 
-- **`market_analytics`** — основная бизнес-БД (трейды, OHLCV, tracked symbols).
-- **`market_analytics_jobs`** — служебная БД для Hangfire (очереди, расписания, состояния джобов).
-
-Разделение позволяет независимо бэкапить, чинить и масштабировать рабочие данные и Hangfire.
+Разделение даёт независимый бэкап и починку: развалившийся Hangfire не тянет за собой рыночные данные.
 
 ---
 
@@ -76,7 +65,7 @@
 
 ### 5.1. Данные PostgreSQL — внешний диск
 
-Данные БД лежат на **внешнем 4TB-диске**, примонтированном в `/mnt/ext` (`/etc/fstab`, UUID `25ddc534-13e6-479e-8392-a4487a975c80`, опция `nofail`). В `docker-compose.prod.yml` это **bind mount** у сервиса `bdc_db`:
+Лежат на внешнем 4 TB диске в `/mnt/ext` (fstab, UUID `25ddc534-13e6-479e-8392-a4487a975c80`, опция `nofail`). В `docker-compose.prod.yml` это **bind mount**, не Docker volume:
 
 ```yaml
 bdc_db:
@@ -84,40 +73,74 @@ bdc_db:
     - /mnt/ext/postgres_data:/var/lib/postgresql/data
 ```
 
-> Перед стартом `bdc_db` диск обязан быть примонтирован (`mountpoint /mnt/ext`). Иначе Postgres проинициализирует пустую базу в директории на системном диске. См. `docker/docs/README_DO_NOT_TOUCH.md`.
+**Если поднять `bdc_db` при непримонтированном диске, Postgres молча создаст новую пустую базу на системном диске.** Приложение стартует, подключается — и не находит таблиц. Защита стоит на двух уровнях:
 
-### 5.2. Остальные volume'ы
+- **Ребут:** drop-in `/etc/systemd/system/docker.service.d/wait-for-ext.conf` с `RequiresMountsFor=/mnt/ext` — Docker не стартует, пока диск не примонтирован.
+- **Ручной запуск:** `prod-start.sh` проверяет монтирование, наличие `PG_VERSION` и партиций.
 
-**External named**, создаются вручную и **никогда не удаляются** автоматически:
+### 5.2. External named volumes
+
+Создаются вручную, автоматически не удаляются:
 
 - `binancecollector_seq_data`
 - `binancecollector_rabbitmq_data`
 - `binancecollector_letsencrypt_data` — сертификаты Let's Encrypt
 - `binancecollector_bdc_data` — архивы и CSV
 
-> Удаление любого из них = потеря данных или rate-limit от Let's Encrypt. См. `docker/docs/README_DO_NOT_TOUCH.md`.
+Удаление любого = потеря данных или rate-limit от Let's Encrypt. См. [`README_VOLUMES.md`](../../docker/docs/README_VOLUMES.md).
 
 ---
 
-## 6. Compose-файлы
+## 6. Запуск и остановка
 
-PROD запускается **строго** через два файла:
+Скрипты лежат в репозитории (`docker/prod-start.sh`, `docker/prod-stop.sh`) и **деплоем не разносятся** — копируются на сервер вручную в `/opt/BinanceCollector/docker/`.
 
-- `docker/compose/docker-compose.yml` — базовый.
-- `docker/compose/docker-compose.prod.yml` — прод-надстройка.
+```bash
+/opt/BinanceCollector/docker/prod-start.sh             # монтирует диск, поднимает стек, проверяет БД
+/opt/BinanceCollector/docker/prod-stop.sh              # гасит стек и отмонтирует диск
+/opt/BinanceCollector/docker/prod-stop.sh --poweroff   # то же + выключение сервера
+```
 
-Запрещено:
+`prod-start.sh` отказывается стартовать, если диск не примонтирован или в каталоге данных нет `PG_VERSION`; после подъёма ждёт `bdc_db` до healthy и проверяет, что партиции `Trades` на месте (а не пустая БД).
 
-- запускать прод без базового compose;
-- использовать `docker-compose.dev.yml` на сервере.
+`prod-stop.sh` останавливает приложения первыми, остальное — с таймаутом 120 с (дефолтных 10 Postgres'у не хватает), **дожидается `database system is shut down` в логах** и только потом отмонтирует диск и паркует головки.
+
+> Прерывать импорт архивов безопасно: ZIP/CSV удаляются только после успешной вставки, вставка идемпотентна. Очередь доработает при следующем старте.
+
+Если по какой-то причине скриптов нет, прод поднимается строго двумя compose-файлами:
+
+```bash
+docker compose -f compose/docker-compose.yml -f compose/docker-compose.prod.yml up -d
+```
+
+`docker-compose.dev.yml` на сервере не используется.
 
 ---
 
-## 7. Чек-лист "прод жив"
+## 7. Чек-лист «прод жив»
 
-- Traefik маршрутизирует домены `jahasim.com`.
-- Uptime Kuma — все мониторы зелёные.
+- Traefik маршрутизирует `jahasim.com`.
+- Uptime Kuma — мониторы зелёные.
 - `/health/live` и `/health/ready` Worker'а и DataManager'а отвечают `200`.
-- В Seq есть свежие сообщения `SERVICE STARTED / READY`.
+- В Seq есть свежие `SERVICE STARTED / READY`.
+- В БД растут `Trades` — свежий тик отстаёт от `now()` на секунды:
 
-Если хотя бы один пункт не выполняется — деплой не считается успешным, см. `README_PRODUCTION.md`.
+```bash
+docker exec bdc_db psql -U bindatacoll -d market_analytics -c \
+  'SELECT max("TradeTime") FROM public."Trades";'
+```
+
+Пока хотя бы один пункт не выполнен, деплой не считается успешным.
+
+---
+
+## 8. При аварии
+
+Сначала логи и состояние контейнеров:
+
+```bash
+docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}'
+docker logs bdc_worker --tail=100
+```
+
+`docker volume prune` и пересоздание стека «с нуля» — не инструменты диагностики: они уничтожают данные, а не чинят их.

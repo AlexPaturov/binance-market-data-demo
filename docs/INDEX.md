@@ -1,50 +1,49 @@
-# Документация BinanceDataCollector
-
-Навигация по документации проекта.
+# Документация
 
 ## Структура
+
+```
 docs/
-├── INDEX.md                    ← этот файл
-├── Server_Network_Config.md    ← UFW, Cloudflare IP, NetworkManager (прод-сервер)
-├── TODO_POST_INITIAL_LOAD.md   ← action plan после завершения initial load (6 шагов)
-├── INITIAL_DATA_LOAD.md        ← пошаговый план первичной загрузки исторических данных
-├── TECH_DEBT.md                ← известные проблемы и технический долг
-├── common/                     ← общая документация (актуально для всех окружений)
-│   ├── 01_overview.md          ← обзор и назначение системы
-│   ├── 02_architecture.md      ← архитектура воркеров и потоков данных
-│   ├── 03_database.md          ← схема БД (market_analytics, market_analytics_jobs)
-│   ├── analytics/              ← аналитика и бизнес-логика
-│   │   ├── indicators.md       ← реализованные технические индикаторы
-│   │   └── data_quality.md     ← Layer 1: проверка целостности сырых данных (Trades)
-│   └── auth/                   ← подсистема аутентификации и авторизации
-│       ├── README_AUTH_SCHEMA.md
-│       ├── README_AUTH_FLOWS.md
-│       └── README_AUTH_IMPLEMENTATION_PLAN.md
-├── dev/                        ← документация для разработки
-│   ├── ARCHITECTURE_DEV.md     ← Ubuntu-хост, Docker на localhost, IDE-режим (Rider)
-│   └── MIGRATE_TO_LINUX.md     ← чеклист переезда dev-окружения с Windows на Ubuntu
-├── prod/                       ← документация для эксплуатации
-│   ├── ARCHITECTURE_PROD.md    ← железо, сеть, состав сервисов
-│   ├── 04_deployment.md        ← CI/CD, GitHub Actions, GHCR
-│   └── 05_setup.md             ← пошаговая настройка прод-сервера
-└── (будущее: staging/)         ← test/staging как зеркало прода
+├── INDEX.md               ← этот файл
+├── TECH_DEBT.md           ← что известно и не сделано
+├── adr/                   ← ключевые архитектурные решения и почему они такие
+├── common/                ← актуально для всех окружений
+│   ├── 01_overview.md     ← что это и зачем
+│   ├── 02_architecture.md ← воркеры, потоки данных, обработка ошибок
+│   ├── 03_database.md     ← схема БД, процедуры, партиционирование
+│   ├── analytics/
+│   │   ├── indicators.md    ← индикаторы и фичи стакана
+│   │   └── data_quality.md  ← проверки качества данных
+│   └── auth/              ← спецификация полной IAM-схемы (для будущего форка)
+├── dev/
+│   └── ARCHITECTURE_DEV.md
+└── prod/
+    ├── ARCHITECTURE_PROD.md ← железо, сеть, хранилища, запуск/остановка
+    ├── network.md           ← UFW, Tailscale, Docker-сети, порты
+    ├── 04_deployment.md     ← CI/CD, GitHub Actions, GHCR
+    └── 05_setup.md          ← настройка сервера с нуля
+
+docker/docs/               ← эксплуатация Docker-стека
+├── README_VOLUMES.md      ← где лежат данные и что нельзя трогать
+└── README_DOCKER_RUN.md   ← команды compose для dev
+```
 
 ## С чего начать
 
-| Кто ты | С чего читать |
+| Задача | Куда смотреть |
 |---|---|
-| Новый разработчик | `common/01_overview.md` → `common/02_architecture.md` → `dev/ARCHITECTURE_DEV.md` |
-| Разработчик настраивает локалку | `dev/ARCHITECTURE_DEV.md` |
-| Хочешь понять схему БД | `common/03_database.md` |
-| Хочешь понять индикаторы | `common/analytics/indicators.md` |
-| Проверить качество загруженных данных | `common/analytics/data_quality.md` |
-| Работаешь с auth | `common/auth/README_AUTH_SCHEMA.md` → `common/auth/README_AUTH_FLOWS.md` |
-| Деплоишь на прод | `prod/04_deployment.md` |
-| Настраиваешь прод-сервер с нуля | `prod/05_setup.md` → `Server_Network_Config.md` |
-| Понять прод-инфраструктуру | `prod/ARCHITECTURE_PROD.md` |
+| Понять, что это за проект | [`common/01_overview.md`](./common/01_overview.md) → [`common/02_architecture.md`](./common/02_architecture.md) |
+| Поднять локалку | [`dev/ARCHITECTURE_DEV.md`](./dev/ARCHITECTURE_DEV.md) |
+| Разобраться в схеме БД | [`common/03_database.md`](./common/03_database.md) |
+| Понять, **почему** так сделано | [`adr/README.md`](./adr/README.md) |
+| Индикаторы и фичи стакана | [`common/analytics/indicators.md`](./common/analytics/indicators.md) |
+| Проверить качество данных | [`common/analytics/data_quality.md`](./common/analytics/data_quality.md) |
+| Задеплоить | [`prod/04_deployment.md`](./prod/04_deployment.md) |
+| Запустить или потушить прод | [`prod/ARCHITECTURE_PROD.md`](./prod/ARCHITECTURE_PROD.md#6-запуск-и-остановка) |
+| Настроить сервер с нуля | [`prod/05_setup.md`](./prod/05_setup.md) → [`prod/network.md`](./prod/network.md) |
 
-## Соглашение
+## Соглашения
 
-- **DEV ≠ PROD** — это сознательное разделение. DEV не содержит Cloudflare/Traefik/доменов.
-- Документация по Docker-инфраструктуре конкретных compose-файлов — в `docker/docs/` (отдельная зона).
-- Изменения в одном окружении (например, в DEV) **не должны** автоматически править другое окружение в документации.
+- **DEV ≠ PROD.** В dev нет Cloudflare, Traefik и доменов. Изменение в одном окружении не правит документацию другого автоматически.
+- **Документация описывает то, что есть.** Планы и незакрытые вопросы живут в [`TECH_DEBT.md`](./TECH_DEBT.md), обоснования решений — в [`adr/`](./adr/).
+- `docs/common/auth/` — спецификация полной IAM-схемы для **будущего отдельного проекта**. Это не описание текущего кода: сейчас работает только Azure B2C с ролями из claims.

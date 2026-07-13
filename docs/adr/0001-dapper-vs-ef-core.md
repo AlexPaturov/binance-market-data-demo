@@ -8,7 +8,7 @@
 
 ## Решение
 
-Доступ к данным построен на **Dapper** поверх сырых SQL-запросов и **хранимых процедур PostgreSQL** (`sp_bulk_insert_trades`, `sp_aggregate_trades_to_ohlcv`, `sp_upsert_ohlcv_features` и др.). Логика, работающая с большими наборами строк, живёт в БД и вызывается одним запросом; репозитории (`src/BinanceDataCollector.Infrastructure/Persistence/Repositories/`) остаются тонкими адаптерами.
+Доступ к данным построен на **Dapper** поверх сырых SQL-запросов и **хранимых процедур PostgreSQL** (`sp_bulk_insert_trades`, `sp_aggregate_new_trades`, `sp_upsert_ohlcv_features` и др.). Логика, работающая с большими наборами строк, живёт в БД и вызывается одним запросом; репозитории (`src/BinanceDataCollector.Infrastructure/Persistence/Repositories/`) остаются тонкими адаптерами.
 
 Пример: `TradeRepository.BulkInsertAsync` передаёт данные в процедуру массивами-параметрами и вставляет их одним `SELECT sp_bulk_insert_trades(...)` с `UNNEST`, а не построчно через change-tracker.
 
