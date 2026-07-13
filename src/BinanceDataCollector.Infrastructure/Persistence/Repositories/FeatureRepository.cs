@@ -59,10 +59,4 @@ public class FeatureRepository : IFeatureRepository
         const string sql = "SELECT MAX(\"OpenTime\") FROM public.\"Ohlcv_Features\" WHERE \"Symbol\" = @Symbol";
         return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol });
     }
-
-    public async Task MarkFeaturesAsProcessedAsync()
-    {
-        using var db = Connection;
-        await db.ExecuteAsync("SELECT public.sp_process_features()", commandTimeout: 600);
-    }
 }

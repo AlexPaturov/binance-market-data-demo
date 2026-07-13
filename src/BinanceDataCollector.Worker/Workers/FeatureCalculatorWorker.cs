@@ -97,9 +97,10 @@ public class FeatureCalculatorWorker
                     }
                 }
 
-                // 6. Помечаем нашу порцию работы как полностью выполненную
-                var processedTimes = newKlinesToProcess.Select(k => k.OpenTime).Distinct();
-                await _ohlcvRepository.MarkKlinesAsProcessedAsync(processedTimes);
+                // 6. Помечаем нашу порцию работы как полностью выполненную.
+                // Передаём свечи целиком: ключ составной (Symbol, OpenTime), пометка
+                // только по времени задела бы свечи других символов за ту же минуту.
+                await _ohlcvRepository.MarkKlinesAsProcessedAsync(newKlinesToProcess);
 
                 _logger.LogInformation("Successfully processed {Count} klines.", newKlinesToProcess.Count);
             }
@@ -170,9 +171,8 @@ public class FeatureCalculatorWorker
             }
         }
 
-        // 6. Помечаем нашу порцию работы как полностью выполненную
-        var processedTimes = newKlinesToProcess.Select(k => k.OpenTime).Distinct();
-        await _ohlcvRepository.MarkKlinesAsProcessedAsync(processedTimes);
+        // 6. Помечаем нашу порцию работы как полностью выполненную (по паре Symbol+OpenTime).
+        await _ohlcvRepository.MarkKlinesAsProcessedAsync(newKlinesToProcess);
 
         _logger.LogInformation("Успешно обработано {Count} свечей.", newKlinesToProcess.Count);
     }

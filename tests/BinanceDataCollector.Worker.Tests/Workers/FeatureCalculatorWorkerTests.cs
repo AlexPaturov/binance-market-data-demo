@@ -43,8 +43,11 @@ public class FeatureCalculatorWorkerTests
 
         _featureRepo.Verify(r => r.UpsertFeaturesAsync(
             It.Is<IEnumerable<FeatureData>>(features => features.Single().OpenTime == openTime)), Times.Once);
+        // Свеча помечается по составному ключу: пометка только по OpenTime задевала бы
+        // свечи других символов за ту же минуту.
         _ohlcvRepo.Verify(r => r.MarkKlinesAsProcessedAsync(
-            It.Is<IEnumerable<long>>(times => times.Single() == openTime)), Times.Once);
+            It.Is<IEnumerable<Ohlcv>>(klines =>
+                klines.Single().OpenTime == openTime && klines.Single().Symbol == symbol)), Times.Once);
     }
 
     [Fact]
@@ -58,6 +61,6 @@ public class FeatureCalculatorWorkerTests
         _indicatorService.Verify(
             s => s.CalculateAll(It.IsAny<string>(), It.IsAny<IEnumerable<Ohlcv>>()), Times.Never);
         _featureRepo.Verify(r => r.UpsertFeaturesAsync(It.IsAny<IEnumerable<FeatureData>>()), Times.Never);
-        _ohlcvRepo.Verify(r => r.MarkKlinesAsProcessedAsync(It.IsAny<IEnumerable<long>>()), Times.Never);
+        _ohlcvRepo.Verify(r => r.MarkKlinesAsProcessedAsync(It.IsAny<IEnumerable<Ohlcv>>()), Times.Never);
     }
 }

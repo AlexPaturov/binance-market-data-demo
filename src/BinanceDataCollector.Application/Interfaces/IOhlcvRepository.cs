@@ -15,11 +15,12 @@ public interface IOhlcvRepository
     Task<IEnumerable<Ohlcv>> ClaimNewKlinesForProcessingAsync(int batchSize);
 
     /// <summary>
-    /// Помечает свечи как полностью обработанные
+    /// Помечает свечи как полностью обработанные.
+    ///
+    /// Ключ свечи составной — (Symbol, OpenTime). Пометка только по времени задевала бы
+    /// свечи ДРУГИХ символов за ту же минуту, по которым индикаторы ещё не считались.
     /// </summary>
-    /// <param name="openTimes"></param>
-    /// <returns></returns>
-    Task MarkKlinesAsProcessedAsync(IEnumerable<long> openTimes);
+    Task MarkKlinesAsProcessedAsync(IEnumerable<Ohlcv> klines);
 
     /// <summary>
     /// Получает "хвост" исторических данных (свечей), необходимых для "прогрева" индикаторов.

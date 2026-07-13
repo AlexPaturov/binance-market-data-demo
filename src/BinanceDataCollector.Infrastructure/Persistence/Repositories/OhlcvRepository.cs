@@ -47,12 +47,31 @@ public class OhlcvRepository : IOhlcvRepository
         return await db.QueryAsync<Ohlcv>(sql, new { BatchSize = batchSize }, commandTimeout: 300);
     }
 
-    public async Task MarkKlinesAsProcessedAsync(IEnumerable<long> openTimes)
+    public async Task MarkKlinesAsProcessedAsync(IEnumerable<Ohlcv> klines)
     {
+        var list = klines.ToList();
+        if (list.Count == 0) return;
+
         using var db = Connection;
-        const string sql = @"UPDATE public.""Ohlcv_1min"" SET ""ProcessingStatus"" = 'processed' 
-                         WHERE ""OpenTime"" = ANY(@OpenTimes)";
-        await db.ExecuteAsync(sql, new { OpenTimes = openTimes.ToList() });
+
+        // Ключ свечи — (Symbol, OpenTime). Пометка только по OpenTime задевала бы свечи
+        // других символов за ту же минуту, по которым индикаторы ещё не считались.
+        //
+        // Статус проверяем: свечу могли пересчитать заново, пока считались индикаторы
+        // (докачали дыру) — тогда она снова 'new', и затирать это нельзя.
+        const string sql = @"
+            UPDATE public.""Ohlcv_1min"" c
+            SET ""ProcessingStatus"" = 'processed'
+            FROM UNNEST(@Symbols::varchar[], @OpenTimes::bigint[]) AS k(""Symbol"", ""OpenTime"")
+            WHERE c.""Symbol"" = k.""Symbol""
+              AND c.""OpenTime"" = k.""OpenTime""
+              AND c.""ProcessingStatus"" = 'processing';";
+
+        await db.ExecuteAsync(sql, new
+        {
+            Symbols = list.Select(k => k.Symbol).ToArray(),
+            OpenTimes = list.Select(k => k.OpenTime).ToArray()
+        });
     }
 
     public async Task<IEnumerable<Ohlcv>> GetWarmupKlinesAsync(string symbol, long beforeTime, int limit)

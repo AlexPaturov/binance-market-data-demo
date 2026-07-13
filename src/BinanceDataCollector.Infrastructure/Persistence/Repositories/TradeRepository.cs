@@ -118,14 +118,13 @@ public class TradeRepository : ITradeRepository
         return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol }, commandTimeout: 120);
     }
 
-    public async Task ExecuteAggregationAsync(long startTimestamp, long endTimestamp)
+    public async Task<int> AggregateNewTradesAsync(long windowMs)
     {
         using var db = Connection;
-        const string sql = "SELECT public.sp_aggregate_trades_to_ohlcv(@Start, @End)";
-        // Даем процедуре достаточно времени на выполнение одной порции
-        await db.ExecuteAsync(sql,
-            new { Start = startTimestamp, End = endTimestamp },
-            commandTimeout: 300); // 5 минут
+        return await db.ExecuteScalarAsync<int>(
+            "SELECT public.sp_aggregate_new_trades(@WindowMs)",
+            new { WindowMs = windowMs },
+            commandTimeout: 600);
     }
 
     // на уаление ?

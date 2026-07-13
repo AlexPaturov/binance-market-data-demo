@@ -25,12 +25,17 @@ public interface ITradeRepository
     Task<long?> GetLastTradeTimeAsync(string symbol);
 
     /// <summary>
-    /// Агрегирует тиковые данные в свечи
+    /// Пересчитывает свечи для минут, в которых есть необработанные тики.
+    ///
+    /// Окно берётся от самого старого тика со статусом 'new', а не от watermark'а,
+    /// поэтому данные, приехавшие «позади» уже обработанного участка (закрытие дыр,
+    /// импорт архивов вразнобой), подхватываются автоматически. Свеча пересчитывается
+    /// целиком из всех тиков минуты — операция идемпотентна и не зависит от порядка
+    /// прихода данных.
     /// </summary>
-    /// <param name="startTimestamp"></param>
-    /// <param name="endTimestamp"></param>
-    /// <returns></returns>
-    Task ExecuteAggregationAsync(long startTimestamp, long endTimestamp);
+    /// <param name="windowMs">Ширина окна пересчёта за один вызов.</param>
+    /// <returns>Сколько свечей пересчитано.</returns>
+    Task<int> AggregateNewTradesAsync(long windowMs);
 
     // на удаление
     /// <summary>

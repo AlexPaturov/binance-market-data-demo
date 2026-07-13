@@ -58,130 +58,121 @@ $$;
 
 
 --
--- Name: sp_aggregate_trades_to_ohlcv(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: sp_aggregate_new_trades(bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_aggregate_trades_to_ohlcv() RETURNS void
+CREATE FUNCTION public.sp_aggregate_new_trades(p_window_ms bigint DEFAULT 21600000) RETURNS integer
     LANGUAGE plpgsql
     AS $$
 DECLARE
-    start_timestamp BIGINT;
-    end_timestamp BIGINT;
-    interval BIGINT := 60000;
-    month_ms BIGINT;
+    v_from    BIGINT;
+    v_to      BIGINT;
+    v_symbols VARCHAR[];
+    v_candles INT := 0;
+    m         BIGINT;
 BEGIN
-    -- 1. Получаем "вотермарку" - нашу точку старта
-    SELECT "LastProcessedTimestamp" INTO start_timestamp
-    FROM public."Processing_Watermarks"
-    WHERE "ProcessName" = 'OhlcvAggregator';
-
-    -- 2. Находим время последней НОВОЙ сделки, чтобы определить конец "окна"
-    SELECT MAX("TradeTime") INTO end_timestamp
+    -- Самый старый необработанный тик, округлённый вниз до минуты: свечу надо
+    -- пересчитать целиком, а тик может стоять в середине минуты.
+    -- Частичный индекс ix_trades_new_tradetime делает это index-only.
+    SELECT (MIN("TradeTime") / 60000) * 60000 INTO v_from
     FROM public."Trades"
-    WHERE "ProcessingStatus" = 'new' AND "TradeTime" >= start_timestamp;
+    WHERE "ProcessingStatus" = 'new';
 
-    IF end_timestamp IS NULL THEN RETURN; END IF;
+    IF v_from IS NULL THEN
+        RETURN 0;
+    END IF;
 
-    -- 3. Агрегируем только "новые" тики в найденном "окне"
-    CREATE TEMP TABLE NewCandles ON COMMIT DROP AS
-    WITH Aggregates AS (
-        SELECT "Symbol", ("TradeTime" / interval) * interval AS "OpenTime", MIN("Price") AS "LowPrice", MAX("Price") AS "HighPrice",
-               SUM("Quantity") AS "Volume", MIN("TradeId") AS "FirstTradeId", MAX("TradeId") AS "LastTradeId"
-        FROM public."Trades"
-        WHERE "ProcessingStatus" = 'new' AND "TradeTime" >= start_timestamp AND "TradeTime" <= end_timestamp
-        GROUP BY 1, 2
-    )
-    SELECT agg."Symbol", agg."OpenTime", f."Price" AS "OpenPrice", agg."HighPrice", agg."LowPrice", l."Price" AS "ClosePrice", agg."Volume"
-    FROM Aggregates agg
-    JOIN public."Trades" f ON agg."FirstTradeId" = f."TradeId"
-    JOIN public."Trades" l ON agg."LastTradeId" = l."TradeId";
+    v_to := v_from + p_window_ms;
 
-    IF NOT FOUND THEN RETURN; END IF;
+    -- Символы, у которых в окне есть необработанные тики.
+    --
+    -- Список нужен, чтобы запрос лёг на индекс (Symbol, TradeTime): без ограничения
+    -- по символу диапазон по одному TradeTime вырождается в seq scan всей партиции
+    -- (десятки ГБ). Символы берём из самих данных, а НЕ из TrackedSymbols: тик по
+    -- неотслеживаемой паре иначе остался бы 'new' навсегда и заблокировал бы окно.
+    SELECT array_agg(DISTINCT "Symbol") INTO v_symbols
+    FROM public."Trades"
+    WHERE "ProcessingStatus" = 'new'
+      AND "TradeTime" >= v_from
+      AND "TradeTime" <  v_to;
 
-    -- 3a. Свечи могут попасть в месяцы, партиций под которые ещё нет.
-    FOR month_ms IN SELECT DISTINCT "OpenTime" FROM NewCandles LOOP
-        PERFORM public.sp_ensure_month_partitions(month_ms);
-    END LOOP;
+    IF v_symbols IS NULL THEN
+        RETURN 0;
+    END IF;
 
-    -- 4. Вставляем/обновляем свечи
-    INSERT INTO public."Ohlcv_1min" ("Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume")
-    SELECT "Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume" FROM NewCandles
-    ON CONFLICT ("Symbol", "OpenTime") DO UPDATE
-    SET "HighPrice" = GREATEST(public."Ohlcv_1min"."HighPrice", EXCLUDED."HighPrice"),
-        "LowPrice" = LEAST(public."Ohlcv_1min"."LowPrice", EXCLUDED."LowPrice"),
-        "ClosePrice" = EXCLUDED."ClosePrice",
-        "Volume" = EXCLUDED."Volume";
-
-    -- 5. Помечаем обработанные тики как "processed"
-    UPDATE public."Trades"
-    SET "ProcessingStatus" = 'processed'
-    WHERE "ProcessingStatus" = 'new' AND "TradeTime" >= start_timestamp AND "TradeTime" <= end_timestamp;
-
-    -- 6. Сдвигаем "вотермарку" вперед
-    UPDATE public."Processing_Watermarks"
-    SET "LastProcessedTimestamp" = end_timestamp
-    WHERE "ProcessName" = 'OhlcvAggregator';
-END;
-$$;
-
-
---
--- Name: sp_aggregate_trades_to_ohlcv(bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.sp_aggregate_trades_to_ohlcv(p_start_timestamp bigint, p_end_timestamp bigint) RETURNS void
-    LANGUAGE plpgsql
-    AS $$
-DECLARE
-    interval_ms BIGINT := 60000;
-    m TIMESTAMP;
-BEGIN
-    -- Окно может пересекать границу месяца — заводим партиции под все затронутые месяцы.
+    -- Партиции под месяцы окна.
     FOR m IN
-        SELECT generate_series(
-            DATE_TRUNC('month', TO_TIMESTAMP(p_start_timestamp / 1000.0) AT TIME ZONE 'UTC'),
-            DATE_TRUNC('month', TO_TIMESTAMP(p_end_timestamp   / 1000.0) AT TIME ZONE 'UTC'),
-            INTERVAL '1 month')
+        SELECT DISTINCT (EXTRACT(EPOCH FROM d)::BIGINT) * 1000
+        FROM generate_series(
+            DATE_TRUNC('month', TO_TIMESTAMP(v_from / 1000.0) AT TIME ZONE 'UTC'),
+            DATE_TRUNC('month', TO_TIMESTAMP(v_to   / 1000.0) AT TIME ZONE 'UTC'),
+            INTERVAL '1 month') AS d
     LOOP
-        PERFORM public.sp_ensure_month_partitions(EXTRACT(EPOCH FROM m)::BIGINT * 1000);
+        PERFORM public.sp_ensure_month_partitions(m);
     END LOOP;
 
-    WITH TradesInWindow AS (
-        SELECT "Symbol", "TradeId", "Price", "Quantity", "TradeTime"
-        FROM public."Trades"
-        WHERE "ProcessingStatus" = 'new'
-          AND "TradeTime" >= p_start_timestamp
-          AND "TradeTime" < p_end_timestamp
-    ),
-    MinuteAggregates AS (
-        SELECT
-            "Symbol",
-            ("TradeTime" / interval_ms) * interval_ms AS "OpenTime",
-            MIN("Price") AS "Low",
-            MAX("Price") AS "High",
-            SUM("Quantity") AS "Vol",
-            (array_agg("Price" ORDER BY "TradeTime" ASC, "TradeId" ASC))[1] AS "Open",
-            (array_agg("Price" ORDER BY "TradeTime" DESC, "TradeId" DESC))[1] AS "Close"
-        FROM TradesInWindow
-        GROUP BY "Symbol", "OpenTime"
-    )
-    INSERT INTO public."Ohlcv_1min" ("Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume", "ProcessingStatus")
+    -- Пересчёт свечей окна ЦЕЛИКОМ из всех тиков минуты — включая уже обработанные.
+    -- Только так результат не зависит от порядка прихода данных: докачанная дыра
+    -- или архив, приехавший «позади», просто попадают в пересчёт.
+    --
+    -- MIN/MAX по массиву вместо array_agg(ORDER BY): массивы сравниваются
+    -- поэлементно, поэтому цена первой и последней сделки берутся потоковым
+    -- агрегатом, без сортировки всего окна (она уходила в temp-файлы на диск).
+    INSERT INTO public."Ohlcv_1min"
+        ("Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume", "ProcessingStatus")
     SELECT
-        "Symbol", "OpenTime", "Open", "High", "Low", "Close", "Vol", 'new'
-    FROM MinuteAggregates
+        "Symbol",
+        ("TradeTime" / 60000) * 60000                                                  AS "OpenTime",
+        (MIN(ARRAY["TradeTime"::numeric, "TradeId"::numeric, "Price"]))[3]::numeric(18,8) AS "OpenPrice",
+        MAX("Price")                                                                   AS "HighPrice",
+        MIN("Price")                                                                   AS "LowPrice",
+        (MAX(ARRAY["TradeTime"::numeric, "TradeId"::numeric, "Price"]))[3]::numeric(18,8) AS "ClosePrice",
+        SUM("Quantity")                                                                AS "Volume",
+        'new'
+    FROM public."Trades"
+    WHERE "Symbol" = ANY(v_symbols)
+      AND "TradeTime" >= v_from
+      AND "TradeTime" <  v_to
+      -- Только минуты, где действительно есть необработанные тики. Иначе окно в 6 часов
+      -- пересчитывало бы и уже готовые свечи, помечая их 'new' — и feature-pipeline
+      -- заново считал бы по ним индикаторы впустую.
+      AND (("TradeTime" / 60000) * 60000) IN (
+          SELECT DISTINCT ("TradeTime" / 60000) * 60000
+          FROM public."Trades"
+          WHERE "ProcessingStatus" = 'new'
+            AND "TradeTime" >= v_from
+            AND "TradeTime" <  v_to
+      )
+    GROUP BY 1, 2
     ON CONFLICT ("Symbol", "OpenTime") DO UPDATE SET
-        "HighPrice" = GREATEST(public."Ohlcv_1min"."HighPrice", EXCLUDED."HighPrice"),
-        "LowPrice" = LEAST(public."Ohlcv_1min"."LowPrice", EXCLUDED."LowPrice"),
+        "OpenPrice"  = EXCLUDED."OpenPrice",
+        "HighPrice"  = EXCLUDED."HighPrice",
+        "LowPrice"   = EXCLUDED."LowPrice",
         "ClosePrice" = EXCLUDED."ClosePrice",
-        "Volume" = public."Ohlcv_1min"."Volume" + EXCLUDED."Volume",
+        "Volume"     = EXCLUDED."Volume",
+        -- Свеча пересчитана → индикаторы устарели, feature-pipeline возьмёт её заново.
         "ProcessingStatus" = 'new';
 
+    GET DIAGNOSTICS v_candles = ROW_COUNT;
+
     UPDATE public."Trades"
     SET "ProcessingStatus" = 'processed'
-    WHERE
-        "ProcessingStatus" = 'new'
-        AND "TradeTime" >= p_start_timestamp
-        AND "TradeTime" < p_end_timestamp;
+    WHERE "Symbol" = ANY(v_symbols)
+      AND "TradeTime" >= v_from
+      AND "TradeTime" <  v_to
+      AND "ProcessingStatus" = 'new';
+
+    -- Watermark — только индикатор прогресса. Корректность на нём больше не держится.
+    INSERT INTO public."Processing_Watermarks"
+        ("ProcessName", "LastProcessedTimestamp", "Status", "LastUpdate_UTC")
+    VALUES ('OhlcvAggregator', v_to, 'Pending', NOW())
+    ON CONFLICT ("ProcessName") DO UPDATE SET
+        "LastProcessedTimestamp" = GREATEST(
+            public."Processing_Watermarks"."LastProcessedTimestamp", EXCLUDED."LastProcessedTimestamp"),
+        "Status"         = 'Pending',
+        "LastUpdate_UTC" = NOW();
+
+    RETURN v_candles;
 END;
 $$;
 
@@ -383,46 +374,6 @@ BEGIN
         "TradeId" AS "GapEnd"
     FROM OrderedTrades 
     WHERE "TradeId" > "PrevTradeId" + 1;
-END;
-$$;
-
-
---
--- Name: sp_process_features(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.sp_process_features() RETURNS void
-    LANGUAGE plpgsql
-    AS $$
-DECLARE
-    start_timestamp BIGINT;
-    end_timestamp BIGINT;
-BEGIN
-    -- 1. Получаем "вотермарку" для этого процесса
-    SELECT "LastProcessedTimestamp" INTO start_timestamp
-    FROM public."Processing_Watermarks"
-    WHERE "ProcessName" = 'FeatureCalculator';
-
-    -- 2. Находим конец "окна" обработки - последнюю новую свечу
-    SELECT MAX("OpenTime") INTO end_timestamp
-    FROM public."Ohlcv_1min"
-    WHERE "ProcessingStatus" = 'new' AND "OpenTime" >= start_timestamp;
-
-    IF end_timestamp IS NULL THEN RETURN; END IF;
-
-    -- 3. Помечаем свечи в нашем "окне" как обработанные
-    -- Мы делаем это в начале, чтобы избежать повторной обработки в параллельных воркерах (задел на будущее)
-    UPDATE public."Ohlcv_1min"
-    SET "ProcessingStatus" = 'processed'
-    WHERE "ProcessingStatus" = 'new'
-      AND "OpenTime" >= start_timestamp
-      AND "OpenTime" <= end_timestamp;
-
-    -- 4. Сдвигаем "вотермарку"
-    UPDATE public."Processing_Watermarks"
-    SET "LastProcessedTimestamp" = end_timestamp
-    WHERE "ProcessName" = 'FeatureCalculator';
-
 END;
 $$;
 
@@ -5941,20 +5892,6 @@ CREATE INDEX "Ohlcv_1min_2027_12_ProcessingStatus_OpenTime_idx" ON public."Ohlcv
 
 
 --
--- Name: ix_trades_processingstatus; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX ix_trades_processingstatus ON ONLY public."Trades" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2026_01_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_01_ProcessingStatus_idx" ON public."Trades_2026_01" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
 -- Name: ix_trades_symbol_tradetime; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5969,10 +5906,17 @@ CREATE INDEX "Trades_2026_01_Symbol_TradeTime_idx" ON public."Trades_2026_01" US
 
 
 --
--- Name: Trades_2026_02_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: ix_trades_new_tradetime; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_02_ProcessingStatus_idx" ON public."Trades_2026_02" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX ix_trades_new_tradetime ON ONLY public."Trades" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
+
+
+--
+-- Name: Trades_2026_01_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2026_01_TradeTime_idx" ON public."Trades_2026_01" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -5983,10 +5927,10 @@ CREATE INDEX "Trades_2026_02_Symbol_TradeTime_idx" ON public."Trades_2026_02" US
 
 
 --
--- Name: Trades_2026_03_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_02_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_03_ProcessingStatus_idx" ON public."Trades_2026_03" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_02_TradeTime_idx" ON public."Trades_2026_02" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -5997,10 +5941,10 @@ CREATE INDEX "Trades_2026_03_Symbol_TradeTime_idx" ON public."Trades_2026_03" US
 
 
 --
--- Name: Trades_2026_04_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_03_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_04_ProcessingStatus_idx" ON public."Trades_2026_04" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_03_TradeTime_idx" ON public."Trades_2026_03" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6011,10 +5955,10 @@ CREATE INDEX "Trades_2026_04_Symbol_TradeTime_idx" ON public."Trades_2026_04" US
 
 
 --
--- Name: Trades_2026_05_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_04_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_05_ProcessingStatus_idx" ON public."Trades_2026_05" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_04_TradeTime_idx" ON public."Trades_2026_04" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6025,10 +5969,10 @@ CREATE INDEX "Trades_2026_05_Symbol_TradeTime_idx" ON public."Trades_2026_05" US
 
 
 --
--- Name: Trades_2026_06_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_05_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_06_ProcessingStatus_idx" ON public."Trades_2026_06" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_05_TradeTime_idx" ON public."Trades_2026_05" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6039,10 +5983,10 @@ CREATE INDEX "Trades_2026_06_Symbol_TradeTime_idx" ON public."Trades_2026_06" US
 
 
 --
--- Name: Trades_2026_07_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_06_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_07_ProcessingStatus_idx" ON public."Trades_2026_07" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_06_TradeTime_idx" ON public."Trades_2026_06" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6053,10 +5997,10 @@ CREATE INDEX "Trades_2026_07_Symbol_TradeTime_idx" ON public."Trades_2026_07" US
 
 
 --
--- Name: Trades_2026_08_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_07_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_08_ProcessingStatus_idx" ON public."Trades_2026_08" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_07_TradeTime_idx" ON public."Trades_2026_07" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6067,10 +6011,10 @@ CREATE INDEX "Trades_2026_08_Symbol_TradeTime_idx" ON public."Trades_2026_08" US
 
 
 --
--- Name: Trades_2026_09_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_08_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_09_ProcessingStatus_idx" ON public."Trades_2026_09" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_08_TradeTime_idx" ON public."Trades_2026_08" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6081,10 +6025,10 @@ CREATE INDEX "Trades_2026_09_Symbol_TradeTime_idx" ON public."Trades_2026_09" US
 
 
 --
--- Name: Trades_2026_10_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_09_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_10_ProcessingStatus_idx" ON public."Trades_2026_10" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_09_TradeTime_idx" ON public."Trades_2026_09" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6095,10 +6039,10 @@ CREATE INDEX "Trades_2026_10_Symbol_TradeTime_idx" ON public."Trades_2026_10" US
 
 
 --
--- Name: Trades_2026_11_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_10_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_11_ProcessingStatus_idx" ON public."Trades_2026_11" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_10_TradeTime_idx" ON public."Trades_2026_10" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6109,10 +6053,10 @@ CREATE INDEX "Trades_2026_11_Symbol_TradeTime_idx" ON public."Trades_2026_11" US
 
 
 --
--- Name: Trades_2026_12_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_11_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2026_12_ProcessingStatus_idx" ON public."Trades_2026_12" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_11_TradeTime_idx" ON public."Trades_2026_11" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6123,10 +6067,10 @@ CREATE INDEX "Trades_2026_12_Symbol_TradeTime_idx" ON public."Trades_2026_12" US
 
 
 --
--- Name: Trades_2027_01_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_12_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_01_ProcessingStatus_idx" ON public."Trades_2027_01" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_12_TradeTime_idx" ON public."Trades_2026_12" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6137,10 +6081,10 @@ CREATE INDEX "Trades_2027_01_Symbol_TradeTime_idx" ON public."Trades_2027_01" US
 
 
 --
--- Name: Trades_2027_02_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_01_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_02_ProcessingStatus_idx" ON public."Trades_2027_02" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_01_TradeTime_idx" ON public."Trades_2027_01" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6151,10 +6095,10 @@ CREATE INDEX "Trades_2027_02_Symbol_TradeTime_idx" ON public."Trades_2027_02" US
 
 
 --
--- Name: Trades_2027_03_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_02_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_03_ProcessingStatus_idx" ON public."Trades_2027_03" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_02_TradeTime_idx" ON public."Trades_2027_02" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6165,10 +6109,10 @@ CREATE INDEX "Trades_2027_03_Symbol_TradeTime_idx" ON public."Trades_2027_03" US
 
 
 --
--- Name: Trades_2027_04_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_03_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_04_ProcessingStatus_idx" ON public."Trades_2027_04" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_03_TradeTime_idx" ON public."Trades_2027_03" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6179,10 +6123,10 @@ CREATE INDEX "Trades_2027_04_Symbol_TradeTime_idx" ON public."Trades_2027_04" US
 
 
 --
--- Name: Trades_2027_05_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_04_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_05_ProcessingStatus_idx" ON public."Trades_2027_05" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_04_TradeTime_idx" ON public."Trades_2027_04" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6193,10 +6137,10 @@ CREATE INDEX "Trades_2027_05_Symbol_TradeTime_idx" ON public."Trades_2027_05" US
 
 
 --
--- Name: Trades_2027_06_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_05_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_06_ProcessingStatus_idx" ON public."Trades_2027_06" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_05_TradeTime_idx" ON public."Trades_2027_05" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6207,10 +6151,10 @@ CREATE INDEX "Trades_2027_06_Symbol_TradeTime_idx" ON public."Trades_2027_06" US
 
 
 --
--- Name: Trades_2027_07_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_06_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_07_ProcessingStatus_idx" ON public."Trades_2027_07" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_06_TradeTime_idx" ON public."Trades_2027_06" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6221,10 +6165,10 @@ CREATE INDEX "Trades_2027_07_Symbol_TradeTime_idx" ON public."Trades_2027_07" US
 
 
 --
--- Name: Trades_2027_08_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_07_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_08_ProcessingStatus_idx" ON public."Trades_2027_08" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_07_TradeTime_idx" ON public."Trades_2027_07" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6235,10 +6179,10 @@ CREATE INDEX "Trades_2027_08_Symbol_TradeTime_idx" ON public."Trades_2027_08" US
 
 
 --
--- Name: Trades_2027_09_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_08_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_09_ProcessingStatus_idx" ON public."Trades_2027_09" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_08_TradeTime_idx" ON public."Trades_2027_08" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6249,10 +6193,10 @@ CREATE INDEX "Trades_2027_09_Symbol_TradeTime_idx" ON public."Trades_2027_09" US
 
 
 --
--- Name: Trades_2027_10_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_09_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_10_ProcessingStatus_idx" ON public."Trades_2027_10" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_09_TradeTime_idx" ON public."Trades_2027_09" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6263,10 +6207,10 @@ CREATE INDEX "Trades_2027_10_Symbol_TradeTime_idx" ON public."Trades_2027_10" US
 
 
 --
--- Name: Trades_2027_11_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_10_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_11_ProcessingStatus_idx" ON public."Trades_2027_11" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_10_TradeTime_idx" ON public."Trades_2027_10" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6277,10 +6221,10 @@ CREATE INDEX "Trades_2027_11_Symbol_TradeTime_idx" ON public."Trades_2027_11" US
 
 
 --
--- Name: Trades_2027_12_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_11_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2027_12_ProcessingStatus_idx" ON public."Trades_2027_12" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2027_11_TradeTime_idx" ON public."Trades_2027_11" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -6288,6 +6232,13 @@ CREATE INDEX "Trades_2027_12_ProcessingStatus_idx" ON public."Trades_2027_12" US
 --
 
 CREATE INDEX "Trades_2027_12_Symbol_TradeTime_idx" ON public."Trades_2027_12" USING btree ("Symbol", "TradeTime" DESC);
+
+
+--
+-- Name: Trades_2027_12_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Trades_2027_12_TradeTime_idx" ON public."Trades_2027_12" USING btree ("TradeTime") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -8139,17 +8090,17 @@ ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features
 
 
 --
--- Name: Trades_2026_01_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_01_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_01_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_01_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_01_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_01_TradeTime_idx";
 
 
 --
@@ -8160,17 +8111,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_01_pkey";
 
 
 --
--- Name: Trades_2026_02_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_02_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_02_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_02_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_02_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_02_TradeTime_idx";
 
 
 --
@@ -8181,17 +8132,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_02_pkey";
 
 
 --
--- Name: Trades_2026_03_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_03_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_03_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_03_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_03_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_03_TradeTime_idx";
 
 
 --
@@ -8202,17 +8153,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_03_pkey";
 
 
 --
--- Name: Trades_2026_04_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_04_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_04_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_04_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_04_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_04_TradeTime_idx";
 
 
 --
@@ -8223,17 +8174,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_04_pkey";
 
 
 --
--- Name: Trades_2026_05_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_05_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_05_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_05_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_05_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_05_TradeTime_idx";
 
 
 --
@@ -8244,17 +8195,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_05_pkey";
 
 
 --
--- Name: Trades_2026_06_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_06_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_06_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_06_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_06_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_06_TradeTime_idx";
 
 
 --
@@ -8265,17 +8216,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_06_pkey";
 
 
 --
--- Name: Trades_2026_07_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_07_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_07_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_07_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_07_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_07_TradeTime_idx";
 
 
 --
@@ -8286,17 +8237,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_07_pkey";
 
 
 --
--- Name: Trades_2026_08_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_08_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_08_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_08_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_08_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_08_TradeTime_idx";
 
 
 --
@@ -8307,17 +8258,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_08_pkey";
 
 
 --
--- Name: Trades_2026_09_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_09_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_09_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_09_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_09_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_09_TradeTime_idx";
 
 
 --
@@ -8328,17 +8279,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_09_pkey";
 
 
 --
--- Name: Trades_2026_10_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_10_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_10_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_10_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_10_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_10_TradeTime_idx";
 
 
 --
@@ -8349,17 +8300,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_10_pkey";
 
 
 --
--- Name: Trades_2026_11_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_11_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_11_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_11_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_11_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_11_TradeTime_idx";
 
 
 --
@@ -8370,17 +8321,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_11_pkey";
 
 
 --
--- Name: Trades_2026_12_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2026_12_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2026_12_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2026_12_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2026_12_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2026_12_TradeTime_idx";
 
 
 --
@@ -8391,17 +8342,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_12_pkey";
 
 
 --
--- Name: Trades_2027_01_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_01_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_01_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_01_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_01_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_01_TradeTime_idx";
 
 
 --
@@ -8412,17 +8363,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_01_pkey";
 
 
 --
--- Name: Trades_2027_02_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_02_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_02_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_02_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_02_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_02_TradeTime_idx";
 
 
 --
@@ -8433,17 +8384,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_02_pkey";
 
 
 --
--- Name: Trades_2027_03_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_03_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_03_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_03_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_03_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_03_TradeTime_idx";
 
 
 --
@@ -8454,17 +8405,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_03_pkey";
 
 
 --
--- Name: Trades_2027_04_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_04_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_04_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_04_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_04_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_04_TradeTime_idx";
 
 
 --
@@ -8475,17 +8426,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_04_pkey";
 
 
 --
--- Name: Trades_2027_05_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_05_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_05_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_05_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_05_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_05_TradeTime_idx";
 
 
 --
@@ -8496,17 +8447,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_05_pkey";
 
 
 --
--- Name: Trades_2027_06_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_06_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_06_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_06_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_06_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_06_TradeTime_idx";
 
 
 --
@@ -8517,17 +8468,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_06_pkey";
 
 
 --
--- Name: Trades_2027_07_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_07_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_07_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_07_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_07_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_07_TradeTime_idx";
 
 
 --
@@ -8538,17 +8489,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_07_pkey";
 
 
 --
--- Name: Trades_2027_08_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_08_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_08_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_08_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_08_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_08_TradeTime_idx";
 
 
 --
@@ -8559,17 +8510,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_08_pkey";
 
 
 --
--- Name: Trades_2027_09_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_09_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_09_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_09_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_09_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_09_TradeTime_idx";
 
 
 --
@@ -8580,17 +8531,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_09_pkey";
 
 
 --
--- Name: Trades_2027_10_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_10_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_10_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_10_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_10_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_10_TradeTime_idx";
 
 
 --
@@ -8601,17 +8552,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_10_pkey";
 
 
 --
--- Name: Trades_2027_11_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_11_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_11_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_11_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_11_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_11_TradeTime_idx";
 
 
 --
@@ -8622,17 +8573,17 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_11_pkey";
 
 
 --
--- Name: Trades_2027_12_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
---
-
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_12_ProcessingStatus_idx";
-
-
---
 -- Name: Trades_2027_12_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
 ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_12_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_12_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_new_tradetime ATTACH PARTITION public."Trades_2027_12_TradeTime_idx";
 
 
 --
