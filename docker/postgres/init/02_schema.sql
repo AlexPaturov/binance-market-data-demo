@@ -1,8 +1,3 @@
--- Schema baseline for the "market_analytics" database.
--- Auto-generated with: pg_dump --schema-only --no-owner --no-privileges
--- Source: local development DB (partitioned, PostgreSQL 16), captured 2026-07-11.
--- Applied automatically on a fresh volume via docker-entrypoint-initdb.d (docker/postgres/init).
-
 --
 -- PostgreSQL database dump
 --
@@ -23,6 +18,46 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: fn_partitioned_size_bytes(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_partitioned_size_bytes() RETURNS bigint
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT COALESCE(SUM(pg_total_relation_size(i.inhrelid)), 0)
+    FROM pg_inherits i
+    WHERE i.inhparent IN (
+        'public."Trades"'::regclass,
+        'public."Ohlcv_1min"'::regclass,
+        'public."Ohlcv_Features"'::regclass,
+        'public."DataQualityReports"'::regclass,
+        'public."DataQualityFindings"'::regclass
+    );
+$$;
+
+
+--
+-- Name: fn_retention_floor_ms(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_retention_floor_ms() RETURNS bigint
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT COALESCE(
+        MIN(
+            EXTRACT(EPOCH FROM TO_DATE(
+                substring(c.relname FROM 'Trades_(\d{4}_\d{2})'), 'YYYY_MM'
+            ))::bigint * 1000
+        ),
+        0
+    )
+    FROM pg_inherits i
+    JOIN pg_class c ON c.oid = i.inhrelid
+    WHERE i.inhparent = 'public."Trades"'::regclass;
+$$;
+
+
+--
 -- Name: sp_aggregate_trades_to_ohlcv(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -33,6 +68,7 @@ DECLARE
     start_timestamp BIGINT;
     end_timestamp BIGINT;
     interval BIGINT := 60000;
+    month_ms BIGINT;
 BEGIN
     -- 1. Получаем "вотермарку" - нашу точку старта
     SELECT "LastProcessedTimestamp" INTO start_timestamp
@@ -61,6 +97,11 @@ BEGIN
     JOIN public."Trades" l ON agg."LastTradeId" = l."TradeId";
 
     IF NOT FOUND THEN RETURN; END IF;
+
+    -- 3a. Свечи могут попасть в месяцы, партиций под которые ещё нет.
+    FOR month_ms IN SELECT DISTINCT "OpenTime" FROM NewCandles LOOP
+        PERFORM public.sp_ensure_month_partitions(month_ms);
+    END LOOP;
 
     -- 4. Вставляем/обновляем свечи
     INSERT INTO public."Ohlcv_1min" ("Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume")
@@ -93,8 +134,18 @@ CREATE FUNCTION public.sp_aggregate_trades_to_ohlcv(p_start_timestamp bigint, p_
     AS $$
 DECLARE
     interval_ms BIGINT := 60000;
+    m TIMESTAMP;
 BEGIN
-    -- Делаем агрегацию и UPSERT в одном запросе
+    -- Окно может пересекать границу месяца — заводим партиции под все затронутые месяцы.
+    FOR m IN
+        SELECT generate_series(
+            DATE_TRUNC('month', TO_TIMESTAMP(p_start_timestamp / 1000.0) AT TIME ZONE 'UTC'),
+            DATE_TRUNC('month', TO_TIMESTAMP(p_end_timestamp   / 1000.0) AT TIME ZONE 'UTC'),
+            INTERVAL '1 month')
+    LOOP
+        PERFORM public.sp_ensure_month_partitions(EXTRACT(EPOCH FROM m)::BIGINT * 1000);
+    END LOOP;
+
     WITH TradesInWindow AS (
         SELECT "Symbol", "TradeId", "Price", "Quantity", "TradeTime"
         FROM public."Trades"
@@ -103,7 +154,6 @@ BEGIN
           AND "TradeTime" < p_end_timestamp
     ),
     MinuteAggregates AS (
-        -- Группируем сделки по минутам
         SELECT
             "Symbol",
             ("TradeTime" / interval_ms) * interval_ms AS "OpenTime",
@@ -116,21 +166,19 @@ BEGIN
         GROUP BY "Symbol", "OpenTime"
     )
     INSERT INTO public."Ohlcv_1min" ("Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume", "ProcessingStatus")
-    SELECT 
+    SELECT
         "Symbol", "OpenTime", "Open", "High", "Low", "Close", "Vol", 'new'
     FROM MinuteAggregates
     ON CONFLICT ("Symbol", "OpenTime") DO UPDATE SET
-        -- Если свеча уже существует, мы МЕРДЖИМ ее с новыми данными
         "HighPrice" = GREATEST(public."Ohlcv_1min"."HighPrice", EXCLUDED."HighPrice"),
         "LowPrice" = LEAST(public."Ohlcv_1min"."LowPrice", EXCLUDED."LowPrice"),
-        "ClosePrice" = EXCLUDED."ClosePrice", -- Цена закрытия всегда последняя
-        "Volume" = public."Ohlcv_1min"."Volume" + EXCLUDED."Volume", -- Объемы суммируются
+        "ClosePrice" = EXCLUDED."ClosePrice",
+        "Volume" = public."Ohlcv_1min"."Volume" + EXCLUDED."Volume",
         "ProcessingStatus" = 'new';
 
-    -- Помечаем обработанные тики как "processed"
     UPDATE public."Trades"
     SET "ProcessingStatus" = 'processed'
-    WHERE 
+    WHERE
         "ProcessingStatus" = 'new'
         AND "TradeTime" >= p_start_timestamp
         AND "TradeTime" < p_end_timestamp;
@@ -160,32 +208,81 @@ $$;
 
 
 --
+-- Name: sp_ensure_month_partitions(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_ensure_month_partitions(target_time bigint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    month_start TIMESTAMP;
+    month_end   TIMESTAMP;
+    suffix      TEXT;
+    from_ms     BIGINT;
+    to_ms       BIGINT;
+    floor_ms    BIGINT;
+BEGIN
+    month_start := DATE_TRUNC('month', TO_TIMESTAMP(target_time / 1000.0) AT TIME ZONE 'UTC');
+    month_end   := month_start + INTERVAL '1 month';
+    suffix      := TO_CHAR(month_start, 'YYYY_MM');
+    from_ms     := EXTRACT(EPOCH FROM month_start)::BIGINT * 1000;
+    to_ms       := EXTRACT(EPOCH FROM month_end)::BIGINT * 1000;
+
+    -- Барьер против повторной закачки удалённого: партицию ниже границы ретенции
+    -- создавать нельзя, иначе аудитор/импорт архивов вернут дропнутый месяц обратно.
+    floor_ms := public.fn_retention_floor_ms();
+    IF floor_ms > 0 AND from_ms < floor_ms THEN
+        RAISE NOTICE 'Месяц % ниже границы ретенции (%) — партиции не создаются.',
+            suffix, TO_CHAR(TO_TIMESTAMP(floor_ms / 1000.0) AT TIME ZONE 'UTC', 'YYYY-MM');
+        RETURN;
+    END IF;
+
+    -- Trades / Ohlcv_1min / Ohlcv_Features — ключ BIGINT (Unix-мс)
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE c.relname = 'Trades_' || suffix AND n.nspname = 'public') THEN
+        EXECUTE format('CREATE TABLE public.%I PARTITION OF public."Trades" FOR VALUES FROM (%s) TO (%s)',
+                       'Trades_' || suffix, from_ms, to_ms);
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE c.relname = 'Ohlcv_1min_' || suffix AND n.nspname = 'public') THEN
+        EXECUTE format('CREATE TABLE public.%I PARTITION OF public."Ohlcv_1min" FOR VALUES FROM (%s) TO (%s)',
+                       'Ohlcv_1min_' || suffix, from_ms, to_ms);
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE c.relname = 'Ohlcv_Features_' || suffix AND n.nspname = 'public') THEN
+        EXECUTE format('CREATE TABLE public.%I PARTITION OF public."Ohlcv_Features" FOR VALUES FROM (%s) TO (%s)',
+                       'Ohlcv_Features_' || suffix, from_ms, to_ms);
+    END IF;
+
+    -- DataQualityReports — ключ DATE
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE c.relname = 'DataQualityReports_' || suffix AND n.nspname = 'public') THEN
+        EXECUTE format('CREATE TABLE public.%I PARTITION OF public."DataQualityReports" FOR VALUES FROM (%L) TO (%L)',
+                       'DataQualityReports_' || suffix, month_start::date, month_end::date);
+    END IF;
+
+    -- DataQualityFindings — ключ TIMESTAMPTZ
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE c.relname = 'DataQualityFindings_' || suffix AND n.nspname = 'public') THEN
+        EXECUTE format('CREATE TABLE public.%I PARTITION OF public."DataQualityFindings" FOR VALUES FROM (%L) TO (%L)',
+                       'DataQualityFindings_' || suffix,
+                       month_start AT TIME ZONE 'UTC', month_end AT TIME ZONE 'UTC');
+    END IF;
+END;
+$$;
+
+
+--
 -- Name: sp_ensure_trades_partition(bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.sp_ensure_trades_partition(target_time bigint) RETURNS void
     LANGUAGE plpgsql
     AS $$
-DECLARE
-    month_start TIMESTAMP;
-    month_end   TIMESTAMP;
-    part_name   TEXT;
-    from_ms     BIGINT;
-    to_ms       BIGINT;
 BEGIN
-    month_start := DATE_TRUNC('month', TO_TIMESTAMP(target_time / 1000.0) AT TIME ZONE 'UTC');
-    month_end   := month_start + INTERVAL '1 month';
-    part_name   := 'Trades_' || TO_CHAR(month_start, 'YYYY_MM');
-    from_ms     := EXTRACT(EPOCH FROM month_start)::BIGINT * 1000;
-    to_ms       := EXTRACT(EPOCH FROM month_end)::BIGINT * 1000;
-
-    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                   WHERE c.relname = part_name AND n.nspname = 'public') THEN
-        EXECUTE format(
-            'CREATE TABLE public.%I PARTITION OF public."Trades" FOR VALUES FROM (%s) TO (%s)',
-            part_name, from_ms, to_ms
-        );
-    END IF;
+    PERFORM public.sp_ensure_month_partitions(target_time);
 END;
 $$;
 
@@ -331,47 +428,79 @@ $$;
 
 
 --
--- Name: sp_rotate_trades_partition(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: sp_rotate_partitions(bigint, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_rotate_trades_partition() RETURNS void
+CREATE FUNCTION public.sp_rotate_partitions(p_max_bytes bigint, p_min_months_to_keep integer DEFAULT 6) RETURNS void
     LANGUAGE plpgsql
     AS $$
 DECLARE
     current_month TIMESTAMP;
     target_month  TIMESTAMP;
-    part_name     TEXT;
-    from_ms       BIGINT;
-    to_ms         BIGINT;
-    old_month     TIMESTAMP;
-    old_part_name TEXT;
+    oldest_suffix TEXT;
+    oldest_month  TIMESTAMP;
+    keep_before   TIMESTAMP;
+    total_bytes   BIGINT;
+    new_floor_ms  BIGINT;
+    dropped       INT := 0;
 BEGIN
     current_month := DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC');
+    keep_before   := current_month - (p_min_months_to_keep || ' months')::INTERVAL;
 
+    -- Партиции на текущий и следующий месяц должны существовать заранее.
     FOR target_month IN
         SELECT m FROM generate_series(current_month, current_month + INTERVAL '1 month', INTERVAL '1 month') AS m
     LOOP
-        part_name := 'Trades_' || TO_CHAR(target_month, 'YYYY_MM');
-        from_ms   := EXTRACT(EPOCH FROM target_month)::BIGINT * 1000;
-        to_ms     := EXTRACT(EPOCH FROM (target_month + INTERVAL '1 month'))::BIGINT * 1000;
-
-        IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                       WHERE c.relname = part_name AND n.nspname = 'public') THEN
-            EXECUTE format(
-                'CREATE TABLE public.%I PARTITION OF public."Trades" FOR VALUES FROM (%s) TO (%s)',
-                part_name, from_ms, to_ms
-            );
-        END IF;
+        PERFORM public.sp_ensure_month_partitions(
+            EXTRACT(EPOCH FROM target_month)::BIGINT * 1000);
     END LOOP;
 
-    old_month     := current_month - INTERVAL '13 months';
-    old_part_name := 'Trades_' || TO_CHAR(old_month, 'YYYY_MM');
+    LOOP
+        total_bytes := public.fn_partitioned_size_bytes();
+        EXIT WHEN total_bytes <= p_max_bytes;
 
-    IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-               WHERE c.relname = old_part_name AND n.nspname = 'public') THEN
-        EXECUTE format('ALTER TABLE public."Trades" DETACH PARTITION public.%I', old_part_name);
-        EXECUTE format('DROP TABLE public.%I', old_part_name);
-        RAISE NOTICE 'Dropped old partition: %', old_part_name;
+        SELECT substring(c.relname FROM 'Trades_(\d{4}_\d{2})')
+        INTO oldest_suffix
+        FROM pg_inherits i
+        JOIN pg_class c ON c.oid = i.inhrelid
+        WHERE i.inhparent = 'public."Trades"'::regclass
+        ORDER BY substring(c.relname FROM 'Trades_(\d{4}_\d{2})')
+        LIMIT 1;
+
+        EXIT WHEN oldest_suffix IS NULL;
+
+        oldest_month := TO_DATE(oldest_suffix, 'YYYY_MM');
+
+        -- Предохранитель: свежие месяцы не режем даже под давлением диска.
+        IF oldest_month >= keep_before THEN
+            RAISE WARNING
+                'Размер % байт выше порога %, но самый старый месяц (%) свежее окна в % мес. Ротация остановлена — нужно расширять диск или поднимать порог.',
+                total_bytes, p_max_bytes, oldest_suffix, p_min_months_to_keep;
+            EXIT;
+        END IF;
+
+        EXECUTE format('DROP TABLE IF EXISTS public.%I', 'Trades_'              || oldest_suffix);
+        EXECUTE format('DROP TABLE IF EXISTS public.%I', 'Ohlcv_1min_'          || oldest_suffix);
+        EXECUTE format('DROP TABLE IF EXISTS public.%I', 'Ohlcv_Features_'      || oldest_suffix);
+        EXECUTE format('DROP TABLE IF EXISTS public.%I', 'DataQualityReports_'  || oldest_suffix);
+        EXECUTE format('DROP TABLE IF EXISTS public.%I', 'DataQualityFindings_' || oldest_suffix);
+
+        dropped := dropped + 1;
+        RAISE NOTICE 'Ротация: месяц % удалён во всех таблицах (было % байт, порог %).',
+            oldest_suffix, total_bytes, p_max_bytes;
+    END LOOP;
+
+    -- Аудитор не должен искать дыры в том, чего больше нет.
+    IF dropped > 0 THEN
+        new_floor_ms := public.fn_retention_floor_ms();
+
+        UPDATE public."HistoricalAudit_Watermarks"
+        SET "LastChecked_Timestamp" = new_floor_ms,
+            "LastChecked_TradeId"   = 0
+        WHERE "LastChecked_Timestamp" < new_floor_ms;
+
+        RAISE NOTICE 'Ротация завершена: удалено месяцев — %. Новая граница ретенции: %.',
+            dropped, TO_CHAR(TO_TIMESTAMP(new_floor_ms / 1000.0) AT TIME ZONE 'UTC', 'YYYY-MM');
     END IF;
 END;
 $$;
@@ -400,6 +529,8 @@ $$;
 CREATE FUNCTION public.sp_upsert_ohlcv_features(p_symbols character varying[], p_open_times bigint[], p_rsi_14 numeric[], p_macd_signals numeric[], p_macd_hists numeric[], p_ma_1051200 numeric[], p_ma_201600 numeric[], p_cvds numeric[]) RETURNS void
     LANGUAGE plpgsql
     AS $$
+DECLARE
+    month_ms BIGINT;
 BEGIN
     CREATE TEMP TABLE NewFeatures ON COMMIT DROP AS
     SELECT * FROM UNNEST(
@@ -409,6 +540,10 @@ BEGIN
         "Symbol", "OpenTime", "RSI_14", "MACD_Signal", "MACD_Hist",
         "MA_1051200", "MA_201600", "CVD"
     );
+
+    FOR month_ms IN SELECT DISTINCT "OpenTime" FROM NewFeatures LOOP
+        PERFORM public.sp_ensure_month_partitions(month_ms);
+    END LOOP;
 
     INSERT INTO public."Ohlcv_Features" (
         "Symbol", "OpenTime", "RSI_14", "MACD_Signal", "MACD_Hist",
@@ -429,7 +564,472 @@ $$;
 
 SET default_tablespace = '';
 
+--
+-- Name: DataQualityFindings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+)
+PARTITION BY RANGE ("PeriodFrom");
+
+
 SET default_table_access_method = heap;
+
+--
+-- Name: DataQualityFindings_2026_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_01" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_02" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_03" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_04" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_05" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_06" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_07" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_08" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_09" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_10" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_11" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2026_12" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_01" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_02" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_03" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_04" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_05" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_06" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_07" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_08" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_09" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_10" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_11" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2027_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityFindings_2027_12" (
+    "Id" bigint NOT NULL,
+    "CheckGroup" character varying(32) NOT NULL,
+    "CheckType" character varying(64) NOT NULL,
+    "Symbol" character varying(20),
+    "PeriodFrom" timestamp with time zone NOT NULL,
+    "PeriodTo" timestamp with time zone NOT NULL,
+    "Severity" character varying(10) NOT NULL,
+    "Count" bigint DEFAULT 0 NOT NULL,
+    "Details" jsonb,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_Id_seq1; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public."DataQualityFindings" ALTER COLUMN "Id" ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public."DataQualityFindings_Id_seq1"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
 
 --
 -- Name: DataQualityReports; Type: TABLE; Schema: public; Owner: -
@@ -445,44 +1045,429 @@ CREATE TABLE public."DataQualityReports" (
     "OutlierCount" integer DEFAULT 0 NOT NULL,
     "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
     "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+)
+PARTITION BY RANGE ("PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_01" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
 --
--- Name: DataQualityReports_Id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: DataQualityReports_2026_02; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public."DataQualityReports_Id_seq"
-    AS integer
+CREATE TABLE public."DataQualityReports_2026_02" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2026_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_03" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2026_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_04" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2026_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_05" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2026_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_06" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2026_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_07" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2026_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_08" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2026_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_09" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2026_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_10" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2026_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_11" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2026_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2026_12" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_01" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_02" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_03" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_04" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_05" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_06" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_07" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_08" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_09" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_10" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_11" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_2027_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."DataQualityReports_2027_12" (
+    "Id" integer NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "PeriodMonth" date NOT NULL,
+    "TradeCount" bigint DEFAULT 0 NOT NULL,
+    "GapCount" integer DEFAULT 0 NOT NULL,
+    "InvalidPriceCount" integer DEFAULT 0 NOT NULL,
+    "OutlierCount" integer DEFAULT 0 NOT NULL,
+    "Status" character varying(10) DEFAULT 'ok'::character varying NOT NULL,
+    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: DataQualityReports_Id_seq1; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public."DataQualityReports" ALTER COLUMN "Id" ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public."DataQualityReports_Id_seq1"
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
     NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: DataQualityReports_Id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public."DataQualityReports_Id_seq" OWNED BY public."DataQualityReports"."Id";
-
-
---
--- Name: DataQualityFindings; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."DataQualityFindings" (
-    "Id" bigint GENERATED BY DEFAULT AS IDENTITY NOT NULL,
-    "CheckGroup" character varying(32) NOT NULL,
-    "CheckType" character varying(64) NOT NULL,
-    "Symbol" character varying(20),
-    "PeriodFrom" timestamp with time zone NOT NULL,
-    "PeriodTo" timestamp with time zone NOT NULL,
-    "Severity" character varying(10) NOT NULL,
-    "Count" bigint DEFAULT 0 NOT NULL,
-    "Details" jsonb,
-    "CheckedAt" timestamp with time zone DEFAULT now() NOT NULL
+    CACHE 1
 );
 
 
@@ -513,6 +1498,391 @@ CREATE TABLE public."Ohlcv_1min" (
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
     "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+)
+PARTITION BY RANGE ("OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_01" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_02" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_03" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_04" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_05" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_06" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_07" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_08" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_09" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_10" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_11" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2026_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2026_12" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_01" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_02" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_03" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_04" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_05" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_06" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_07" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_08" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_09" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_10" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_11" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Ohlcv_1min_2027_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_1min_2027_12" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "OpenPrice" numeric(18,8) NOT NULL,
+    "HighPrice" numeric(18,8) NOT NULL,
+    "LowPrice" numeric(18,8) NOT NULL,
+    "ClosePrice" numeric(18,8) NOT NULL,
+    "Volume" numeric(28,8) NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
 );
 
 
@@ -521,6 +1891,391 @@ CREATE TABLE public."Ohlcv_1min" (
 --
 
 CREATE TABLE public."Ohlcv_Features" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+)
+PARTITION BY RANGE ("OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_01" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_02" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_03" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_04" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_05" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_06" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_07" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_08" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_09" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_10" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_11" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2026_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2026_12" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_01" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_02" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_03" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_04" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_05" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_06" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_07" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_08" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_09" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_10" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_11" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "RSI_14" numeric(10,4),
+    "MACD_Signal" numeric(18,8),
+    "MACD_Hist" numeric(18,8),
+    "MA_1051200" numeric(18,8),
+    "MA_201600" numeric(18,8),
+    "CVD" numeric(28,8)
+);
+
+
+--
+-- Name: Ohlcv_Features_2027_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Ohlcv_Features_2027_12" (
     "Symbol" character varying(20) NOT NULL,
     "OpenTime" bigint NOT NULL,
     "RSI_14" numeric(10,4),
@@ -576,258 +2331,6 @@ CREATE TABLE public."Trades" (
     "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
 )
 PARTITION BY RANGE ("TradeTime");
-
-
---
--- Name: Trades_2025_01; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_01" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_02; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_02" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_03; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_03" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_04; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_04" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_05; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_05" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_06; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_06" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_07; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_07" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_08; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_08" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_09; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_09" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_10; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_10" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_11; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_11" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
-
-
---
--- Name: Trades_2025_12; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."Trades_2025_12" (
-    "TradeId" bigint NOT NULL,
-    "Symbol" character varying(20) NOT NULL,
-    "Price" numeric(18,8) NOT NULL,
-    "Quantity" numeric(28,8) NOT NULL,
-    "QuoteQuantity" numeric(28,8) NOT NULL,
-    "TradeTime" bigint NOT NULL,
-    "IsBuyerMaker" boolean NOT NULL,
-    "IsBestMatch" boolean NOT NULL,
-    "OrderId" bigint,
-    "Commission" numeric(18,8),
-    "CommissionAsset" character varying(10),
-    "IsMyTrade" boolean DEFAULT false NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
-);
 
 
 --
@@ -1083,87 +2586,927 @@ CREATE TABLE public."Trades_2026_12" (
 
 
 --
--- Name: Trades_2025_01; Type: TABLE ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_01; Type: TABLE; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_01" FOR VALUES FROM ('1735689600000') TO ('1738368000000');
-
-
---
--- Name: Trades_2025_02; Type: TABLE ATTACH; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_02" FOR VALUES FROM ('1738368000000') TO ('1740787200000');
-
-
---
--- Name: Trades_2025_03; Type: TABLE ATTACH; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_03" FOR VALUES FROM ('1740787200000') TO ('1743465600000');
-
-
---
--- Name: Trades_2025_04; Type: TABLE ATTACH; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_04" FOR VALUES FROM ('1743465600000') TO ('1746057600000');
+CREATE TABLE public."Trades_2027_01" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
 
 
 --
--- Name: Trades_2025_05; Type: TABLE ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_02; Type: TABLE; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_05" FOR VALUES FROM ('1746057600000') TO ('1748736000000');
-
-
---
--- Name: Trades_2025_06; Type: TABLE ATTACH; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_06" FOR VALUES FROM ('1748736000000') TO ('1751328000000');
-
-
---
--- Name: Trades_2025_07; Type: TABLE ATTACH; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_07" FOR VALUES FROM ('1751328000000') TO ('1754006400000');
-
-
---
--- Name: Trades_2025_08; Type: TABLE ATTACH; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_08" FOR VALUES FROM ('1754006400000') TO ('1756684800000');
+CREATE TABLE public."Trades_2027_02" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
 
 
 --
--- Name: Trades_2025_09; Type: TABLE ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_03; Type: TABLE; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_09" FOR VALUES FROM ('1756684800000') TO ('1759276800000');
+CREATE TABLE public."Trades_2027_03" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
 
 
 --
--- Name: Trades_2025_10; Type: TABLE ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_04; Type: TABLE; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_10" FOR VALUES FROM ('1759276800000') TO ('1761955200000');
+CREATE TABLE public."Trades_2027_04" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
 
 
 --
--- Name: Trades_2025_11; Type: TABLE ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_05; Type: TABLE; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_11" FOR VALUES FROM ('1761955200000') TO ('1764547200000');
+CREATE TABLE public."Trades_2027_05" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
 
 
 --
--- Name: Trades_2025_12; Type: TABLE ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_06; Type: TABLE; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2025_12" FOR VALUES FROM ('1764547200000') TO ('1767225600000');
+CREATE TABLE public."Trades_2027_06" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2027_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2027_07" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2027_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2027_08" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2027_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2027_09" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2027_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2027_10" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2027_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2027_11" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: Trades_2027_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Trades_2027_12" (
+    "TradeId" bigint NOT NULL,
+    "Symbol" character varying(20) NOT NULL,
+    "Price" numeric(18,8) NOT NULL,
+    "Quantity" numeric(28,8) NOT NULL,
+    "QuoteQuantity" numeric(28,8) NOT NULL,
+    "TradeTime" bigint NOT NULL,
+    "IsBuyerMaker" boolean NOT NULL,
+    "IsBestMatch" boolean NOT NULL,
+    "OrderId" bigint,
+    "Commission" numeric(18,8),
+    "CommissionAsset" character varying(10),
+    "IsMyTrade" boolean DEFAULT false NOT NULL,
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+);
+
+
+--
+-- Name: DataQualityFindings_2026_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_01" FOR VALUES FROM ('2026-01-01 00:00:00+00') TO ('2026-02-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_02" FOR VALUES FROM ('2026-02-01 00:00:00+00') TO ('2026-03-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_03" FOR VALUES FROM ('2026-03-01 00:00:00+00') TO ('2026-04-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_04" FOR VALUES FROM ('2026-04-01 00:00:00+00') TO ('2026-05-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_05" FOR VALUES FROM ('2026-05-01 00:00:00+00') TO ('2026-06-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_06" FOR VALUES FROM ('2026-06-01 00:00:00+00') TO ('2026-07-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_07" FOR VALUES FROM ('2026-07-01 00:00:00+00') TO ('2026-08-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_08" FOR VALUES FROM ('2026-08-01 00:00:00+00') TO ('2026-09-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_09" FOR VALUES FROM ('2026-09-01 00:00:00+00') TO ('2026-10-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_10" FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_11" FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2026_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2026_12" FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_01" FOR VALUES FROM ('2027-01-01 00:00:00+00') TO ('2027-02-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_02" FOR VALUES FROM ('2027-02-01 00:00:00+00') TO ('2027-03-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_03" FOR VALUES FROM ('2027-03-01 00:00:00+00') TO ('2027-04-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_04" FOR VALUES FROM ('2027-04-01 00:00:00+00') TO ('2027-05-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_05" FOR VALUES FROM ('2027-05-01 00:00:00+00') TO ('2027-06-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_06" FOR VALUES FROM ('2027-06-01 00:00:00+00') TO ('2027-07-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_07" FOR VALUES FROM ('2027-07-01 00:00:00+00') TO ('2027-08-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_08" FOR VALUES FROM ('2027-08-01 00:00:00+00') TO ('2027-09-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_09" FOR VALUES FROM ('2027-09-01 00:00:00+00') TO ('2027-10-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_10" FOR VALUES FROM ('2027-10-01 00:00:00+00') TO ('2027-11-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_11" FOR VALUES FROM ('2027-11-01 00:00:00+00') TO ('2027-12-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityFindings_2027_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings" ATTACH PARTITION public."DataQualityFindings_2027_12" FOR VALUES FROM ('2027-12-01 00:00:00+00') TO ('2028-01-01 00:00:00+00');
+
+
+--
+-- Name: DataQualityReports_2026_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_01" FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
+
+
+--
+-- Name: DataQualityReports_2026_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_02" FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');
+
+
+--
+-- Name: DataQualityReports_2026_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_03" FOR VALUES FROM ('2026-03-01') TO ('2026-04-01');
+
+
+--
+-- Name: DataQualityReports_2026_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_04" FOR VALUES FROM ('2026-04-01') TO ('2026-05-01');
+
+
+--
+-- Name: DataQualityReports_2026_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_05" FOR VALUES FROM ('2026-05-01') TO ('2026-06-01');
+
+
+--
+-- Name: DataQualityReports_2026_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_06" FOR VALUES FROM ('2026-06-01') TO ('2026-07-01');
+
+
+--
+-- Name: DataQualityReports_2026_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_07" FOR VALUES FROM ('2026-07-01') TO ('2026-08-01');
+
+
+--
+-- Name: DataQualityReports_2026_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_08" FOR VALUES FROM ('2026-08-01') TO ('2026-09-01');
+
+
+--
+-- Name: DataQualityReports_2026_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_09" FOR VALUES FROM ('2026-09-01') TO ('2026-10-01');
+
+
+--
+-- Name: DataQualityReports_2026_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_10" FOR VALUES FROM ('2026-10-01') TO ('2026-11-01');
+
+
+--
+-- Name: DataQualityReports_2026_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_11" FOR VALUES FROM ('2026-11-01') TO ('2026-12-01');
+
+
+--
+-- Name: DataQualityReports_2026_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2026_12" FOR VALUES FROM ('2026-12-01') TO ('2027-01-01');
+
+
+--
+-- Name: DataQualityReports_2027_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_01" FOR VALUES FROM ('2027-01-01') TO ('2027-02-01');
+
+
+--
+-- Name: DataQualityReports_2027_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_02" FOR VALUES FROM ('2027-02-01') TO ('2027-03-01');
+
+
+--
+-- Name: DataQualityReports_2027_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_03" FOR VALUES FROM ('2027-03-01') TO ('2027-04-01');
+
+
+--
+-- Name: DataQualityReports_2027_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_04" FOR VALUES FROM ('2027-04-01') TO ('2027-05-01');
+
+
+--
+-- Name: DataQualityReports_2027_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_05" FOR VALUES FROM ('2027-05-01') TO ('2027-06-01');
+
+
+--
+-- Name: DataQualityReports_2027_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_06" FOR VALUES FROM ('2027-06-01') TO ('2027-07-01');
+
+
+--
+-- Name: DataQualityReports_2027_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_07" FOR VALUES FROM ('2027-07-01') TO ('2027-08-01');
+
+
+--
+-- Name: DataQualityReports_2027_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_08" FOR VALUES FROM ('2027-08-01') TO ('2027-09-01');
+
+
+--
+-- Name: DataQualityReports_2027_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_09" FOR VALUES FROM ('2027-09-01') TO ('2027-10-01');
+
+
+--
+-- Name: DataQualityReports_2027_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_10" FOR VALUES FROM ('2027-10-01') TO ('2027-11-01');
+
+
+--
+-- Name: DataQualityReports_2027_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_11" FOR VALUES FROM ('2027-11-01') TO ('2027-12-01');
+
+
+--
+-- Name: DataQualityReports_2027_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports" ATTACH PARTITION public."DataQualityReports_2027_12" FOR VALUES FROM ('2027-12-01') TO ('2028-01-01');
+
+
+--
+-- Name: Ohlcv_1min_2026_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_01" FOR VALUES FROM ('1767225600000') TO ('1769904000000');
+
+
+--
+-- Name: Ohlcv_1min_2026_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_02" FOR VALUES FROM ('1769904000000') TO ('1772323200000');
+
+
+--
+-- Name: Ohlcv_1min_2026_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_03" FOR VALUES FROM ('1772323200000') TO ('1775001600000');
+
+
+--
+-- Name: Ohlcv_1min_2026_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_04" FOR VALUES FROM ('1775001600000') TO ('1777593600000');
+
+
+--
+-- Name: Ohlcv_1min_2026_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_05" FOR VALUES FROM ('1777593600000') TO ('1780272000000');
+
+
+--
+-- Name: Ohlcv_1min_2026_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_06" FOR VALUES FROM ('1780272000000') TO ('1782864000000');
+
+
+--
+-- Name: Ohlcv_1min_2026_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_07" FOR VALUES FROM ('1782864000000') TO ('1785542400000');
+
+
+--
+-- Name: Ohlcv_1min_2026_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_08" FOR VALUES FROM ('1785542400000') TO ('1788220800000');
+
+
+--
+-- Name: Ohlcv_1min_2026_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_09" FOR VALUES FROM ('1788220800000') TO ('1790812800000');
+
+
+--
+-- Name: Ohlcv_1min_2026_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_10" FOR VALUES FROM ('1790812800000') TO ('1793491200000');
+
+
+--
+-- Name: Ohlcv_1min_2026_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_11" FOR VALUES FROM ('1793491200000') TO ('1796083200000');
+
+
+--
+-- Name: Ohlcv_1min_2026_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_12" FOR VALUES FROM ('1796083200000') TO ('1798761600000');
+
+
+--
+-- Name: Ohlcv_1min_2027_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_01" FOR VALUES FROM ('1798761600000') TO ('1801440000000');
+
+
+--
+-- Name: Ohlcv_1min_2027_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_02" FOR VALUES FROM ('1801440000000') TO ('1803859200000');
+
+
+--
+-- Name: Ohlcv_1min_2027_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_03" FOR VALUES FROM ('1803859200000') TO ('1806537600000');
+
+
+--
+-- Name: Ohlcv_1min_2027_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_04" FOR VALUES FROM ('1806537600000') TO ('1809129600000');
+
+
+--
+-- Name: Ohlcv_1min_2027_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_05" FOR VALUES FROM ('1809129600000') TO ('1811808000000');
+
+
+--
+-- Name: Ohlcv_1min_2027_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_06" FOR VALUES FROM ('1811808000000') TO ('1814400000000');
+
+
+--
+-- Name: Ohlcv_1min_2027_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_07" FOR VALUES FROM ('1814400000000') TO ('1817078400000');
+
+
+--
+-- Name: Ohlcv_1min_2027_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_08" FOR VALUES FROM ('1817078400000') TO ('1819756800000');
+
+
+--
+-- Name: Ohlcv_1min_2027_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_09" FOR VALUES FROM ('1819756800000') TO ('1822348800000');
+
+
+--
+-- Name: Ohlcv_1min_2027_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_10" FOR VALUES FROM ('1822348800000') TO ('1825027200000');
+
+
+--
+-- Name: Ohlcv_1min_2027_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_11" FOR VALUES FROM ('1825027200000') TO ('1827619200000');
+
+
+--
+-- Name: Ohlcv_1min_2027_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_12" FOR VALUES FROM ('1827619200000') TO ('1830297600000');
+
+
+--
+-- Name: Ohlcv_Features_2026_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_01" FOR VALUES FROM ('1767225600000') TO ('1769904000000');
+
+
+--
+-- Name: Ohlcv_Features_2026_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_02" FOR VALUES FROM ('1769904000000') TO ('1772323200000');
+
+
+--
+-- Name: Ohlcv_Features_2026_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_03" FOR VALUES FROM ('1772323200000') TO ('1775001600000');
+
+
+--
+-- Name: Ohlcv_Features_2026_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_04" FOR VALUES FROM ('1775001600000') TO ('1777593600000');
+
+
+--
+-- Name: Ohlcv_Features_2026_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_05" FOR VALUES FROM ('1777593600000') TO ('1780272000000');
+
+
+--
+-- Name: Ohlcv_Features_2026_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_06" FOR VALUES FROM ('1780272000000') TO ('1782864000000');
+
+
+--
+-- Name: Ohlcv_Features_2026_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_07" FOR VALUES FROM ('1782864000000') TO ('1785542400000');
+
+
+--
+-- Name: Ohlcv_Features_2026_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_08" FOR VALUES FROM ('1785542400000') TO ('1788220800000');
+
+
+--
+-- Name: Ohlcv_Features_2026_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_09" FOR VALUES FROM ('1788220800000') TO ('1790812800000');
+
+
+--
+-- Name: Ohlcv_Features_2026_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_10" FOR VALUES FROM ('1790812800000') TO ('1793491200000');
+
+
+--
+-- Name: Ohlcv_Features_2026_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_11" FOR VALUES FROM ('1793491200000') TO ('1796083200000');
+
+
+--
+-- Name: Ohlcv_Features_2026_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2026_12" FOR VALUES FROM ('1796083200000') TO ('1798761600000');
+
+
+--
+-- Name: Ohlcv_Features_2027_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_01" FOR VALUES FROM ('1798761600000') TO ('1801440000000');
+
+
+--
+-- Name: Ohlcv_Features_2027_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_02" FOR VALUES FROM ('1801440000000') TO ('1803859200000');
+
+
+--
+-- Name: Ohlcv_Features_2027_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_03" FOR VALUES FROM ('1803859200000') TO ('1806537600000');
+
+
+--
+-- Name: Ohlcv_Features_2027_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_04" FOR VALUES FROM ('1806537600000') TO ('1809129600000');
+
+
+--
+-- Name: Ohlcv_Features_2027_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_05" FOR VALUES FROM ('1809129600000') TO ('1811808000000');
+
+
+--
+-- Name: Ohlcv_Features_2027_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_06" FOR VALUES FROM ('1811808000000') TO ('1814400000000');
+
+
+--
+-- Name: Ohlcv_Features_2027_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_07" FOR VALUES FROM ('1814400000000') TO ('1817078400000');
+
+
+--
+-- Name: Ohlcv_Features_2027_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_08" FOR VALUES FROM ('1817078400000') TO ('1819756800000');
+
+
+--
+-- Name: Ohlcv_Features_2027_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_09" FOR VALUES FROM ('1819756800000') TO ('1822348800000');
+
+
+--
+-- Name: Ohlcv_Features_2027_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_10" FOR VALUES FROM ('1822348800000') TO ('1825027200000');
+
+
+--
+-- Name: Ohlcv_Features_2027_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_11" FOR VALUES FROM ('1825027200000') TO ('1827619200000');
+
+
+--
+-- Name: Ohlcv_Features_2027_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features_2027_12" FOR VALUES FROM ('1827619200000') TO ('1830297600000');
 
 
 --
@@ -1251,18 +3594,87 @@ ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2026_12" FOR VA
 
 
 --
--- Name: DataQualityReports Id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: Trades_2027_01; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public."DataQualityReports" ALTER COLUMN "Id" SET DEFAULT nextval('public."DataQualityReports_Id_seq"'::regclass);
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_01" FOR VALUES FROM ('1798761600000') TO ('1801440000000');
 
 
 --
--- Name: DataQualityReports DataQualityReports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: Trades_2027_02; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public."DataQualityReports"
-    ADD CONSTRAINT "DataQualityReports_pkey" PRIMARY KEY ("Id");
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_02" FOR VALUES FROM ('1801440000000') TO ('1803859200000');
+
+
+--
+-- Name: Trades_2027_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_03" FOR VALUES FROM ('1803859200000') TO ('1806537600000');
+
+
+--
+-- Name: Trades_2027_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_04" FOR VALUES FROM ('1806537600000') TO ('1809129600000');
+
+
+--
+-- Name: Trades_2027_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_05" FOR VALUES FROM ('1809129600000') TO ('1811808000000');
+
+
+--
+-- Name: Trades_2027_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_06" FOR VALUES FROM ('1811808000000') TO ('1814400000000');
+
+
+--
+-- Name: Trades_2027_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_07" FOR VALUES FROM ('1814400000000') TO ('1817078400000');
+
+
+--
+-- Name: Trades_2027_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_08" FOR VALUES FROM ('1817078400000') TO ('1819756800000');
+
+
+--
+-- Name: Trades_2027_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_09" FOR VALUES FROM ('1819756800000') TO ('1822348800000');
+
+
+--
+-- Name: Trades_2027_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_10" FOR VALUES FROM ('1822348800000') TO ('1825027200000');
+
+
+--
+-- Name: Trades_2027_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_11" FOR VALUES FROM ('1825027200000') TO ('1827619200000');
+
+
+--
+-- Name: Trades_2027_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades" ATTACH PARTITION public."Trades_2027_12" FOR VALUES FROM ('1827619200000') TO ('1830297600000');
 
 
 --
@@ -1270,7 +3682,399 @@ ALTER TABLE ONLY public."DataQualityReports"
 --
 
 ALTER TABLE ONLY public."DataQualityFindings"
-    ADD CONSTRAINT "DataQualityFindings_pkey" PRIMARY KEY ("Id");
+    ADD CONSTRAINT "DataQualityFindings_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_01 DataQualityFindings_2026_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_01"
+    ADD CONSTRAINT "DataQualityFindings_2026_01_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_02 DataQualityFindings_2026_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_02"
+    ADD CONSTRAINT "DataQualityFindings_2026_02_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_03 DataQualityFindings_2026_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_03"
+    ADD CONSTRAINT "DataQualityFindings_2026_03_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_04 DataQualityFindings_2026_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_04"
+    ADD CONSTRAINT "DataQualityFindings_2026_04_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_05 DataQualityFindings_2026_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_05"
+    ADD CONSTRAINT "DataQualityFindings_2026_05_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_06 DataQualityFindings_2026_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_06"
+    ADD CONSTRAINT "DataQualityFindings_2026_06_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_07 DataQualityFindings_2026_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_07"
+    ADD CONSTRAINT "DataQualityFindings_2026_07_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_08 DataQualityFindings_2026_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_08"
+    ADD CONSTRAINT "DataQualityFindings_2026_08_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_09 DataQualityFindings_2026_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_09"
+    ADD CONSTRAINT "DataQualityFindings_2026_09_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_10 DataQualityFindings_2026_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_10"
+    ADD CONSTRAINT "DataQualityFindings_2026_10_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_11 DataQualityFindings_2026_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_11"
+    ADD CONSTRAINT "DataQualityFindings_2026_11_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2026_12 DataQualityFindings_2026_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2026_12"
+    ADD CONSTRAINT "DataQualityFindings_2026_12_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_01 DataQualityFindings_2027_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_01"
+    ADD CONSTRAINT "DataQualityFindings_2027_01_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_02 DataQualityFindings_2027_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_02"
+    ADD CONSTRAINT "DataQualityFindings_2027_02_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_03 DataQualityFindings_2027_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_03"
+    ADD CONSTRAINT "DataQualityFindings_2027_03_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_04 DataQualityFindings_2027_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_04"
+    ADD CONSTRAINT "DataQualityFindings_2027_04_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_05 DataQualityFindings_2027_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_05"
+    ADD CONSTRAINT "DataQualityFindings_2027_05_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_06 DataQualityFindings_2027_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_06"
+    ADD CONSTRAINT "DataQualityFindings_2027_06_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_07 DataQualityFindings_2027_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_07"
+    ADD CONSTRAINT "DataQualityFindings_2027_07_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_08 DataQualityFindings_2027_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_08"
+    ADD CONSTRAINT "DataQualityFindings_2027_08_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_09 DataQualityFindings_2027_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_09"
+    ADD CONSTRAINT "DataQualityFindings_2027_09_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_10 DataQualityFindings_2027_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_10"
+    ADD CONSTRAINT "DataQualityFindings_2027_10_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_11 DataQualityFindings_2027_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_11"
+    ADD CONSTRAINT "DataQualityFindings_2027_11_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityFindings_2027_12 DataQualityFindings_2027_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityFindings_2027_12"
+    ADD CONSTRAINT "DataQualityFindings_2027_12_pkey" PRIMARY KEY ("Id", "PeriodFrom");
+
+
+--
+-- Name: DataQualityReports DataQualityReports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports"
+    ADD CONSTRAINT "DataQualityReports_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_01 DataQualityReports_2026_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_01"
+    ADD CONSTRAINT "DataQualityReports_2026_01_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_02 DataQualityReports_2026_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_02"
+    ADD CONSTRAINT "DataQualityReports_2026_02_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_03 DataQualityReports_2026_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_03"
+    ADD CONSTRAINT "DataQualityReports_2026_03_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_04 DataQualityReports_2026_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_04"
+    ADD CONSTRAINT "DataQualityReports_2026_04_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_05 DataQualityReports_2026_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_05"
+    ADD CONSTRAINT "DataQualityReports_2026_05_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_06 DataQualityReports_2026_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_06"
+    ADD CONSTRAINT "DataQualityReports_2026_06_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_07 DataQualityReports_2026_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_07"
+    ADD CONSTRAINT "DataQualityReports_2026_07_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_08 DataQualityReports_2026_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_08"
+    ADD CONSTRAINT "DataQualityReports_2026_08_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_09 DataQualityReports_2026_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_09"
+    ADD CONSTRAINT "DataQualityReports_2026_09_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_10 DataQualityReports_2026_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_10"
+    ADD CONSTRAINT "DataQualityReports_2026_10_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_11 DataQualityReports_2026_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_11"
+    ADD CONSTRAINT "DataQualityReports_2026_11_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_12 DataQualityReports_2026_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2026_12"
+    ADD CONSTRAINT "DataQualityReports_2026_12_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_01 DataQualityReports_2027_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_01"
+    ADD CONSTRAINT "DataQualityReports_2027_01_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_02 DataQualityReports_2027_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_02"
+    ADD CONSTRAINT "DataQualityReports_2027_02_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_03 DataQualityReports_2027_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_03"
+    ADD CONSTRAINT "DataQualityReports_2027_03_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_04 DataQualityReports_2027_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_04"
+    ADD CONSTRAINT "DataQualityReports_2027_04_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_05 DataQualityReports_2027_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_05"
+    ADD CONSTRAINT "DataQualityReports_2027_05_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_06 DataQualityReports_2027_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_06"
+    ADD CONSTRAINT "DataQualityReports_2027_06_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_07 DataQualityReports_2027_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_07"
+    ADD CONSTRAINT "DataQualityReports_2027_07_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_08 DataQualityReports_2027_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_08"
+    ADD CONSTRAINT "DataQualityReports_2027_08_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_09 DataQualityReports_2027_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_09"
+    ADD CONSTRAINT "DataQualityReports_2027_09_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_10 DataQualityReports_2027_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_10"
+    ADD CONSTRAINT "DataQualityReports_2027_10_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_11 DataQualityReports_2027_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_11"
+    ADD CONSTRAINT "DataQualityReports_2027_11_pkey" PRIMARY KEY ("Id", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_12 DataQualityReports_2027_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."DataQualityReports_2027_12"
+    ADD CONSTRAINT "DataQualityReports_2027_12_pkey" PRIMARY KEY ("Id", "PeriodMonth");
 
 
 --
@@ -1282,6 +4086,206 @@ ALTER TABLE ONLY public."HistoricalAudit_Watermarks"
 
 
 --
+-- Name: Ohlcv_1min PK_Ohlcv_1min; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min"
+    ADD CONSTRAINT "PK_Ohlcv_1min" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_01 Ohlcv_1min_2026_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_01"
+    ADD CONSTRAINT "Ohlcv_1min_2026_01_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_02 Ohlcv_1min_2026_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_02"
+    ADD CONSTRAINT "Ohlcv_1min_2026_02_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_03 Ohlcv_1min_2026_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_03"
+    ADD CONSTRAINT "Ohlcv_1min_2026_03_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_04 Ohlcv_1min_2026_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_04"
+    ADD CONSTRAINT "Ohlcv_1min_2026_04_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_05 Ohlcv_1min_2026_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_05"
+    ADD CONSTRAINT "Ohlcv_1min_2026_05_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_06 Ohlcv_1min_2026_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_06"
+    ADD CONSTRAINT "Ohlcv_1min_2026_06_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_07 Ohlcv_1min_2026_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_07"
+    ADD CONSTRAINT "Ohlcv_1min_2026_07_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_08 Ohlcv_1min_2026_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_08"
+    ADD CONSTRAINT "Ohlcv_1min_2026_08_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_09 Ohlcv_1min_2026_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_09"
+    ADD CONSTRAINT "Ohlcv_1min_2026_09_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_10 Ohlcv_1min_2026_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_10"
+    ADD CONSTRAINT "Ohlcv_1min_2026_10_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_11 Ohlcv_1min_2026_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_11"
+    ADD CONSTRAINT "Ohlcv_1min_2026_11_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_12 Ohlcv_1min_2026_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2026_12"
+    ADD CONSTRAINT "Ohlcv_1min_2026_12_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_01 Ohlcv_1min_2027_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_01"
+    ADD CONSTRAINT "Ohlcv_1min_2027_01_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_02 Ohlcv_1min_2027_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_02"
+    ADD CONSTRAINT "Ohlcv_1min_2027_02_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_03 Ohlcv_1min_2027_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_03"
+    ADD CONSTRAINT "Ohlcv_1min_2027_03_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_04 Ohlcv_1min_2027_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_04"
+    ADD CONSTRAINT "Ohlcv_1min_2027_04_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_05 Ohlcv_1min_2027_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_05"
+    ADD CONSTRAINT "Ohlcv_1min_2027_05_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_06 Ohlcv_1min_2027_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_06"
+    ADD CONSTRAINT "Ohlcv_1min_2027_06_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_07 Ohlcv_1min_2027_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_07"
+    ADD CONSTRAINT "Ohlcv_1min_2027_07_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_08 Ohlcv_1min_2027_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_08"
+    ADD CONSTRAINT "Ohlcv_1min_2027_08_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_09 Ohlcv_1min_2027_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_09"
+    ADD CONSTRAINT "Ohlcv_1min_2027_09_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_10 Ohlcv_1min_2027_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_10"
+    ADD CONSTRAINT "Ohlcv_1min_2027_10_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_11 Ohlcv_1min_2027_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_11"
+    ADD CONSTRAINT "Ohlcv_1min_2027_11_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_12 Ohlcv_1min_2027_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_1min_2027_12"
+    ADD CONSTRAINT "Ohlcv_1min_2027_12_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
 -- Name: Ohlcv_Features Ohlcv_Features_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1290,11 +4294,195 @@ ALTER TABLE ONLY public."Ohlcv_Features"
 
 
 --
--- Name: Ohlcv_1min PK_Ohlcv_1min; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: Ohlcv_Features_2026_01 Ohlcv_Features_2026_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public."Ohlcv_1min"
-    ADD CONSTRAINT "PK_Ohlcv_1min" PRIMARY KEY ("Symbol", "OpenTime");
+ALTER TABLE ONLY public."Ohlcv_Features_2026_01"
+    ADD CONSTRAINT "Ohlcv_Features_2026_01_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_02 Ohlcv_Features_2026_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_02"
+    ADD CONSTRAINT "Ohlcv_Features_2026_02_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_03 Ohlcv_Features_2026_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_03"
+    ADD CONSTRAINT "Ohlcv_Features_2026_03_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_04 Ohlcv_Features_2026_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_04"
+    ADD CONSTRAINT "Ohlcv_Features_2026_04_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_05 Ohlcv_Features_2026_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_05"
+    ADD CONSTRAINT "Ohlcv_Features_2026_05_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_06 Ohlcv_Features_2026_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_06"
+    ADD CONSTRAINT "Ohlcv_Features_2026_06_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_07 Ohlcv_Features_2026_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_07"
+    ADD CONSTRAINT "Ohlcv_Features_2026_07_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_08 Ohlcv_Features_2026_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_08"
+    ADD CONSTRAINT "Ohlcv_Features_2026_08_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_09 Ohlcv_Features_2026_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_09"
+    ADD CONSTRAINT "Ohlcv_Features_2026_09_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_10 Ohlcv_Features_2026_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_10"
+    ADD CONSTRAINT "Ohlcv_Features_2026_10_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_11 Ohlcv_Features_2026_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_11"
+    ADD CONSTRAINT "Ohlcv_Features_2026_11_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2026_12 Ohlcv_Features_2026_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2026_12"
+    ADD CONSTRAINT "Ohlcv_Features_2026_12_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_01 Ohlcv_Features_2027_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_01"
+    ADD CONSTRAINT "Ohlcv_Features_2027_01_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_02 Ohlcv_Features_2027_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_02"
+    ADD CONSTRAINT "Ohlcv_Features_2027_02_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_03 Ohlcv_Features_2027_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_03"
+    ADD CONSTRAINT "Ohlcv_Features_2027_03_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_04 Ohlcv_Features_2027_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_04"
+    ADD CONSTRAINT "Ohlcv_Features_2027_04_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_05 Ohlcv_Features_2027_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_05"
+    ADD CONSTRAINT "Ohlcv_Features_2027_05_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_06 Ohlcv_Features_2027_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_06"
+    ADD CONSTRAINT "Ohlcv_Features_2027_06_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_07 Ohlcv_Features_2027_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_07"
+    ADD CONSTRAINT "Ohlcv_Features_2027_07_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_08 Ohlcv_Features_2027_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_08"
+    ADD CONSTRAINT "Ohlcv_Features_2027_08_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_09 Ohlcv_Features_2027_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_09"
+    ADD CONSTRAINT "Ohlcv_Features_2027_09_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_10 Ohlcv_Features_2027_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_10"
+    ADD CONSTRAINT "Ohlcv_Features_2027_10_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_11 Ohlcv_Features_2027_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_11"
+    ADD CONSTRAINT "Ohlcv_Features_2027_11_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: Ohlcv_Features_2027_12 Ohlcv_Features_2027_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Ohlcv_Features_2027_12"
+    ADD CONSTRAINT "Ohlcv_Features_2027_12_pkey" PRIMARY KEY ("Symbol", "OpenTime");
 
 
 --
@@ -1319,102 +4507,6 @@ ALTER TABLE ONLY public."TrackedSymbols"
 
 ALTER TABLE ONLY public."Trades"
     ADD CONSTRAINT "Trades_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_01 Trades_2025_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_01"
-    ADD CONSTRAINT "Trades_2025_01_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_02 Trades_2025_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_02"
-    ADD CONSTRAINT "Trades_2025_02_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_03 Trades_2025_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_03"
-    ADD CONSTRAINT "Trades_2025_03_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_04 Trades_2025_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_04"
-    ADD CONSTRAINT "Trades_2025_04_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_05 Trades_2025_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_05"
-    ADD CONSTRAINT "Trades_2025_05_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_06 Trades_2025_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_06"
-    ADD CONSTRAINT "Trades_2025_06_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_07 Trades_2025_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_07"
-    ADD CONSTRAINT "Trades_2025_07_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_08 Trades_2025_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_08"
-    ADD CONSTRAINT "Trades_2025_08_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_09 Trades_2025_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_09"
-    ADD CONSTRAINT "Trades_2025_09_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_10 Trades_2025_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_10"
-    ADD CONSTRAINT "Trades_2025_10_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_11 Trades_2025_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_11"
-    ADD CONSTRAINT "Trades_2025_11_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
-
-
---
--- Name: Trades_2025_12 Trades_2025_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."Trades_2025_12"
-    ADD CONSTRAINT "Trades_2025_12_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
 
 
 --
@@ -1514,6 +4606,1152 @@ ALTER TABLE ONLY public."Trades_2026_12"
 
 
 --
+-- Name: Trades_2027_01 Trades_2027_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_01"
+    ADD CONSTRAINT "Trades_2027_01_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_02 Trades_2027_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_02"
+    ADD CONSTRAINT "Trades_2027_02_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_03 Trades_2027_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_03"
+    ADD CONSTRAINT "Trades_2027_03_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_04 Trades_2027_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_04"
+    ADD CONSTRAINT "Trades_2027_04_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_05 Trades_2027_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_05"
+    ADD CONSTRAINT "Trades_2027_05_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_06 Trades_2027_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_06"
+    ADD CONSTRAINT "Trades_2027_06_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_07 Trades_2027_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_07"
+    ADD CONSTRAINT "Trades_2027_07_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_08 Trades_2027_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_08"
+    ADD CONSTRAINT "Trades_2027_08_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_09 Trades_2027_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_09"
+    ADD CONSTRAINT "Trades_2027_09_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_10 Trades_2027_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_10"
+    ADD CONSTRAINT "Trades_2027_10_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_11 Trades_2027_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_11"
+    ADD CONSTRAINT "Trades_2027_11_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: Trades_2027_12 Trades_2027_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Trades_2027_12"
+    ADD CONSTRAINT "Trades_2027_12_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: ix_dqf_group_symbol; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_dqf_group_symbol ON ONLY public."DataQualityFindings" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_01_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_01_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_01" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: ix_dqf_checked_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_dqf_checked_at ON ONLY public."DataQualityFindings" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_01_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_01_CheckedAt_idx" ON public."DataQualityFindings_2026_01" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: ix_dqf_severity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_dqf_severity ON ONLY public."DataQualityFindings" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_01_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_01_Severity_idx" ON public."DataQualityFindings_2026_01" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_02_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_02_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_02" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_02_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_02_CheckedAt_idx" ON public."DataQualityFindings_2026_02" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_02_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_02_Severity_idx" ON public."DataQualityFindings_2026_02" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_03_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_03_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_03" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_03_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_03_CheckedAt_idx" ON public."DataQualityFindings_2026_03" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_03_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_03_Severity_idx" ON public."DataQualityFindings_2026_03" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_04_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_04_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_04" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_04_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_04_CheckedAt_idx" ON public."DataQualityFindings_2026_04" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_04_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_04_Severity_idx" ON public."DataQualityFindings_2026_04" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_05_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_05_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_05" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_05_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_05_CheckedAt_idx" ON public."DataQualityFindings_2026_05" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_05_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_05_Severity_idx" ON public."DataQualityFindings_2026_05" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_06_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_06_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_06" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_06_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_06_CheckedAt_idx" ON public."DataQualityFindings_2026_06" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_06_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_06_Severity_idx" ON public."DataQualityFindings_2026_06" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_07_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_07_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_07" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_07_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_07_CheckedAt_idx" ON public."DataQualityFindings_2026_07" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_07_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_07_Severity_idx" ON public."DataQualityFindings_2026_07" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_08_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_08_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_08" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_08_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_08_CheckedAt_idx" ON public."DataQualityFindings_2026_08" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_08_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_08_Severity_idx" ON public."DataQualityFindings_2026_08" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_09_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_09_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_09" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_09_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_09_CheckedAt_idx" ON public."DataQualityFindings_2026_09" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_09_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_09_Severity_idx" ON public."DataQualityFindings_2026_09" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_10_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_10_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_10" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_10_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_10_CheckedAt_idx" ON public."DataQualityFindings_2026_10" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_10_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_10_Severity_idx" ON public."DataQualityFindings_2026_10" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_11_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_11_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_11" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_11_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_11_CheckedAt_idx" ON public."DataQualityFindings_2026_11" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_11_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_11_Severity_idx" ON public."DataQualityFindings_2026_11" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2026_12_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_12_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2026_12" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2026_12_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_12_CheckedAt_idx" ON public."DataQualityFindings_2026_12" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2026_12_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2026_12_Severity_idx" ON public."DataQualityFindings_2026_12" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_01_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_01_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_01" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_01_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_01_CheckedAt_idx" ON public."DataQualityFindings_2027_01" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_01_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_01_Severity_idx" ON public."DataQualityFindings_2027_01" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_02_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_02_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_02" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_02_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_02_CheckedAt_idx" ON public."DataQualityFindings_2027_02" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_02_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_02_Severity_idx" ON public."DataQualityFindings_2027_02" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_03_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_03_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_03" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_03_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_03_CheckedAt_idx" ON public."DataQualityFindings_2027_03" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_03_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_03_Severity_idx" ON public."DataQualityFindings_2027_03" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_04_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_04_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_04" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_04_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_04_CheckedAt_idx" ON public."DataQualityFindings_2027_04" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_04_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_04_Severity_idx" ON public."DataQualityFindings_2027_04" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_05_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_05_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_05" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_05_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_05_CheckedAt_idx" ON public."DataQualityFindings_2027_05" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_05_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_05_Severity_idx" ON public."DataQualityFindings_2027_05" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_06_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_06_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_06" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_06_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_06_CheckedAt_idx" ON public."DataQualityFindings_2027_06" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_06_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_06_Severity_idx" ON public."DataQualityFindings_2027_06" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_07_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_07_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_07" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_07_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_07_CheckedAt_idx" ON public."DataQualityFindings_2027_07" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_07_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_07_Severity_idx" ON public."DataQualityFindings_2027_07" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_08_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_08_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_08" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_08_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_08_CheckedAt_idx" ON public."DataQualityFindings_2027_08" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_08_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_08_Severity_idx" ON public."DataQualityFindings_2027_08" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_09_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_09_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_09" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_09_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_09_CheckedAt_idx" ON public."DataQualityFindings_2027_09" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_09_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_09_Severity_idx" ON public."DataQualityFindings_2027_09" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_10_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_10_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_10" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_10_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_10_CheckedAt_idx" ON public."DataQualityFindings_2027_10" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_10_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_10_Severity_idx" ON public."DataQualityFindings_2027_10" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_11_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_11_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_11" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_11_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_11_CheckedAt_idx" ON public."DataQualityFindings_2027_11" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_11_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_11_Severity_idx" ON public."DataQualityFindings_2027_11" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityFindings_2027_12_CheckGroup_Symbol_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_12_CheckGroup_Symbol_idx" ON public."DataQualityFindings_2027_12" USING btree ("CheckGroup", "Symbol");
+
+
+--
+-- Name: DataQualityFindings_2027_12_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_12_CheckedAt_idx" ON public."DataQualityFindings_2027_12" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityFindings_2027_12_Severity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityFindings_2027_12_Severity_idx" ON public."DataQualityFindings_2027_12" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+
+
+--
+-- Name: ix_dqr_checked_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_dqr_checked_at ON ONLY public."DataQualityReports" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_01_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_01_CheckedAt_idx" ON public."DataQualityReports_2026_01" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: ix_dqr_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_dqr_status ON ONLY public."DataQualityReports" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_01_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_01_Status_idx" ON public."DataQualityReports_2026_01" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: ix_dqr_symbol_month; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX ix_dqr_symbol_month ON ONLY public."DataQualityReports" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_01_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_01_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_01" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_02_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_02_CheckedAt_idx" ON public."DataQualityReports_2026_02" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_02_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_02_Status_idx" ON public."DataQualityReports_2026_02" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_02_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_02_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_02" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_03_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_03_CheckedAt_idx" ON public."DataQualityReports_2026_03" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_03_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_03_Status_idx" ON public."DataQualityReports_2026_03" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_03_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_03_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_03" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_04_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_04_CheckedAt_idx" ON public."DataQualityReports_2026_04" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_04_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_04_Status_idx" ON public."DataQualityReports_2026_04" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_04_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_04_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_04" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_05_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_05_CheckedAt_idx" ON public."DataQualityReports_2026_05" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_05_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_05_Status_idx" ON public."DataQualityReports_2026_05" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_05_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_05_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_05" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_06_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_06_CheckedAt_idx" ON public."DataQualityReports_2026_06" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_06_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_06_Status_idx" ON public."DataQualityReports_2026_06" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_06_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_06_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_06" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_07_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_07_CheckedAt_idx" ON public."DataQualityReports_2026_07" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_07_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_07_Status_idx" ON public."DataQualityReports_2026_07" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_07_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_07_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_07" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_08_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_08_CheckedAt_idx" ON public."DataQualityReports_2026_08" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_08_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_08_Status_idx" ON public."DataQualityReports_2026_08" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_08_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_08_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_08" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_09_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_09_CheckedAt_idx" ON public."DataQualityReports_2026_09" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_09_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_09_Status_idx" ON public."DataQualityReports_2026_09" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_09_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_09_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_09" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_10_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_10_CheckedAt_idx" ON public."DataQualityReports_2026_10" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_10_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_10_Status_idx" ON public."DataQualityReports_2026_10" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_10_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_10_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_10" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_11_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_11_CheckedAt_idx" ON public."DataQualityReports_2026_11" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_11_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_11_Status_idx" ON public."DataQualityReports_2026_11" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_11_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_11_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_11" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2026_12_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_12_CheckedAt_idx" ON public."DataQualityReports_2026_12" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2026_12_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2026_12_Status_idx" ON public."DataQualityReports_2026_12" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2026_12_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2026_12_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2026_12" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_01_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_01_CheckedAt_idx" ON public."DataQualityReports_2027_01" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_01_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_01_Status_idx" ON public."DataQualityReports_2027_01" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_01_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_01_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_01" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_02_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_02_CheckedAt_idx" ON public."DataQualityReports_2027_02" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_02_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_02_Status_idx" ON public."DataQualityReports_2027_02" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_02_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_02_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_02" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_03_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_03_CheckedAt_idx" ON public."DataQualityReports_2027_03" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_03_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_03_Status_idx" ON public."DataQualityReports_2027_03" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_03_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_03_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_03" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_04_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_04_CheckedAt_idx" ON public."DataQualityReports_2027_04" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_04_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_04_Status_idx" ON public."DataQualityReports_2027_04" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_04_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_04_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_04" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_05_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_05_CheckedAt_idx" ON public."DataQualityReports_2027_05" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_05_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_05_Status_idx" ON public."DataQualityReports_2027_05" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_05_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_05_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_05" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_06_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_06_CheckedAt_idx" ON public."DataQualityReports_2027_06" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_06_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_06_Status_idx" ON public."DataQualityReports_2027_06" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_06_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_06_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_06" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_07_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_07_CheckedAt_idx" ON public."DataQualityReports_2027_07" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_07_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_07_Status_idx" ON public."DataQualityReports_2027_07" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_07_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_07_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_07" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_08_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_08_CheckedAt_idx" ON public."DataQualityReports_2027_08" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_08_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_08_Status_idx" ON public."DataQualityReports_2027_08" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_08_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_08_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_08" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_09_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_09_CheckedAt_idx" ON public."DataQualityReports_2027_09" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_09_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_09_Status_idx" ON public."DataQualityReports_2027_09" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_09_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_09_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_09" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_10_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_10_CheckedAt_idx" ON public."DataQualityReports_2027_10" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_10_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_10_Status_idx" ON public."DataQualityReports_2027_10" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_10_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_10_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_10" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_11_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_11_CheckedAt_idx" ON public."DataQualityReports_2027_11" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_11_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_11_Status_idx" ON public."DataQualityReports_2027_11" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_11_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_11_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_11" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: DataQualityReports_2027_12_CheckedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_12_CheckedAt_idx" ON public."DataQualityReports_2027_12" USING btree ("CheckedAt" DESC);
+
+
+--
+-- Name: DataQualityReports_2027_12_Status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "DataQualityReports_2027_12_Status_idx" ON public."DataQualityReports_2027_12" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+
+
+--
+-- Name: DataQualityReports_2027_12_Symbol_PeriodMonth_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "DataQualityReports_2027_12_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_12" USING btree ("Symbol", "PeriodMonth");
+
+
+--
 -- Name: IX_HistoricalAudit_Watermarks_Status; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1524,7 +5762,7 @@ CREATE INDEX "IX_HistoricalAudit_Watermarks_Status" ON public."HistoricalAudit_W
 -- Name: IX_Ohlcv_1min_ProcessingStatus_OpenTime; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "IX_Ohlcv_1min_ProcessingStatus_OpenTime" ON public."Ohlcv_1min" USING btree ("ProcessingStatus", "OpenTime");
+CREATE INDEX "IX_Ohlcv_1min_ProcessingStatus_OpenTime" ON ONLY public."Ohlcv_1min" USING btree ("ProcessingStatus", "OpenTime");
 
 
 --
@@ -1535,6 +5773,174 @@ CREATE INDEX "IX_TrackedSymbols_IsActive" ON public."TrackedSymbols" USING btree
 
 
 --
+-- Name: Ohlcv_1min_2026_01_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_01_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_01" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_02_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_02_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_02" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_03_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_03_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_03" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_04_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_04_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_04" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_05_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_05_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_05" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_06_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_06_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_06" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_07_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_07_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_07" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_08_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_08_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_08" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_09_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_09_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_09" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_10_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_10_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_10" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_11_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_11_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_11" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2026_12_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2026_12_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2026_12" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_01_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_01_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_01" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_02_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_02_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_02" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_03_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_03_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_03" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_04_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_04_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_04" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_05_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_05_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_05" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_06_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_06_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_06" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_07_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_07_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_07" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_08_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_08_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_08" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_09_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_09_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_09" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_10_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_10_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_10" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_11_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_11_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_11" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: Ohlcv_1min_2027_12_ProcessingStatus_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "Ohlcv_1min_2027_12_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_12" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
 -- Name: ix_trades_processingstatus; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1542,10 +5948,10 @@ CREATE INDEX ix_trades_processingstatus ON ONLY public."Trades" USING btree ("Pr
 
 
 --
--- Name: Trades_2025_01_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2026_01_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX "Trades_2025_01_ProcessingStatus_idx" ON public."Trades_2025_01" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
+CREATE INDEX "Trades_2026_01_ProcessingStatus_idx" ON public."Trades_2026_01" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -1553,174 +5959,6 @@ CREATE INDEX "Trades_2025_01_ProcessingStatus_idx" ON public."Trades_2025_01" US
 --
 
 CREATE INDEX ix_trades_symbol_tradetime ON ONLY public."Trades" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_01_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_01_Symbol_TradeTime_idx" ON public."Trades_2025_01" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_02_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_02_ProcessingStatus_idx" ON public."Trades_2025_02" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_02_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_02_Symbol_TradeTime_idx" ON public."Trades_2025_02" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_03_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_03_ProcessingStatus_idx" ON public."Trades_2025_03" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_03_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_03_Symbol_TradeTime_idx" ON public."Trades_2025_03" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_04_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_04_ProcessingStatus_idx" ON public."Trades_2025_04" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_04_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_04_Symbol_TradeTime_idx" ON public."Trades_2025_04" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_05_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_05_ProcessingStatus_idx" ON public."Trades_2025_05" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_05_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_05_Symbol_TradeTime_idx" ON public."Trades_2025_05" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_06_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_06_ProcessingStatus_idx" ON public."Trades_2025_06" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_06_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_06_Symbol_TradeTime_idx" ON public."Trades_2025_06" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_07_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_07_ProcessingStatus_idx" ON public."Trades_2025_07" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_07_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_07_Symbol_TradeTime_idx" ON public."Trades_2025_07" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_08_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_08_ProcessingStatus_idx" ON public."Trades_2025_08" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_08_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_08_Symbol_TradeTime_idx" ON public."Trades_2025_08" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_09_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_09_ProcessingStatus_idx" ON public."Trades_2025_09" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_09_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_09_Symbol_TradeTime_idx" ON public."Trades_2025_09" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_10_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_10_ProcessingStatus_idx" ON public."Trades_2025_10" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_10_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_10_Symbol_TradeTime_idx" ON public."Trades_2025_10" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_11_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_11_ProcessingStatus_idx" ON public."Trades_2025_11" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_11_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_11_Symbol_TradeTime_idx" ON public."Trades_2025_11" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2025_12_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_12_ProcessingStatus_idx" ON public."Trades_2025_12" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
-
-
---
--- Name: Trades_2025_12_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2025_12_Symbol_TradeTime_idx" ON public."Trades_2025_12" USING btree ("Symbol", "TradeTime" DESC);
-
-
---
--- Name: Trades_2026_01_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "Trades_2026_01_ProcessingStatus_idx" ON public."Trades_2026_01" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
@@ -1885,297 +6123,2019 @@ CREATE INDEX "Trades_2026_12_Symbol_TradeTime_idx" ON public."Trades_2026_12" US
 
 
 --
--- Name: ix_dqf_checked_at; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_01_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_dqf_checked_at ON public."DataQualityFindings" USING btree ("CheckedAt" DESC);
+CREATE INDEX "Trades_2027_01_ProcessingStatus_idx" ON public."Trades_2027_01" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: ix_dqf_severity; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_01_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_dqf_severity ON public."DataQualityFindings" USING btree ("Severity") WHERE (("Severity")::text <> 'ok'::text);
+CREATE INDEX "Trades_2027_01_Symbol_TradeTime_idx" ON public."Trades_2027_01" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: ix_dqf_group_symbol; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_02_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_dqf_group_symbol ON public."DataQualityFindings" USING btree ("CheckGroup", "Symbol");
+CREATE INDEX "Trades_2027_02_ProcessingStatus_idx" ON public."Trades_2027_02" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: ix_dqr_checked_at; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_02_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_dqr_checked_at ON public."DataQualityReports" USING btree ("CheckedAt" DESC);
+CREATE INDEX "Trades_2027_02_Symbol_TradeTime_idx" ON public."Trades_2027_02" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: ix_dqr_status; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_03_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX ix_dqr_status ON public."DataQualityReports" USING btree ("Status") WHERE (("Status")::text <> 'ok'::text);
+CREATE INDEX "Trades_2027_03_ProcessingStatus_idx" ON public."Trades_2027_03" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: ix_dqr_symbol_month; Type: INDEX; Schema: public; Owner: -
+-- Name: Trades_2027_03_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX ix_dqr_symbol_month ON public."DataQualityReports" USING btree ("Symbol", "PeriodMonth");
+CREATE INDEX "Trades_2027_03_Symbol_TradeTime_idx" ON public."Trades_2027_03" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: Trades_2025_01_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_04_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_01_ProcessingStatus_idx";
+CREATE INDEX "Trades_2027_04_ProcessingStatus_idx" ON public."Trades_2027_04" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: Trades_2025_01_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_04_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_01_Symbol_TradeTime_idx";
+CREATE INDEX "Trades_2027_04_Symbol_TradeTime_idx" ON public."Trades_2027_04" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: Trades_2025_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_05_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_01_pkey";
+CREATE INDEX "Trades_2027_05_ProcessingStatus_idx" ON public."Trades_2027_05" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: Trades_2025_02_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_05_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_02_ProcessingStatus_idx";
+CREATE INDEX "Trades_2027_05_Symbol_TradeTime_idx" ON public."Trades_2027_05" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: Trades_2025_02_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_06_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_02_Symbol_TradeTime_idx";
+CREATE INDEX "Trades_2027_06_ProcessingStatus_idx" ON public."Trades_2027_06" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: Trades_2025_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_06_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_02_pkey";
+CREATE INDEX "Trades_2027_06_Symbol_TradeTime_idx" ON public."Trades_2027_06" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: Trades_2025_03_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_07_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_03_ProcessingStatus_idx";
+CREATE INDEX "Trades_2027_07_ProcessingStatus_idx" ON public."Trades_2027_07" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: Trades_2025_03_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_07_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_03_Symbol_TradeTime_idx";
+CREATE INDEX "Trades_2027_07_Symbol_TradeTime_idx" ON public."Trades_2027_07" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: Trades_2025_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_08_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_03_pkey";
+CREATE INDEX "Trades_2027_08_ProcessingStatus_idx" ON public."Trades_2027_08" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: Trades_2025_04_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_08_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_04_ProcessingStatus_idx";
+CREATE INDEX "Trades_2027_08_Symbol_TradeTime_idx" ON public."Trades_2027_08" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: Trades_2025_04_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_09_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_04_Symbol_TradeTime_idx";
+CREATE INDEX "Trades_2027_09_ProcessingStatus_idx" ON public."Trades_2027_09" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: Trades_2025_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_09_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_04_pkey";
+CREATE INDEX "Trades_2027_09_Symbol_TradeTime_idx" ON public."Trades_2027_09" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: Trades_2025_05_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_10_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_05_ProcessingStatus_idx";
+CREATE INDEX "Trades_2027_10_ProcessingStatus_idx" ON public."Trades_2027_10" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: Trades_2025_05_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_10_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_05_Symbol_TradeTime_idx";
+CREATE INDEX "Trades_2027_10_Symbol_TradeTime_idx" ON public."Trades_2027_10" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: Trades_2025_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_11_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_05_pkey";
+CREATE INDEX "Trades_2027_11_ProcessingStatus_idx" ON public."Trades_2027_11" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: Trades_2025_06_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_11_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_06_ProcessingStatus_idx";
+CREATE INDEX "Trades_2027_11_Symbol_TradeTime_idx" ON public."Trades_2027_11" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: Trades_2025_06_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_12_ProcessingStatus_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_06_Symbol_TradeTime_idx";
+CREATE INDEX "Trades_2027_12_ProcessingStatus_idx" ON public."Trades_2027_12" USING btree ("ProcessingStatus") WHERE (("ProcessingStatus")::text = 'new'::text);
 
 
 --
--- Name: Trades_2025_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: Trades_2027_12_Symbol_TradeTime_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_06_pkey";
+CREATE INDEX "Trades_2027_12_Symbol_TradeTime_idx" ON public."Trades_2027_12" USING btree ("Symbol", "TradeTime" DESC);
 
 
 --
--- Name: Trades_2025_07_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_01_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_07_ProcessingStatus_idx";
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_01_CheckGroup_Symbol_idx";
 
 
 --
--- Name: Trades_2025_07_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_01_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_07_Symbol_TradeTime_idx";
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_01_CheckedAt_idx";
 
 
 --
--- Name: Trades_2025_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_01_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_07_pkey";
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_01_Severity_idx";
 
 
 --
--- Name: Trades_2025_08_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_08_ProcessingStatus_idx";
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_01_pkey";
 
 
 --
--- Name: Trades_2025_08_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_02_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_08_Symbol_TradeTime_idx";
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_02_CheckGroup_Symbol_idx";
 
 
 --
--- Name: Trades_2025_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_02_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_08_pkey";
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_02_CheckedAt_idx";
 
 
 --
--- Name: Trades_2025_09_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_02_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_09_ProcessingStatus_idx";
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_02_Severity_idx";
 
 
 --
--- Name: Trades_2025_09_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_09_Symbol_TradeTime_idx";
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_02_pkey";
 
 
 --
--- Name: Trades_2025_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_03_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_09_pkey";
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_03_CheckGroup_Symbol_idx";
 
 
 --
--- Name: Trades_2025_10_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_03_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_10_ProcessingStatus_idx";
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_03_CheckedAt_idx";
 
 
 --
--- Name: Trades_2025_10_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_03_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_10_Symbol_TradeTime_idx";
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_03_Severity_idx";
 
 
 --
--- Name: Trades_2025_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_10_pkey";
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_03_pkey";
 
 
 --
--- Name: Trades_2025_11_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_04_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_11_ProcessingStatus_idx";
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_04_CheckGroup_Symbol_idx";
 
 
 --
--- Name: Trades_2025_11_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_04_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_11_Symbol_TradeTime_idx";
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_04_CheckedAt_idx";
 
 
 --
--- Name: Trades_2025_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_04_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_11_pkey";
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_04_Severity_idx";
 
 
 --
--- Name: Trades_2025_12_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2025_12_ProcessingStatus_idx";
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_04_pkey";
 
 
 --
--- Name: Trades_2025_12_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_05_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2025_12_Symbol_TradeTime_idx";
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_05_CheckGroup_Symbol_idx";
 
 
 --
--- Name: Trades_2025_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+-- Name: DataQualityFindings_2026_05_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
 --
 
-ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2025_12_pkey";
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_05_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_05_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_05_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_05_pkey";
+
+
+--
+-- Name: DataQualityFindings_2026_06_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_06_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_06_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_06_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_06_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_06_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_06_pkey";
+
+
+--
+-- Name: DataQualityFindings_2026_07_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_07_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_07_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_07_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_07_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_07_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_07_pkey";
+
+
+--
+-- Name: DataQualityFindings_2026_08_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_08_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_08_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_08_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_08_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_08_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_08_pkey";
+
+
+--
+-- Name: DataQualityFindings_2026_09_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_09_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_09_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_09_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_09_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_09_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_09_pkey";
+
+
+--
+-- Name: DataQualityFindings_2026_10_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_10_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_10_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_10_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_10_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_10_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_10_pkey";
+
+
+--
+-- Name: DataQualityFindings_2026_11_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_11_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_11_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_11_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_11_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_11_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_11_pkey";
+
+
+--
+-- Name: DataQualityFindings_2026_12_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2026_12_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_12_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2026_12_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_12_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2026_12_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2026_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2026_12_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_01_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_01_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_01_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_01_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_01_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_01_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_01_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_02_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_02_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_02_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_02_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_02_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_02_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_02_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_03_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_03_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_03_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_03_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_03_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_03_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_03_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_04_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_04_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_04_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_04_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_04_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_04_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_04_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_05_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_05_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_05_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_05_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_05_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_05_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_05_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_06_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_06_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_06_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_06_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_06_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_06_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_06_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_07_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_07_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_07_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_07_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_07_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_07_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_07_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_08_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_08_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_08_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_08_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_08_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_08_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_08_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_09_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_09_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_09_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_09_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_09_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_09_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_09_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_10_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_10_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_10_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_10_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_10_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_10_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_10_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_11_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_11_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_11_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_11_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_11_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_11_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_11_pkey";
+
+
+--
+-- Name: DataQualityFindings_2027_12_CheckGroup_Symbol_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_group_symbol ATTACH PARTITION public."DataQualityFindings_2027_12_CheckGroup_Symbol_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_12_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_checked_at ATTACH PARTITION public."DataQualityFindings_2027_12_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_12_Severity_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqf_severity ATTACH PARTITION public."DataQualityFindings_2027_12_Severity_idx";
+
+
+--
+-- Name: DataQualityFindings_2027_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityFindings_pkey" ATTACH PARTITION public."DataQualityFindings_2027_12_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_01_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_01_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_01_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_01_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_01_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_01_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_01_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_02_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_02_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_02_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_02_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_02_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_02_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_02_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_03_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_03_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_03_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_03_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_03_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_03_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_03_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_04_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_04_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_04_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_04_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_04_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_04_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_04_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_05_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_05_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_05_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_05_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_05_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_05_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_05_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_06_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_06_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_06_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_06_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_06_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_06_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_06_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_07_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_07_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_07_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_07_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_07_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_07_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_07_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_08_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_08_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_08_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_08_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_08_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_08_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_08_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_09_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_09_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_09_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_09_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_09_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_09_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_09_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_10_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_10_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_10_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_10_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_10_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_10_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_10_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_11_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_11_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_11_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_11_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_11_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_11_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_11_pkey";
+
+
+--
+-- Name: DataQualityReports_2026_12_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2026_12_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2026_12_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2026_12_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2026_12_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2026_12_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2026_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2026_12_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_01_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_01_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_01_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_01_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_01_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_01_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_01_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_02_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_02_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_02_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_02_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_02_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_02_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_02_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_03_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_03_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_03_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_03_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_03_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_03_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_03_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_04_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_04_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_04_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_04_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_04_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_04_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_04_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_05_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_05_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_05_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_05_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_05_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_05_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_05_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_06_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_06_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_06_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_06_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_06_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_06_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_06_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_07_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_07_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_07_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_07_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_07_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_07_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_07_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_08_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_08_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_08_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_08_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_08_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_08_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_08_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_09_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_09_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_09_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_09_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_09_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_09_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_09_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_10_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_10_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_10_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_10_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_10_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_10_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_10_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_11_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_11_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_11_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_11_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_11_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_11_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_11_pkey";
+
+
+--
+-- Name: DataQualityReports_2027_12_CheckedAt_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_checked_at ATTACH PARTITION public."DataQualityReports_2027_12_CheckedAt_idx";
+
+
+--
+-- Name: DataQualityReports_2027_12_Status_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_status ATTACH PARTITION public."DataQualityReports_2027_12_Status_idx";
+
+
+--
+-- Name: DataQualityReports_2027_12_Symbol_PeriodMonth_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_dqr_symbol_month ATTACH PARTITION public."DataQualityReports_2027_12_Symbol_PeriodMonth_idx";
+
+
+--
+-- Name: DataQualityReports_2027_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."DataQualityReports_pkey" ATTACH PARTITION public."DataQualityReports_2027_12_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_01_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_01_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_01_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_02_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_02_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_02_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_03_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_03_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_03_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_04_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_04_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_04_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_05_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_05_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_05_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_06_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_06_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_06_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_07_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_07_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_07_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_08_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_08_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_08_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_09_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_09_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_09_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_10_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_10_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_10_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_11_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_11_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_11_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2026_12_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2026_12_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2026_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2026_12_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_01_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_01_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_01_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_02_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_02_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_02_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_03_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_03_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_03_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_04_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_04_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_04_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_05_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_05_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_05_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_06_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_06_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_06_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_07_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_07_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_07_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_08_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_08_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_08_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_09_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_09_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_09_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_10_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_10_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_10_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_11_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_11_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_11_pkey";
+
+
+--
+-- Name: Ohlcv_1min_2027_12_ProcessingStatus_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_Ohlcv_1min_ProcessingStatus_OpenTime" ATTACH PARTITION public."Ohlcv_1min_2027_12_ProcessingStatus_OpenTime_idx";
+
+
+--
+-- Name: Ohlcv_1min_2027_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_Ohlcv_1min" ATTACH PARTITION public."Ohlcv_1min_2027_12_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_01_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_02_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_03_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_04_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_05_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_06_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_07_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_08_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_09_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_10_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_11_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2026_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2026_12_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_01_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_02_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_03_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_04_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_05_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_06_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_07_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_08_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_09_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_10_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_11_pkey";
+
+
+--
+-- Name: Ohlcv_Features_2027_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_12_pkey";
 
 
 --
@@ -2428,6 +8388,258 @@ ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_20
 --
 
 ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2026_12_pkey";
+
+
+--
+-- Name: Trades_2027_01_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_01_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_01_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_01_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_01_pkey";
+
+
+--
+-- Name: Trades_2027_02_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_02_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_02_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_02_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_02_pkey";
+
+
+--
+-- Name: Trades_2027_03_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_03_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_03_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_03_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_03_pkey";
+
+
+--
+-- Name: Trades_2027_04_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_04_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_04_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_04_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_04_pkey";
+
+
+--
+-- Name: Trades_2027_05_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_05_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_05_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_05_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_05_pkey";
+
+
+--
+-- Name: Trades_2027_06_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_06_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_06_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_06_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_06_pkey";
+
+
+--
+-- Name: Trades_2027_07_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_07_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_07_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_07_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_07_pkey";
+
+
+--
+-- Name: Trades_2027_08_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_08_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_08_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_08_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_08_pkey";
+
+
+--
+-- Name: Trades_2027_09_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_09_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_09_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_09_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_09_pkey";
+
+
+--
+-- Name: Trades_2027_10_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_10_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_10_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_10_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_10_pkey";
+
+
+--
+-- Name: Trades_2027_11_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_11_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_11_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_11_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_11_pkey";
+
+
+--
+-- Name: Trades_2027_12_ProcessingStatus_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_processingstatus ATTACH PARTITION public."Trades_2027_12_ProcessingStatus_idx";
+
+
+--
+-- Name: Trades_2027_12_Symbol_TradeTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public.ix_trades_symbol_tradetime ATTACH PARTITION public."Trades_2027_12_Symbol_TradeTime_idx";
+
+
+--
+-- Name: Trades_2027_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_12_pkey";
 
 
 --

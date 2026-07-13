@@ -85,8 +85,23 @@ public interface ITradeRepository
     Task<Trade?> GetLastTradeAsync();
 
     /// <summary>
-    /// Rotates monthly partitions: creates current and next month, drops the 13th oldest.
-    /// Called daily by PartitionMaintenanceWorker on prod.
+    /// Ротация по размеру: создаёт партиции на текущий и следующий месяц, затем, пока
+    /// суммарный размер партиционированных данных выше порога, дропает самый старый
+    /// месяц во всех таблицах сразу. Вызывается ежедневно PartitionMaintenanceWorker.
     /// </summary>
-    Task RotatePartitionsAsync();
+    /// <param name="maxBytes">Порог, выше которого начинается ротация.</param>
+    /// <param name="minMonthsToKeep">Месяцы свежее этого окна не дропаются никогда.</param>
+    Task RotatePartitionsAsync(long maxBytes, int minMonthsToKeep);
+
+    /// <summary>
+    /// Суммарный размер всех партиционированных данных (с индексами), байт.
+    /// </summary>
+    Task<long> GetPartitionedSizeBytesAsync();
+
+    /// <summary>
+    /// Граница ретенции — начало самой старой существующей партиции Trades (Unix-мс).
+    /// Ниже неё данных нет и быть не должно: партиции туда не создаются, скачивать
+    /// архивы за такие даты бессмысленно.
+    /// </summary>
+    Task<long> GetRetentionFloorMsAsync();
 }

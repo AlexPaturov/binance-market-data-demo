@@ -78,6 +78,7 @@ public class Program
             });
 
             builder.Services.Configure<ArchivesSettings>(builder.Configuration.GetSection("ArchivesSettings"));
+            builder.Services.Configure<RetentionSettings>(builder.Configuration.GetSection("RetentionSettings"));
 
             #region Регистрация сервисов
             builder.Services.AddHttpClient("BinanceArchive", client =>
@@ -156,9 +157,9 @@ public class Program
                         QueuePollInterval = TimeSpan.FromSeconds(15),
                         InvisibilityTimeout = TimeSpan.FromHours(4),
                         UseNativeDatabaseTransactions = true,
-                        // Schema is pre-created via sqlScripts/migrations/. Must be false:
-                        // PgBouncer transaction mode drops session advisory locks that Hangfire
-                        // uses to guard concurrent schema creation → duplicate key crash on startup.
+                        // Must be false: PgBouncer transaction mode drops the session advisory locks
+                        // Hangfire uses to guard concurrent schema creation → duplicate key crash on
+                        // startup. The hangfire schema is created once, out of band.
                         PrepareSchemaIfNecessary = false,
                         SchemaName = "hangfire",
                         JobExpirationCheckInterval = TimeSpan.FromHours(1),

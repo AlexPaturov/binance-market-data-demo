@@ -82,6 +82,9 @@ public class DataQualityRepository : IDataQualityRepository
     public async Task UpsertReportAsync(DataQualityReport report)
     {
         const string sql = @"
+            SELECT public.sp_ensure_month_partitions(
+                (EXTRACT(EPOCH FROM @PeriodMonth::timestamptz) * 1000)::bigint);
+
             INSERT INTO public.""DataQualityReports""
                 (""Symbol"", ""PeriodMonth"", ""TradeCount"", ""GapCount"", ""InvalidPriceCount"", ""OutlierCount"", ""Status"", ""CheckedAt"")
             VALUES
@@ -474,7 +477,12 @@ public class DataQualityRepository : IDataQualityRepository
         var list = findings.ToList();
         if (list.Count == 0) return;
 
+        // Партиция под месяц находки может ещё не существовать (проверка могла
+        // затронуть месяц, в котором ещё ничего не писалось).
         const string sql = @"
+            SELECT public.sp_ensure_month_partitions(
+                (EXTRACT(EPOCH FROM @PeriodFrom) * 1000)::bigint);
+
             INSERT INTO public.""DataQualityFindings""
                 (""CheckGroup"", ""CheckType"", ""Symbol"", ""PeriodFrom"", ""PeriodTo"",
                  ""Severity"", ""Count"", ""Details"", ""CheckedAt"")

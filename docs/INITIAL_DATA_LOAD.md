@@ -1,6 +1,10 @@
-# Initial Data Load: 2025-01-01 to Present
+# Initial Data Load: 2026-01-01 to Present
 
 Пошаговый план первичной загрузки исторических данных, агрегации и запуска воркеров.
+
+> **Старт перенесён с 01.01.2025 на 01.01.2026** (решение 2026-07-13): загрузка полутора лет истории по 26–40 парам не заканчивалась, а объём (~1 ТБ) съедал бюджет диска. Год данных достаточен для ML-задач проекта и позволяет наконец дойти до рабочего режима.
+>
+> **Граница жёсткая, а не соглашение.** Партиции заведены с 2026-01, и `sp_ensure_month_partitions` **отказывается** создавать партицию раньше границы ретенции (см. `docs/adr/0007-*`). Попытка импортировать архивы за 2025 год просто не найдёт партицию — данные не запишутся. Это тот же барьер, что защищает от повторной закачки дропнутых ротацией месяцев.
 
 ---
 
@@ -35,7 +39,7 @@ SELECT COUNT(*) FROM public."TrackedSymbols" WHERE "IsActive" = true;
 **Инструмент:** страница Archive в UI
 
 **Действия:**
-- Дата `01.01.2025` → `сегодня`
+- Дата `01.01.2026` → `сегодня`
 - Флаг **Download All**
 - Нажать Submit
 
@@ -96,14 +100,14 @@ ORDER BY "Symbol";
 
 **Почему не через воркер:**  
 `OhlcvAggregatorWorker` обрабатывает одно 15-минутное окно в минуту.  
-С 01.01.2025 по сегодня — ~47 000 окон = **≈33 дня** ожидания.
+С 01.01.2026 по сегодня — десятки тысяч окон, недели ожидания.
 
 **Решение:** запустить PL/pgSQL-скрипт, который вызывает `sp_aggregate_trades_to_ohlcv` в цикле и сам обновляет вотермарку по завершении.
 
 ```sql
 DO $$
 DECLARE
-    v_start    BIGINT := 1735689600000; -- 2025-01-01 00:00:00 UTC
+    v_start    BIGINT := 1767225600000; -- 2026-01-01 00:00:00 UTC
     v_window   BIGINT := 900000;        -- 15 минут в мс
     v_end      BIGINT;
     v_hot_zone BIGINT;
@@ -155,17 +159,17 @@ SELECT COUNT(*) FROM public."Ohlcv_1min";
 **Кто:** разработчик  
 **Инструмент:** psql / DBeaver
 
-Создаёт записи в `HistoricalAudit_Watermarks` для всех активных символов, начиная с 01.01.2025.  
+Создаёт записи в `HistoricalAudit_Watermarks` для всех активных символов, начиная с 01.01.2026.  
 HistoricalAuditor будет верифицировать импортированные данные и при нахождении дыр — ставить задачи на докачку через API.
 
 ```sql
--- 1735689599999 = 2025-01-01 00:00:00 UTC - 1ms
+-- 1767225599999 = 2026-01-01 00:00:00 UTC - 1ms
 INSERT INTO public."HistoricalAudit_Watermarks"
     ("Symbol", "LastChecked_TradeId", "LastChecked_Timestamp", "Status", "RetryCount", "LastAttempt_UTC")
 SELECT
     "Symbol",
     0,
-    1735689599999,
+    1767225599999,
     'Pending',
     0,
     NOW() AT TIME ZONE 'utc'
@@ -173,7 +177,7 @@ FROM public."TrackedSymbols"
 WHERE "IsActive" = true
 ON CONFLICT ("Symbol") DO UPDATE
     SET "LastChecked_TradeId"   = 0,
-        "LastChecked_Timestamp" = 1735689599999,
+        "LastChecked_Timestamp" = 1767225599999,
         "Status"                = 'Pending',
         "RetryCount"            = 0,
         "LastAttempt_UTC"       = NOW() AT TIME ZONE 'utc';

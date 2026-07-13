@@ -86,10 +86,29 @@ public class TradeRepository : ITradeRepository
         await db.ExecuteAsync(sql, parameters, commandTimeout: 600);
     }
 
-    public async Task RotatePartitionsAsync()
+    public async Task RotatePartitionsAsync(long maxBytes, int minMonthsToKeep)
     {
         using var db = Connection;
-        await db.ExecuteAsync("SELECT public.sp_rotate_trades_partition()", commandTimeout: 60);
+        // Дроп партиций идёт одной транзакцией внутри процедуры: месяц исчезает
+        // из всех таблиц сразу, свечей без тиков не остаётся.
+        await db.ExecuteAsync(
+            "SELECT public.sp_rotate_partitions(@MaxBytes, @MinMonths)",
+            new { MaxBytes = maxBytes, MinMonths = minMonthsToKeep },
+            commandTimeout: 600);
+    }
+
+    public async Task<long> GetPartitionedSizeBytesAsync()
+    {
+        using var db = Connection;
+        return await db.ExecuteScalarAsync<long>(
+            "SELECT public.fn_partitioned_size_bytes()", commandTimeout: 60);
+    }
+
+    public async Task<long> GetRetentionFloorMsAsync()
+    {
+        using var db = Connection;
+        return await db.ExecuteScalarAsync<long>(
+            "SELECT public.fn_retention_floor_ms()", commandTimeout: 30);
     }
 
     public async Task<long?> GetLastTradeTimeAsync(string symbol)
