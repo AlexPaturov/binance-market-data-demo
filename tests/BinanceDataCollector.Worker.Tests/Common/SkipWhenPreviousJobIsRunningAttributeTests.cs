@@ -21,9 +21,10 @@ public class SkipWhenPreviousJobIsRunningAttributeTests
     private static readonly Job SampleJob = Job.FromExpression(() => Console.WriteLine());
 
     [Fact]
-    public void OnCreating_CancelsTheCopy_WhenPreviousRunIsStillRunning()
+    public void OnCreating_CancelsTheCopy_WhenPreviousRunStartedRecently()
     {
-        _connection.Setup(c => c.GetValueFromHash(HashKey, "Running")).Returns("yes");
+        var startedNow = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+        _connection.Setup(c => c.GetValueFromHash(HashKey, "Running")).Returns(startedNow);
 
         var context = CreatingContext(RecurringJobId);
 
@@ -32,9 +33,25 @@ public class SkipWhenPreviousJobIsRunningAttributeTests
         Assert.True(context.Canceled);
     }
 
+    [Fact]
+    public void OnCreating_LetsTheJobThrough_WhenTheFlagIsStale()
+    {
+        // Осиротевший флаг убитого посреди выполнения процесса (деплой): никто не переведёт
+        // ту джобу в конечное состояние, флаг обязан протухнуть сам — иначе расписание встанет.
+        var startedLongAgo = DateTimeOffset.UtcNow.AddMinutes(-16).ToUnixTimeSeconds().ToString();
+        _connection.Setup(c => c.GetValueFromHash(HashKey, "Running")).Returns(startedLongAgo);
+
+        var context = CreatingContext(RecurringJobId);
+
+        _filter.OnCreating(context);
+
+        Assert.False(context.Canceled);
+    }
+
     [Theory]
-    [InlineData("no")]
-    [InlineData(null)]   // джоба ещё ни разу не выполнялась — хеша нет
+    [InlineData("0")]
+    [InlineData(null)]     // джоба ещё ни разу не выполнялась — хеша нет
+    [InlineData("yes")]    // значение старого формата — считается «не идёт»
     public void OnCreating_LetsTheJobThrough_WhenNothingIsRunning(string? running)
     {
         _connection.Setup(c => c.GetValueFromHash(HashKey, "Running")).Returns(running!);
@@ -60,13 +77,20 @@ public class SkipWhenPreviousJobIsRunningAttributeTests
     }
 
     [Fact]
-    public void OnStateApplied_RaisesTheFlag_WhenTheJobStartsProcessing()
+    public void OnStateApplied_StampsTheStartTime_WhenTheJobStartsProcessing()
     {
         // ProcessingState напрямую не создать — конструктор внутренний, поэтому состояние
         // подменяем заглушкой с тем же именем: фильтр сверяет именно имя.
+        var before = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
         _filter.OnStateApplied(ApplyStateContext(State(ProcessingState.StateName)), _transaction.Object);
 
-        VerifyFlagSetTo("yes");
+        _transaction.Verify(t => t.SetRangeInHash(
+            HashKey,
+            It.Is<IEnumerable<KeyValuePair<string, string>>>(pairs =>
+                pairs.Single().Key == "Running" &&
+                long.Parse(pairs.Single().Value) >= before)),
+            Times.Once);
     }
 
     [Fact]
@@ -74,7 +98,7 @@ public class SkipWhenPreviousJobIsRunningAttributeTests
     {
         _filter.OnStateApplied(ApplyStateContext(new SucceededState(null, 0, 0)), _transaction.Object);
 
-        VerifyFlagSetTo("no");
+        VerifyFlagSetTo("0");
     }
 
     [Fact]
@@ -87,7 +111,7 @@ public class SkipWhenPreviousJobIsRunningAttributeTests
 
         _filter.OnStateApplied(ApplyStateContext(failed), _transaction.Object);
 
-        VerifyFlagSetTo("no");
+        VerifyFlagSetTo("0");
     }
 
     [Fact]
@@ -96,7 +120,7 @@ public class SkipWhenPreviousJobIsRunningAttributeTests
         // Задача стоит в очереди — значит, она не выполняется.
         _filter.OnStateApplied(ApplyStateContext(new EnqueuedState()), _transaction.Object);
 
-        VerifyFlagSetTo("no");
+        VerifyFlagSetTo("0");
     }
 
     [Fact]

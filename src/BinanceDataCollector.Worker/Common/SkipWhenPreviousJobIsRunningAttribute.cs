@@ -15,18 +15,26 @@ namespace BinanceDataCollector.Worker.Common;
 ///
 /// Здесь копия просто не создаётся: расписание отработает снова через минуту, а если
 /// предыдущий запуск к тому времени закончится — подхватит работу с того же места.
-/// Работа не теряется: и агрегатор, и расчёт фич идут от статуса строк, а не от времени запуска.
+/// Работа не теряется: и агрегатор, и расчёт фич идут от состояния строк, а не от времени запуска.
 ///
-/// Признак «идёт» хранится в хеше самой recurring-джобы (`recurring-job:{id}`, поле `Running`),
-/// поэтому флаг виден всем серверам Hangfire, а не только тому, где задача выполняется.
-/// Если процесс убить прямо во время выполнения, флаг останется поднятым до тех пор, пока
-/// брошенную задачу не переподхватит watchdog Hangfire и она не придёт в конечное состояние.
+/// Признак «идёт» — отметка времени старта в хеше recurring-джобы (`recurring-job:{id}`,
+/// поле `Running`), видимая всем серверам Hangfire. Отметка ПРОТУХАЕТ через <see cref="Ttl"/>:
+/// если воркер убит посреди выполнения (деплой), некому перевести джобу в конечное состояние
+/// и снять флаг — без TTL расписание стояло бы до вмешательства сторожа Hangfire
+/// (проверено на проде 13.07.2026: рестарт деплоем заморозил агрегацию). Протухший флаг
+/// безопасен: настоящую одновременность страхует `DisableConcurrentExecution`.
 /// </summary>
 public sealed class SkipWhenPreviousJobIsRunningAttribute : JobFilterAttribute, IClientFilter, IApplyStateFilter
 {
     private const string RunningField = "Running";
-    private const string Yes = "yes";
-    private const string No = "no";
+    private const string NotRunning = "0";
+
+    /// <summary>
+    /// Дольше этого один запуск честно идти не может: команда агрегации ограничена
+    /// 600-секундным таймаутом, после которого джоба падает и флаг снимается штатно.
+    /// Всё, что старше, — осиротевший флаг убитого процесса.
+    /// </summary>
+    private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(15);
 
     public void OnCreating(CreatingContext context)
     {
@@ -40,7 +48,7 @@ public sealed class SkipWhenPreviousJobIsRunningAttribute : JobFilterAttribute, 
 
         var running = connection.GetValueFromHash(HashKey(recurringJobId), RunningField);
 
-        if (string.Equals(running, Yes, StringComparison.OrdinalIgnoreCase))
+        if (StartedRecently(running))
             context.Canceled = true;
     }
 
@@ -61,13 +69,26 @@ public sealed class SkipWhenPreviousJobIsRunningAttribute : JobFilterAttribute, 
         //
         // Состояние сверяем по имени: конструктор ProcessingState внутренний, по типу это
         // поведение не покрыть тестом.
-        var running = context.NewState.Name == ProcessingState.StateName ? Yes : No;
+        var running = context.NewState.Name == ProcessingState.StateName
+            ? DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()
+            : NotRunning;
 
         SetRunning(transaction, recurringJobId, running);
     }
 
     public void OnStateUnapplied(ApplyStateContext context, IWriteOnlyTransaction transaction)
     {
+    }
+
+    /// <summary>Свежая отметка старта — задача идёт. Протухшая, пустая или нечисловая — нет.</summary>
+    private static bool StartedRecently(string? runningValue)
+    {
+        if (!long.TryParse(runningValue, out var startedAtUnix) || startedAtUnix <= 0)
+            return false;
+
+        var startedAt = DateTimeOffset.FromUnixTimeSeconds(startedAtUnix);
+
+        return DateTimeOffset.UtcNow - startedAt < Ttl;
     }
 
     private static string? GetRecurringJobId(ApplyStateContext context)
