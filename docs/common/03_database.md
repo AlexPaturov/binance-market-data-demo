@@ -72,6 +72,7 @@
 | `"IsActive"` | `BOOLEAN DEFAULT true` | `true`, если сборщик должен работать с этой парой. |
 | `"DateAdded"` | `TIMESTAMPTZ DEFAULT now()` | Дата первого добавления. |
 | `"LastScanned"` | `TIMESTAMPTZ NULL` | Когда сканер последний раз видел пару в ТОПе. |
+| `"MissedScans"` | `INTEGER DEFAULT 0` | Сколько сканов подряд пара не попадала в ТОП. Сбрасывается в `0` при возвращении. На пороге (`3`) пара деактивируется — см. `sp_update_tracked_symbols`. |
 
 ### 3.3. `public."Ohlcv_1min"`
 
@@ -198,9 +199,12 @@ Watermark'и для streaming-процессов. По одной записи �
 - **Логика:** Принимает массивы (`UNNEST`), делает `INSERT ... ON CONFLICT ("TradeId", "Symbol", "TradeTime") DO NOTHING`.
 - **Взаимодействие:** [Пишет] → `"Trades"`.
 
-#### `public.sp_update_tracked_symbols(p_symbols VARCHAR[])`
+#### `public.sp_update_tracked_symbols(p_symbols VARCHAR[], p_max_missed_scans INT DEFAULT 3)`
 - **Задача:** Атомарно обновить список активных пар.
-- **Логика:** Деактивирует пары, которых нет в новом списке (`IsActive = FALSE`), затем `INSERT ... ON CONFLICT DO UPDATE` с `IsActive = TRUE` и обновлением `LastScanned`.
+- **Логика:**
+  1. Паре, которой нет в новом списке, наращивает `MissedScans`. Деактивирует (`IsActive = FALSE`) только когда счётчик достиг `p_max_missed_scans`.
+  2. Паре из списка — `INSERT ... ON CONFLICT DO UPDATE`: `IsActive = TRUE`, `LastScanned = NOW()`, `MissedScans = 0`.
+- **Гистерезис.** Объём у пар вблизи порога отбора колеблется день ото дня, а собираются только активные пары. Без счётчика пара, просевшая под порог на один скан, теряла бы сбор до следующего попадания в ТОП — в истории образовалась бы дыра. Скан ежедневный, порог `3` даёт трёхдневное окно терпимости; пропуски должны идти подряд.
 - **Взаимодействие:** [Читает и Пишет] → `"TrackedSymbols"`.
 
 ### 4.2. Агрегация

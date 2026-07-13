@@ -11,3 +11,4 @@
 | 0005 | [`FOR UPDATE SKIP LOCKED` для выборки работы](./0005-for-update-skip-locked.md) |
 | 0006 | [Помесячное партиционирование таблицы Trades](./0006-trades-monthly-partitioning.md) |
 | 0007 | [Ротация по размеру диска и единая партиционная сетка](./0007-size-based-retention-and-unified-partitioning.md) |
+| 0008 | [Отбор пар: фильтр по статусу торгов и гистерезис при снятии](./0008-symbol-selection-status-filter-and-hysteresis.md) |

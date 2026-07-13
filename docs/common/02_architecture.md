@@ -41,7 +41,7 @@ Binance WebSocket ──► книга в памяти ──► OrderBook_Featu
 
 | Джоба | Воркер | Расписание | Что делает |
 | :--- | :--- | :--- | :--- |
-| `update-symbols` | `SymbolUpdateWorker` | раз в день | Сканирует рынок, отбирает топ-40 ликвидных пар в `TrackedSymbols` |
+| `update-symbols` | `SymbolUpdateWorker` | раз в день | Сканирует рынок, отбирает топ-40 ликвидных торгуемых (`status = TRADING`) пар в `TrackedSymbols` |
 | `ohlcv-aggregator` | `OhlcvAggregatorWorker` | раз в минуту | Тики → минутные свечи |
 | `feature-calculator` | `FeatureCalculatorWorker` | раз в 2 минуты | Свечи → RSI, MACD, CVD |
 | `quick_audit` | `QuickAuditorWorker` | раз в 10 минут | Дыры за последние 24 часа — то, что оставляет обрыв связи |

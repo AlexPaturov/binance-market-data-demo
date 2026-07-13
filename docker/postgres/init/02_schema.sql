@@ -463,14 +463,22 @@ $$;
 -- Name: sp_update_tracked_symbols(character varying[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_update_tracked_symbols(p_symbols character varying[]) RETURNS void
+CREATE FUNCTION public.sp_update_tracked_symbols(p_symbols character varying[], p_max_missed_scans integer DEFAULT 3) RETURNS void
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    UPDATE public."TrackedSymbols" SET "IsActive" = FALSE WHERE "IsActive" = TRUE AND "Symbol" <> ALL(p_symbols);
-    INSERT INTO public."TrackedSymbols" ("Symbol", "IsActive", "LastScanned")
-    SELECT symbol, TRUE, NOW() FROM UNNEST(p_symbols) AS u(symbol)
-    ON CONFLICT ("Symbol") DO UPDATE SET "IsActive" = TRUE, "LastScanned" = NOW();
+    UPDATE public."TrackedSymbols"
+    SET "MissedScans" = "MissedScans" + 1,
+        "IsActive"    = ("MissedScans" + 1) < p_max_missed_scans
+    WHERE "IsActive" = TRUE
+      AND "Symbol" <> ALL(p_symbols);
+
+    INSERT INTO public."TrackedSymbols" ("Symbol", "IsActive", "LastScanned", "MissedScans")
+    SELECT symbol, TRUE, NOW(), 0 FROM UNNEST(p_symbols) AS u(symbol)
+    ON CONFLICT ("Symbol") DO UPDATE
+    SET "IsActive"    = TRUE,
+        "LastScanned" = NOW(),
+        "MissedScans" = 0;
 END;
 $$;
 
@@ -2986,7 +2994,8 @@ CREATE TABLE public."TrackedSymbols" (
     "Symbol" character varying(20) NOT NULL,
     "IsActive" boolean DEFAULT true NOT NULL,
     "DateAdded" timestamp with time zone DEFAULT now() NOT NULL,
-    "LastScanned" timestamp with time zone
+    "LastScanned" timestamp with time zone,
+    "MissedScans" integer DEFAULT 0 NOT NULL
 );
 
 
