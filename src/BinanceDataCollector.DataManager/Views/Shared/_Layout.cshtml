@@ -168,6 +168,7 @@
         <a asp-controller="Home" asp-action="Dashboard" class="icon-sidebar-item" data-tooltip="Dashboard" onclick="toggleIconActive(this)"><i class="bi bi-speedometer2"></i></a>
         <a asp-controller="Archive" asp-action="Index" class="icon-sidebar-item" data-tooltip="Archives" onclick="toggleIconActive(this)"><i class="bi bi-archive-fill"></i></a>
         <a asp-controller="Inspector" asp-action="Index" class="icon-sidebar-item" data-tooltip="Inspector" onclick="toggleIconActive(this)"><i class="bi bi-search"></i></a>
+        <a asp-controller="DataQuality" asp-action="Index" class="icon-sidebar-item" data-tooltip="Data Quality" onclick="toggleIconActive(this)"><i class="bi bi-clipboard2-check"></i></a>
         <div class="icon-sidebar-divider"></div>
         <div class="icon-sidebar-item" data-tooltip="Menu" onclick="toggleMenu()">
             <i class="bi bi-list"></i>
@@ -208,6 +209,7 @@
             <a asp-controller="Home" asp-action="Dashboard" class="menu-item"><i class="bi bi-speedometer2"></i>Dashboard</a>
             <a asp-controller="Archive" asp-action="Index" class="menu-item"><i class="bi bi-archive-fill"></i>Archives</a>
             <a asp-controller="Inspector" asp-action="Index" class="menu-item"><i class="bi bi-search"></i>Inspector</a>
+            <a asp-controller="DataQuality" asp-action="Index" class="menu-item"><i class="bi bi-clipboard2-check"></i>Data Quality</a>
             <hr class="my-3">
             <a asp-controller="Home" asp-action="Privacy" class="menu-item"><i class="bi bi-shield-lock"></i>Privacy</a>
             @if (User.Identity?.IsAuthenticated == true)

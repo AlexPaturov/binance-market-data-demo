@@ -1,0 +1,386 @@
+@model DataQualityViewModel
+@{
+    ViewData["Title"] = "Data Quality";
+
+    string SeverityBadge(string severity) => severity switch
+    {
+        "error"   => "bg-danger",
+        "warning" => "bg-warning text-dark",
+        _         => "bg-success"
+    };
+
+    var groupLabels = new Dictionary<string, string>
+    {
+        ["trades"]   = "Сырые тики",
+        ["ohlcv"]    = "Свечи",
+        ["features"] = "Индикаторы",
+        ["pipeline"] = "Пайплайн / watermarks"
+    };
+}
+
+@Html.AntiForgeryToken()
+
+<div class="row g-3">
+
+    <!-- ---------- Запуск проверок ---------- -->
+    <div class="col-lg-5">
+        <div class="card shadow-sm border-0" style="border-radius: 12px;">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Запуск проверок</h5>
+
+                <div class="mb-3">
+                    <label for="symbol-select" class="form-label small text-secondary fw-semibold">Символ</label>
+                    <select id="symbol-select" class="form-select form-select-sm">
+                        <option value="">Все активные (@Model.ActiveSymbols.Count)</option>
+                        @foreach (var s in Model.ActiveSymbols)
+                        {
+                            <option value="@s">@s</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <label for="date-from" class="form-label small text-secondary fw-semibold">С</label>
+                        <input type="date" id="date-from" class="form-control form-control-sm" />
+                    </div>
+                    <div class="col-6">
+                        <label for="date-to" class="form-label small text-secondary fw-semibold">По</label>
+                        <input type="date" id="date-to" class="form-control form-control-sm" />
+                    </div>
+                </div>
+                <div class="form-text mb-3">
+                    Максимум <strong>@Model.MaxRangeDays дней</strong> за один запуск — проверка сканирует сырые тики.
+                </div>
+
+                <label class="form-label small text-secondary fw-semibold">Группы проверок</label>
+                <div class="mb-3">
+                    @foreach (var (key, label) in groupLabels)
+                    {
+                        <div class="form-check">
+                            <input class="form-check-input check-group" type="checkbox" value="@key" id="grp-@key" checked>
+                            <label class="form-check-label" for="grp-@key">@label</label>
+                        </div>
+                    }
+                </div>
+
+                <button id="run-checks-btn" class="btn btn-primary btn-sm w-100">
+                    <i class="bi bi-play-fill"></i> Запустить проверки
+                </button>
+                <div class="form-text mt-2">
+                    Проверка выполняется в фоне. Прогресс — в журнале ниже, результаты появятся в таблице после завершения.
+                </div>
+            </div>
+        </div>
+
+        <!-- ---------- Месячный отчёт по тикам ---------- -->
+        <div class="card shadow-sm border-0 mt-3" style="border-radius: 12px;">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Месячный отчёт по тикам</h5>
+
+                <div class="row g-2 mb-3">
+                    <div class="col-5">
+                        <label for="report-symbol" class="form-label small text-secondary fw-semibold">Символ</label>
+                        <select id="report-symbol" class="form-select form-select-sm">
+                            @foreach (var s in Model.ActiveSymbols)
+                            {
+                                <option value="@s">@s</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-4">
+                        <label for="report-year" class="form-label small text-secondary fw-semibold">Год</label>
+                        <input type="number" id="report-year" class="form-control form-control-sm" value="@DateTime.UtcNow.Year" min="2020" max="2100" />
+                    </div>
+                    <div class="col-3">
+                        <label for="report-month" class="form-label small text-secondary fw-semibold">Месяц</label>
+                        <input type="number" id="report-month" class="form-control form-control-sm" value="@DateTime.UtcNow.Month" min="1" max="12" />
+                    </div>
+                </div>
+
+                @if (Model.UncheckedMonths.Any())
+                {
+                    <div class="alert alert-light border py-2 px-3 small mb-3">
+                        Месяцы без отчёта:
+                        @string.Join(", ", Model.UncheckedMonths.Select(m => m.ToString("yyyy-MM")))
+                    </div>
+                }
+
+                <button id="run-report-btn" class="btn btn-outline-primary btn-sm w-100">
+                    <i class="bi bi-file-earmark-bar-graph"></i> Построить отчёт
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ---------- Журнал выполнения ---------- -->
+    <div class="col-lg-7">
+        <div class="card shadow-sm border-0" style="border-radius: 12px;">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Журнал выполнения</h5>
+                <div id="logContainer"
+                     style="height: 220px; overflow-y: auto; font-family: monospace; font-size: 0.8rem;
+                            background: #f8f9fa; border-radius: 8px; padding: 10px;">
+                </div>
+            </div>
+        </div>
+
+        <!-- ---------- Результаты проверок ---------- -->
+        <div class="card shadow-sm border-0 mt-3" style="border-radius: 12px;">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="card-title mb-0">Результаты проверок</h5>
+                    <a asp-action="Index" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-clockwise"></i> Обновить
+                    </a>
+                </div>
+
+                <form method="get" class="row g-2 mb-3">
+                    <div class="col-4">
+                        <select name="group" class="form-select form-select-sm" onchange="this.form.submit()">
+                            <option value="">Все группы</option>
+                            @foreach (var (key, label) in groupLabels)
+                            {
+                                <option value="@key" selected="@(Model.FilterGroup == key)">@label</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-4">
+                        <select name="severity" class="form-select form-select-sm" onchange="this.form.submit()">
+                            <option value="">Любой статус</option>
+                            <option value="error" selected="@(Model.FilterSeverity == "error")">Только ошибки</option>
+                            <option value="warning" selected="@(Model.FilterSeverity == "warning")">Только предупреждения</option>
+                            <option value="ok" selected="@(Model.FilterSeverity == "ok")">Только «ок»</option>
+                        </select>
+                    </div>
+                    <div class="col-4">
+                        <select name="symbol" class="form-select form-select-sm" onchange="this.form.submit()">
+                            <option value="">Все символы</option>
+                            @foreach (var s in Model.ActiveSymbols)
+                            {
+                                <option value="@s" selected="@(Model.FilterSymbol == s)">@s</option>
+                            }
+                        </select>
+                    </div>
+                </form>
+
+                @if (!Model.Findings.Any())
+                {
+                    <p class="text-muted small mb-0">Проверки ещё не запускались (или ничего не найдено по фильтру).</p>
+                }
+                else
+                {
+                    <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Статус</th>
+                                    <th>Проверка</th>
+                                    <th>Символ</th>
+                                    <th>Период</th>
+                                    <th class="text-end">Найдено</th>
+                                    <th>Когда</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var f in Model.Findings)
+                            {
+                                <tr>
+                                    <td><span class="badge @SeverityBadge(f.Severity)">@f.Severity</span></td>
+                                    <td>
+                                        <span class="small">@f.CheckType</span>
+                                        @if (!string.IsNullOrEmpty(f.Details))
+                                        {
+                                            <i class="bi bi-info-circle text-secondary ms-1"
+                                               data-bs-toggle="tooltip" title="@f.Details"></i>
+                                        }
+                                    </td>
+                                    <td class="small">@(f.Symbol ?? "—")</td>
+                                    <td class="small text-nowrap">@f.PeriodFrom.ToString("yyyy-MM-dd") — @f.PeriodTo.ToString("yyyy-MM-dd")</td>
+                                    <td class="text-end small">@f.Count</td>
+                                    <td class="small text-nowrap">@f.CheckedAt.ToString("MM-dd HH:mm")</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- ---------- Месячные отчёты ---------- -->
+        <div class="card shadow-sm border-0 mt-3" style="border-radius: 12px;">
+            <div class="card-body">
+                <h5 class="card-title mb-3">Месячные отчёты по тикам</h5>
+
+                @if (!Model.Reports.Any())
+                {
+                    <p class="text-muted small mb-0">Отчётов пока нет.</p>
+                }
+                else
+                {
+                    <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Статус</th>
+                                    <th>Символ</th>
+                                    <th>Месяц</th>
+                                    <th class="text-end">Сделок</th>
+                                    <th class="text-end">Разрывов</th>
+                                    <th class="text-end">Невалидных</th>
+                                    <th class="text-end">Выбросов</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (var r in Model.Reports)
+                            {
+                                <tr>
+                                    <td><span class="badge @SeverityBadge(r.Status)">@r.Status</span></td>
+                                    <td class="small">@r.Symbol</td>
+                                    <td class="small">@r.PeriodMonth.ToString("yyyy-MM")</td>
+                                    <td class="text-end small">@r.TradeCount</td>
+                                    <td class="text-end small">@r.GapCount</td>
+                                    <td class="text-end small">@r.InvalidPriceCount</td>
+                                    <td class="text-end small">@r.OutlierCount</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function () {
+            const logContainer = $('#logContainer');
+            const token = $('input[name="__RequestVerificationToken"]').val();
+            const runChecksBtn = $('#run-checks-btn');
+            const runReportBtn = $('#run-report-btn');
+
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl("/archiveStatusHub")
+                .configureLogging(signalR.LogLevel.Information)
+                .build();
+
+            function logMessage(message) {
+                const time = new Date().toLocaleTimeString();
+                logContainer.prepend(`<div>[${time}] ${message}</div>`);
+            }
+
+            connection.on("ReceiveStatusUpdate", (message) => {
+                logMessage(message);
+                // Проверка закончилась — разблокируем кнопки
+                if (message.includes("Проверка завершена") || message.includes("Отчёт готов") || message.includes("Ошибка")) {
+                    runChecksBtn.prop('disabled', false).html('<i class="bi bi-play-fill"></i> Запустить проверки');
+                    runReportBtn.prop('disabled', false).html('<i class="bi bi-file-earmark-bar-graph"></i> Построить отчёт');
+                }
+            });
+
+            async function startSignalR() {
+                try {
+                    await connection.start();
+                    logMessage("<b>SignalR:</b> Соединение установлено.");
+                } catch (err) {
+                    console.error(err);
+                    setTimeout(startSignalR, 5000);
+                }
+            }
+            startSignalR();
+
+            // Дефолтный период — последние 7 дней
+            const today = new Date();
+            const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+            $('#date-to').val(today.toISOString().slice(0, 10));
+            $('#date-from').val(weekAgo.toISOString().slice(0, 10));
+
+            // --- Запуск проверок ---
+            runChecksBtn.on('click', function () {
+                const groups = $('.check-group:checked').map(function () { return this.value; }).get();
+                if (groups.length === 0) {
+                    logMessage("<b style='color:red;'>Не выбрано ни одной группы проверок.</b>");
+                    return;
+                }
+
+                const from = $('#date-from').val();
+                const to = $('#date-to').val();
+                if (!from || !to) {
+                    logMessage("<b style='color:red;'>Укажите период.</b>");
+                    return;
+                }
+
+                const maxDays = @Model.MaxRangeDays;
+                const days = (new Date(to) - new Date(from)) / (24 * 60 * 60 * 1000);
+                if (days <= 0) {
+                    logMessage("<b style='color:red;'>Конец периода должен быть позже начала.</b>");
+                    return;
+                }
+                if (days > maxDays) {
+                    logMessage(`<b style='color:red;'>Диапазон ${days} дней превышает лимит ${maxDays}.</b>`);
+                    return;
+                }
+
+                if (!connection.connectionId) {
+                    logMessage("<b style='color:red;'>SignalR ещё не подключился, попробуйте через секунду.</b>");
+                    return;
+                }
+
+                runChecksBtn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Выполняется...');
+
+                $.ajax({
+                    url: '@Url.Action("RunChecks", "DataQuality")',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    headers: { "RequestVerificationToken": token },
+                    data: JSON.stringify({
+                        groups: groups,
+                        symbol: $('#symbol-select').val() || null,
+                        from: from,
+                        to: to,
+                        connectionId: connection.connectionId
+                    }),
+                    success: (res) => logMessage(res.message),
+                    error: (xhr) => {
+                        logMessage(`<b style='color:red;'>Ошибка:</b> ${xhr.responseText || xhr.statusText}`);
+                        runChecksBtn.prop('disabled', false).html('<i class="bi bi-play-fill"></i> Запустить проверки');
+                    }
+                });
+            });
+
+            // --- Месячный отчёт ---
+            runReportBtn.on('click', function () {
+                if (!connection.connectionId) {
+                    logMessage("<b style='color:red;'>SignalR ещё не подключился, попробуйте через секунду.</b>");
+                    return;
+                }
+
+                runReportBtn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm"></span> Считаю...');
+
+                $.ajax({
+                    url: '@Url.Action("RunMonthlyReport", "DataQuality")',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    headers: { "RequestVerificationToken": token },
+                    data: JSON.stringify({
+                        symbol: $('#report-symbol').val(),
+                        year: parseInt($('#report-year').val(), 10),
+                        month: parseInt($('#report-month').val(), 10),
+                        connectionId: connection.connectionId
+                    }),
+                    success: (res) => logMessage(res.message),
+                    error: (xhr) => {
+                        logMessage(`<b style='color:red;'>Ошибка:</b> ${xhr.responseText || xhr.statusText}`);
+                        runReportBtn.prop('disabled', false).html('<i class="bi bi-file-earmark-bar-graph"></i> Построить отчёт');
+                    }
+                });
+            });
+
+            // Тултипы с деталями находок
+            $('[data-bs-toggle="tooltip"]').each(function () { new bootstrap.Tooltip(this); });
+        });
+    </script>
+}

@@ -131,7 +131,7 @@ public class Program
             builder.Services.AddTransient<IArchiveUnpackerWorker, ArchiveUnpackerWorker>();
             builder.Services.AddTransient<IArchiveDeletionWorker, ArchiveDeletionWorker>();
             builder.Services.AddScoped<IDataQualityRepository, DataQualityRepository>();
-            builder.Services.AddTransient<DataQualityWorker>();
+            builder.Services.AddTransient<DataQualityCheckWorker>();
             builder.Services.AddHostedService<HangfireJobsService>();
             //builder.Services.AddHostedService<BinanceCollectorWorker>();
             

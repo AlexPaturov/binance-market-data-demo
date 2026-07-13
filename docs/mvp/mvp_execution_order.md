@@ -1,116 +1,50 @@
-# План: перенос initial load с dev на прод
+# План: завершение переноса initial load на прод
 
-Уточняет и заменяет `docs/TODO_POST_INITIAL_LOAD.md` Шаг 2 (там ещё фигурирует VirtualBox VM — устарело, dev теперь Ubuntu-native, диск подключён напрямую). Решение принято 2026-07-12: не дожидаться конца распаковки на dev, перенести остаток (Фазы 3–6 из `docs/INITIAL_DATA_LOAD.md`) на прод. CI/CD (`deploy.yml`) не трогаем — все действия ниже делаются вручную по SSH, работа идёт в отдельной ветке.
+Перенос данных с dev на прод выполнен 2026-07-12: архивы (3652 ZIP + 475 CSV) перелиты в `binancecollector_bdc_data`, внешний 4TB-диск физически переставлен на GMKtec и примонтирован в `/mnt/ext` (fstab по UUID `25ddc534-13e6-479e-8392-a4487a975c80`), `docker-compose.prod.yml` переведён с named volume на bind mount `/mnt/ext/postgres_data` (коммит `88c14f9`). Проверено на проде: 7 таблиц + 24 партиции, `Trades` — partitioned table. DEV приведён к целевому состоянию: Postgres на docker volume `dev_postgres_data`, схема из baseline, без исторических данных. Дальше — то, что осталось.
 
-## Факт на 2026-07-12 (проверено)
+## Текущее состояние
 
-- `Trades` заполнены за 6 из ~19 месяцев (апр, авг–дек 2025), 556 ГБ из 3.6 ТБ на диске `/mnt/ext`. `Ohlcv_1min`/`Ohlcv_Features`/`Processing_Watermarks`/`HistoricalAudit_Watermarks` — пустые (Фазы 4–6 не начинались).
-- Очередь `archive_import` ещё не пуста: `~/bdc_data/Trades/Downloaded` — 3679 ZIP (18 ГБ, ждут распаковки), `~/bdc_data/Trades/Unpacked` — 475 CSV (29 ГБ, в процессе импорта). Это и есть "недокачанные архивы" — не оборванные закачки, а хвост очереди Фазы 3.
-- `partition-maintenance` (rotation) уже отключена в коде (`HangfireJobsService.cs`).
-- Прод: GMKtec G2 mini-PC, Intel N150, Ubuntu 24.04, весь стек в Docker (`docker-compose.yml` + `docker-compose.prod.yml`), realtime-трафик прод сейчас не держит.
-- `binancecollector_postgres_data` на проде сейчас — **named volume** (не bind mount на внешний диск), это то, что меняется на Шаге 3. Старый volume после переноса **удаляется**, не хранится как откат.
-- `docker/docs/README_DO_NOT_TOUCH.md` прямым текстом запрещает трогать external volumes (`postgres_data` в их числе) — Шаг 3 меняет схему хранения насовсем, поэтому обновляет и сам README, а не оставляет описание устаревшим.
-- **Импорт crash-safe, ждать дренажа очереди не нужно** (проверено по коду): `CsvImportWorker.ImportFromCsvAsync` удаляет папку с CSV только после успешной вставки всех строк; `ArchiveUnpackerWorker.UnpackArchiveAsync` удаляет ZIP только после успешной распаковки и постановки джобы импорта. `BulkInsertAsync` → `sp_bulk_insert_trades` → `ON CONFLICT ("TradeId","Symbol","TradeTime") DO NOTHING`. Значит обрыв файла на середине (`AutomaticRetry` либо просто новый старт) перечитывает файл целиком, уже вставленные строки дедуп отбрасывает, недостающие доимпортирует — без потерь и без дублей. Можно останавливать Worker в любой момент, не дожидаясь опустошения очереди.
-- **Очередь Hangfire едет вместе с диском и в целом отработает сама** (`market_analytics_jobs` — та же Postgres-инстанция, тот же диск, что и `market_analytics`). Разница dev/прод только в `ArchivesSettings.BasePath` (`/home/lex/bdc_data` на dev vs `/opt/bdc_data` по умолчанию на проде — класс `ArchivesSettings.cs`), относительная структура одна и та же (`Trades/Downloaded`, `Trades/Unpacked`). Это влияет на 2 типа джоб по-разному:
-  - `UnpackArchiveAsync` (3679 шт., ZIP) — в очереди только голое имя файла, путь пересчитывается через `IPathProvider` в момент выполнения джобы, на актуальном для прода конфиге. Проблемы нет, ничего доделывать не нужно — просто убедиться что файлы физически лежат в `.../Trades/Downloaded` внутри volume (Шаг 2).
-  - `ImportFromCsvAsync` (475 шт., CSV) — `ArchiveUnpackerWorker` резолвит `GetTradeUnpackedPath()` один раз, в момент распаковки (уже прошла на dev), и кладёт получившийся **абсолютный** dev-путь (`/home/lex/bdc_data/Trades/Unpacked/...`) прямо в аргумент джобы. Эта строка не пересчитается. Решение — не пересоздавать джобы, а сделать так, чтобы старый путь тоже существовал на проде и указывал на те же файлы: смонтировать тот же volume `bdc_data` в контейнер `bdc_worker` вторым путём (см. Шаг 2).
+- **Прод:** `Trades` заполнены за 6 из ~19 месяцев (апр, авг–дек 2025), 566 ГБ. `Ohlcv_1min`/`Ohlcv_Features`/`Processing_Watermarks`/`HistoricalAudit_Watermarks` — пустые (Фазы 4–6 из `docs/INITIAL_DATA_LOAD.md` не начинались).
+- Очередь `archive_import` приехала вместе с диском и дорабатывает сама — пересоздавать джобы не нужно. `UnpackArchiveAsync` резолвит путь через `IPathProvider` в момент выполнения; `ImportFromCsvAsync` несёт зашитый dev-путь, поэтому у `bdc_worker` тот же volume смонтирован дважды (`/opt/bdc_data` и `/home/lex/bdc_data`).
+- Импорт crash-safe: CSV/ZIP удаляются только после успеха, вставка идемпотентна (`ON CONFLICT ... DO NOTHING`). Worker можно останавливать в любой момент.
+- `partition-maintenance` (rotation) отключена в коде (`HangfireJobsService.cs`) — включать после завершения загрузки.
+- Прод: GMKtec G2, Intel N150, Ubuntu 24.04, realtime-трафик не держит. SSH: `ssh -p 2237 lex@100.96.120.16`.
+- **DEV:** база лёгкая (8.7 МБ) — только схема, 24 пустые партиции. Ротация партиций (`sp_rotate_trades_partition`, 13 месяцев) общая с продом, отдельная dev-версия не делалась. Осталось руками: `sudo rm -rf /mnt/ext/postgres_data` (70 МБ мусора) и убрать запись про диск из `/etc/fstab`.
 
-## Шаг 1 — Остановить Worker на dev
+## Шаг 1 — Доделать прод (руками, на сервере)
 
-**Кто:** разработчик
+- Systemd drop-in, чтобы Docker дожидался монтирования диска (иначе при автозапуске гонка: `bdc_db` может стартовать раньше монтирования и создать пустую БД):
+  ```bash
+  sudo mkdir -p /etc/systemd/system/docker.service.d
+  sudo tee /etc/systemd/system/docker.service.d/wait-for-ext.conf > /dev/null <<'EOF'
+  [Unit]
+  RequiresMountsFor=/mnt/ext
+  EOF
+  sudo systemctl daemon-reload
+  ```
+- `x-systemd.device-timeout=30` в записи `/etc/fstab` для `/mnt/ext`.
+- Залить `prod-stop.sh` на сервер (`scp` в `/opt/BinanceCollector/docker/`) — CI скрипты не разносит.
+- Проверить ребутом, что стек поднимается на реальной базе.
 
-- Остановить Worker/DataManager (Rider run configuration — они на dev нативные процессы, не контейнеры). Можно в любой момент, ждать завершения текущего файла не нужно — см. факт про crash-safety выше.
-- Не удалять и не чистить `~/bdc_data/*` — переносится на прод как есть, это и есть точный остаток работы.
+## Шаг 2 — Проверить вход в DataManager
 
-**Критерий завершения:** Worker остановлен.
+Фикс схемы применён (`Program.cs`: в Production форсируется `https`, коммит `3f369b2`) — TLS снимает Cloudflare, Traefik перезаписывает `X-Forwarded-Proto`, из-за чего `redirect_uri` строился с `http`. **Проверить, что логин через B2C теперь проходит.**
 
-## Шаг 2 — Перенести недокачанные архивы на прод
+Если нет — смотреть в Azure (App registrations → Authentication → Redirect URIs), есть ли там `https://datamanager.jahasim.com/signin-oidc`.
 
-**Кто:** разработчик
-**Канал:** Tailscale (`100.96.120.16`), тот же, что уже используется для доступа к БД.
+## Гигиена секретов
 
-```bash
-rsync -avz --progress \
-  ~/bdc_data/Trades/Downloaded/ \
-  lex@100.96.120.16:/tmp/bdc_data_transfer/Trades/Downloaded/
+- `src/BinanceDataCollector.Worker/Properties/launchSettings.json` **отслеживается гитом** и содержит `RabbitMQ__Password` — вынести из репозитория (user-secrets / env).
+- B2C client secret лежит только локально в `DataManager/Properties/launchSettings.json` (файл в `.gitignore`, в истории гита его нет — проверено `git log -S`). В репозиторий не утёк.
 
-rsync -avz --progress \
-  ~/bdc_data/Trades/Unpacked/ \
-  lex@100.96.120.16:/tmp/bdc_data_transfer/Trades/Unpacked/
-```
+## Шаг 2 — Фазы 3–6 из `docs/INITIAL_DATA_LOAD.md`, на проде
 
-На проде `binancecollector_bdc_data` — named volume без известного bind-пути на хосте. Перелить из staging-директории в сам volume теми же относительными путями, что использует `PathProvider` (`TradeArchivesRelativePath`/`TradeUnpackedRelativePath` = `Trades/Downloaded`/`Trades/Unpacked`, `ArchivesSettings.cs`), не трогая identity volume'а:
+1. **Фаза 3 (идёт):** дождаться, пока очередь `archive_import` разберётся сама. Мониторинг — Hangfire Dashboard.
+2. **Фаза 4 (историческая агрегация):** PL/pgSQL-скрипт из `INITIAL_DATA_LOAD.md`, выполнить через psql/DBeaver на проде, когда Фаза 3 дойдёт до конца.
+3. **Фаза 5:** SQL для заполнения `HistoricalAudit_Watermarks`.
+4. **Фаза 6:** включить recurring jobs (`ohlcv-aggregator`, `feature-calculator`, `historical-audit`, `quick_audit`, `partition-maintenance`) — раскомментировать в `HangfireJobsService.cs`, задеплоить.
 
-```bash
-docker run --rm \
-  -v binancecollector_bdc_data:/dest \
-  -v /tmp/bdc_data_transfer:/src \
-  alpine sh -c "mkdir -p /dest/Trades/Downloaded /dest/Trades/Unpacked && \
-                cp -r /src/Trades/Downloaded/. /dest/Trades/Downloaded/ && \
-                cp -r /src/Trades/Unpacked/. /dest/Trades/Unpacked/"
-```
-
-Добавить в `docker-compose.prod.yml` у `bdc_worker` второй mount того же volume — иначе 475 уже поставленных в очередь `ImportFromCsvAsync`-джоб (аргумент — абсолютный dev-путь `/home/lex/bdc_data/Trades/Unpacked/...`, зашит на момент распаковки) не найдут файл:
-
-```yaml
-bdc_worker:
-  volumes:
-    - bdc_data:/opt/bdc_data        # уже есть — так резолвит prod-конфиг (BasePath по умолчанию)
-    - bdc_data:/home/lex/bdc_data   # добавить — так же резолвит dev-конфиг, чтобы старые пути в очереди сработали
-```
-
-**Критерий завершения:** количество файлов в volume совпадает с dev (3679 ZIP + 475 CSV), оба пути (`/opt/bdc_data/...` и `/home/lex/bdc_data/...`) внутри контейнера `bdc_worker` видят одни и те же файлы, staging-директория на проде можно удалить.
-
-## Шаг 3 — Физическая замена диска
-
-**Кто:** разработчик
-
-1. Остановить `bdc_db` на dev: `docker compose -f docker-compose.yml -f docker-compose.db.yml down`.
-2. `sudo umount /mnt/ext`, физически отключить внешний диск от dev-машины.
-3. Подключить диск к GMKtec, примонтировать (`mount`), добавить в `/etc/fstab` по UUID (`25ddc534-13e6-479e-8392-a4487a975c80` — тот же диск, UUID не изменится).
-4. В `docker-compose.prod.yml` заменить определение volume:
-   ```yaml
-   volumes:
-     postgres_data:
-       external: true
-       name: binancecollector_postgres_data
-   ```
-   на bind mount у сервиса `bdc_db`:
-   ```yaml
-   bdc_db:
-     volumes:
-       - /mnt/ext/postgres_data:/var/lib/postgresql/data
-   ```
-5. `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d bdc_db`.
-6. Проверить подключение: `docker exec bdc_db psql -U bindatacoll -d market_analytics -c "\dt"` — должны быть видны партиции `Trades_2025_01`...`Trades_2026_12`.
-7. После подтверждения, что bind mount работает и данные на месте — удалить старый named volume: `docker volume rm binancecollector_postgres_data`.
-8. Обновить документацию под новую схему хранения (сразу, не откладывая):
-   - `docker/docs/README_DO_NOT_TOUCH.md` — заменить `binancecollector_postgres_data` в списке "external volumes, трогать запрещено" на новый пункт про сам внешний диск `/mnt/ext` (не отмонтировать, не менять fstab-запись без понимания).
-   - `docker/docs/README_VOLUMES.md` — сейчас пустой файл, описать актуальную схему (какие volume named, какой — bind mount, и почему).
-   - `docs/prod/ARCHITECTURE_PROD.md` §5 — `postgres_data` теперь bind mount на внешний диск, а не named volume.
-
-**Проверить отдельно:** прод-конфиг Postgres задаёт `-c password_encryption=md5`, диск приезжает с dev, где такой настройки нет (вероятно `scram-sha-256` по умолчанию для Postgres 16). Формат хранимого хэша пароля роли не меняется от текущего значения GUC — но подключение (`pgbouncer` → `bdc_db`, `AUTH_TYPE=scram-sha-256`) стоит проверить сразу после старта, а не постфактум.
-
-**Критерий завершения:** `bdc_db` на проде здоров (`pg_isready`), партиционированная схема видна, подключение через PgBouncer работает, старый volume удалён, README обновлены.
-
-## Шаг 4 — Продолжить Фазы 3–6 из `docs/INITIAL_DATA_LOAD.md`, но на проде
-
-**Кто:** разработчик
-
-1. Деплой текущего кода на прод обычным способом (ветка → мердж в master → штатный CI, без изменений в `deploy.yml`).
-2. **Фаза 3 (продолжение):** убедиться что архивы из Шага 2 на месте в `bdc_data` и второй mount (`/home/lex/bdc_data`) подключён. Очередь `archive_import` (приехала вместе с диском) дорабатывает сама — ничего в Archive UI нажимать не нужно, ни ZIP-, ни CSV-джобы пересоздавать не требуется (см. Шаг 2).
-3. **Фаза 4 (историческая агрегация):** тот же PL/pgSQL-скрипт из `INITIAL_DATA_LOAD.md`, выполнить через psql/DBeaver уже на проде, когда Фаза 3 дойдёт до конца.
-4. **Фаза 5:** SQL для заполнения `HistoricalAudit_Watermarks` — на проде.
-5. **Фаза 6:** включить recurring jobs (`ohlcv-aggregator`, `feature-calculator`, `historical-audit`, `quick_audit`) — раскомментировать в `HangfireJobsService.cs`, задеплоить обычным способом (не CI-правка, обычный код).
-
-**Критерий завершения:** совпадает с точками синхронизации в `INITIAL_DATA_LOAD.md` (`archive_import` пуст, скрипт агрегации вывел `Done`, вотермарки проставлены, recurring jobs видны в Hangfire Dashboard).
-
-## Шаг 5 — Привести dev в целевое состояние
-
-**Кто:** разработчик, после подтверждения что прод стабилен
-
-- Диск уехал на прод — dev остаётся без `/mnt/ext`. Поднять `bdc_db` на dev с чистым локальным путём (без внешнего диска), схема — тот же `docker/postgres/init/02_schema.sql` (партиционированная).
-- Держать 2 актуальные rotating-партиции для тестов — без полноценного `DevSyncService` из `docs/TODO_POST_INITIAL_LOAD.md` Шаг 5 (это отдельная 3–4-дневная задача, не обязательна для завершения проекта; при необходимости делается позже).
+**Критерий завершения:** `archive_import` пуст, скрипт агрегации вывел `Done`, вотермарки проставлены, recurring jobs видны в Hangfire Dashboard.
 
 ---
 

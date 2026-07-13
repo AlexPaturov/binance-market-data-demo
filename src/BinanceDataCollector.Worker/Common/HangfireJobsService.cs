@@ -78,15 +78,13 @@ public class HangfireJobsService : IHostedService
         //     "*/2 * * * *"
         // );
 
+        // Проверки качества данных больше не рекуррентные — запускаются только вручную,
+        // кнопкой на странице /DataQuality (DataQualityCheckWorker).
+        _recurringJobManager.RemoveIfExists("data-quality-check");
+
         // INITIAL LOAD: disabled during dev historical load phase.
         // Enable on prod after data migration is complete.
         _recurringJobManager.RemoveIfExists("partition-maintenance");
-        _recurringJobManager.AddOrUpdate<DataQualityWorker>(
-            "data-quality-check",
-            worker => worker.CheckUncheckedMonthsAsync(),
-            Cron.Never(),
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        );
         // _recurringJobManager.AddOrUpdate<PartitionMaintenanceWorker>(
         //     "partition-maintenance",
         //     worker => worker.RotatePartitionsAsync(),

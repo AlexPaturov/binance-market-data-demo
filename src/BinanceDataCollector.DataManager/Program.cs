@@ -163,6 +163,7 @@ public class Program {
             builder.Services.AddScoped<ITradeRepository, TradeRepository>();
             builder.Services.AddScoped<IAnalysisRepository, AnalysisRepository>();
             builder.Services.AddScoped<ITrackedSymbolRepository, TrackedSymbolRepository>();
+            builder.Services.AddScoped<IDataQualityRepository, DataQualityRepository>();
             builder.Services.AddScoped<IArchiveService, ArchiveService>();
             builder.Services.AddHostedService<RabbitMQListenerService>();
             builder.Services.AddScoped<IDatabaseMonitoringService, DatabaseMonitoringService>();

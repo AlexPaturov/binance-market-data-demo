@@ -12,6 +12,7 @@ public class ControllerAuthorizationAttributeTests
     [InlineData(typeof(HomeController))]
     [InlineData(typeof(ArchiveController))]
     [InlineData(typeof(InspectorController))]
+    [InlineData(typeof(DataQualityController))]
     public void ReadOnlyControllers_RequireViewerPolicy(Type controllerType)
     {
         var authorize = controllerType.GetCustomAttribute<AuthorizeAttribute>();
@@ -28,6 +29,25 @@ public class ControllerAuthorizationAttributeTests
     public void ArchiveMutationActions_RequireOperatorPolicy(string actionName)
     {
         var action = typeof(ArchiveController).GetMethod(actionName);
+
+        Assert.NotNull(action);
+        Assert.Contains(action.GetCustomAttributes<HttpPostAttribute>(), _ => true);
+
+        var authorize = action.GetCustomAttribute<AuthorizeAttribute>();
+        Assert.NotNull(authorize);
+        Assert.Equal(DataManagerAuthorizationPolicies.Operator, authorize.Policy);
+    }
+
+    /// <summary>
+    /// Запуск проверок меняет состояние (пишет в DataQualityFindings и грузит БД),
+    /// поэтому доступен только оператору — Viewer'у страница доступна лишь на чтение.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(DataQualityController.RunChecks))]
+    [InlineData(nameof(DataQualityController.RunMonthlyReport))]
+    public void DataQualityMutationActions_RequireOperatorPolicy(string actionName)
+    {
+        var action = typeof(DataQualityController).GetMethod(actionName);
 
         Assert.NotNull(action);
         Assert.Contains(action.GetCustomAttributes<HttpPostAttribute>(), _ => true);
