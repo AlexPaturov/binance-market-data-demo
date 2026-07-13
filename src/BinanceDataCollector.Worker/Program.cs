@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Net;
 using System.Reflection;
 using BinanceDataCollector.Application.Analytics;
@@ -132,6 +132,8 @@ public class Program
             builder.Services.AddTransient<IArchiveUnpackerWorker, ArchiveUnpackerWorker>();
             builder.Services.AddTransient<IArchiveDeletionWorker, ArchiveDeletionWorker>();
             builder.Services.AddScoped<IDataQualityRepository, DataQualityRepository>();
+            builder.Services.AddScoped<IOrderBookFeatureRepository, OrderBookFeatureRepository>();
+            builder.Services.AddSingleton<IOrderBookFeatureCalculator, OrderBookFeatureCalculator>();
             builder.Services.AddTransient<DataQualityCheckWorker>();
             builder.Services.AddHostedService<HangfireJobsService>();
 
@@ -139,6 +141,10 @@ public class Program
             // данных. Импорт архивов — бутстрап истории и восстановление после долгого
             // простоя, а не рабочий режим.
             builder.Services.AddHostedService<BinanceCollectorWorker>();
+
+            // Фичи стакана. Сырой L2 не хранится — из книги в памяти считаются готовые
+            // числа и пишутся раз в минуту (~0.4 ГБ/месяц против ~190 ГБ у сырой глубины).
+            builder.Services.AddHostedService<OrderBookCollectorWorker>();
             
             builder.Services.AddHealthChecks()
                 .AddNpgSql(

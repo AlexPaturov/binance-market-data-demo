@@ -30,6 +30,7 @@ CREATE FUNCTION public.fn_partitioned_size_bytes() RETURNS bigint
         'public."Trades"'::regclass,
         'public."Ohlcv_1min"'::regclass,
         'public."Ohlcv_Features"'::regclass,
+        'public."OrderBook_Features"'::regclass,
         'public."DataQualityReports"'::regclass,
         'public."DataQualityFindings"'::regclass
     );
@@ -228,7 +229,6 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Trades / Ohlcv_1min / Ohlcv_Features — ключ BIGINT (Unix-мс)
     IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                    WHERE c.relname = 'Trades_' || suffix AND n.nspname = 'public') THEN
         EXECUTE format('CREATE TABLE public.%I PARTITION OF public."Trades" FOR VALUES FROM (%s) TO (%s)',
@@ -247,14 +247,18 @@ BEGIN
                        'Ohlcv_Features_' || suffix, from_ms, to_ms);
     END IF;
 
-    -- DataQualityReports — ключ DATE
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE c.relname = 'OrderBook_Features_' || suffix AND n.nspname = 'public') THEN
+        EXECUTE format('CREATE TABLE public.%I PARTITION OF public."OrderBook_Features" FOR VALUES FROM (%s) TO (%s)',
+                       'OrderBook_Features_' || suffix, from_ms, to_ms);
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                    WHERE c.relname = 'DataQualityReports_' || suffix AND n.nspname = 'public') THEN
         EXECUTE format('CREATE TABLE public.%I PARTITION OF public."DataQualityReports" FOR VALUES FROM (%L) TO (%L)',
                        'DataQualityReports_' || suffix, month_start::date, month_end::date);
     END IF;
 
-    -- DataQualityFindings — ключ TIMESTAMPTZ
     IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                    WHERE c.relname = 'DataQualityFindings_' || suffix AND n.nspname = 'public') THEN
         EXECUTE format('CREATE TABLE public.%I PARTITION OF public."DataQualityFindings" FOR VALUES FROM (%L) TO (%L)',
@@ -398,7 +402,6 @@ BEGIN
     current_month := DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC');
     keep_before   := current_month - (p_min_months_to_keep || ' months')::INTERVAL;
 
-    -- Партиции на текущий и следующий месяц должны существовать заранее.
     FOR target_month IN
         SELECT m FROM generate_series(current_month, current_month + INTERVAL '1 month', INTERVAL '1 month') AS m
     LOOP
@@ -422,7 +425,6 @@ BEGIN
 
         oldest_month := TO_DATE(oldest_suffix, 'YYYY_MM');
 
-        -- Предохранитель: свежие месяцы не режем даже под давлением диска.
         IF oldest_month >= keep_before THEN
             RAISE WARNING
                 'Размер % байт выше порога %, но самый старый месяц (%) свежее окна в % мес. Ротация остановлена — нужно расширять диск или поднимать порог.',
@@ -433,6 +435,7 @@ BEGIN
         EXECUTE format('DROP TABLE IF EXISTS public.%I', 'Trades_'              || oldest_suffix);
         EXECUTE format('DROP TABLE IF EXISTS public.%I', 'Ohlcv_1min_'          || oldest_suffix);
         EXECUTE format('DROP TABLE IF EXISTS public.%I', 'Ohlcv_Features_'      || oldest_suffix);
+        EXECUTE format('DROP TABLE IF EXISTS public.%I', 'OrderBook_Features_'  || oldest_suffix);
         EXECUTE format('DROP TABLE IF EXISTS public.%I', 'DataQualityReports_'  || oldest_suffix);
         EXECUTE format('DROP TABLE IF EXISTS public.%I', 'DataQualityFindings_' || oldest_suffix);
 
@@ -441,7 +444,6 @@ BEGIN
             oldest_suffix, total_bytes, p_max_bytes;
     END LOOP;
 
-    -- Аудитор не должен искать дыры в том, чего больше нет.
     IF dropped > 0 THEN
         new_floor_ms := public.fn_retention_floor_ms();
 
@@ -2239,6 +2241,732 @@ CREATE TABLE public."Ohlcv_Features_2027_12" (
 
 
 --
+-- Name: OrderBook_Features; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+)
+PARTITION BY RANGE ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_01" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_02" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_03" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_04" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_05" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_06" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_07" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_08" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_09" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_10" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_11" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2026_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2026_12" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_01; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_01" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_02; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_02" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_03; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_03" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_04; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_04" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_05; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_05" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_06; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_06" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_07; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_07" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_08; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_08" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_09; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_09" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_10; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_10" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_11; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_11" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: OrderBook_Features_2027_12; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."OrderBook_Features_2027_12" (
+    "Symbol" character varying(20) NOT NULL,
+    "OpenTime" bigint NOT NULL,
+    "MidPrice" numeric(18,8) NOT NULL,
+    "BestBid" numeric(18,8) NOT NULL,
+    "BestAsk" numeric(18,8) NOT NULL,
+    "SpreadAbs" numeric(18,8) NOT NULL,
+    "SpreadBps" numeric(12,4) NOT NULL,
+    "Imbalance" numeric(10,6) NOT NULL,
+    "BidDepth01" numeric(28,8) NOT NULL,
+    "AskDepth01" numeric(28,8) NOT NULL,
+    "BidDepth05" numeric(28,8) NOT NULL,
+    "AskDepth05" numeric(28,8) NOT NULL,
+    "BidDepth10" numeric(28,8) NOT NULL,
+    "AskDepth10" numeric(28,8) NOT NULL,
+    "MaxBidWall" numeric(28,8) NOT NULL,
+    "MaxBidWallDistBps" numeric(12,4) NOT NULL,
+    "MaxAskWall" numeric(28,8) NOT NULL,
+    "MaxAskWallDistBps" numeric(12,4) NOT NULL,
+    "UpdateCount" integer DEFAULT 0 NOT NULL,
+    "SampleCount" integer DEFAULT 0 NOT NULL,
+    "CreatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: Processing_Watermarks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3461,6 +4189,174 @@ ALTER TABLE ONLY public."Ohlcv_Features" ATTACH PARTITION public."Ohlcv_Features
 
 
 --
+-- Name: OrderBook_Features_2026_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_01" FOR VALUES FROM ('1767225600000') TO ('1769904000000');
+
+
+--
+-- Name: OrderBook_Features_2026_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_02" FOR VALUES FROM ('1769904000000') TO ('1772323200000');
+
+
+--
+-- Name: OrderBook_Features_2026_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_03" FOR VALUES FROM ('1772323200000') TO ('1775001600000');
+
+
+--
+-- Name: OrderBook_Features_2026_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_04" FOR VALUES FROM ('1775001600000') TO ('1777593600000');
+
+
+--
+-- Name: OrderBook_Features_2026_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_05" FOR VALUES FROM ('1777593600000') TO ('1780272000000');
+
+
+--
+-- Name: OrderBook_Features_2026_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_06" FOR VALUES FROM ('1780272000000') TO ('1782864000000');
+
+
+--
+-- Name: OrderBook_Features_2026_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_07" FOR VALUES FROM ('1782864000000') TO ('1785542400000');
+
+
+--
+-- Name: OrderBook_Features_2026_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_08" FOR VALUES FROM ('1785542400000') TO ('1788220800000');
+
+
+--
+-- Name: OrderBook_Features_2026_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_09" FOR VALUES FROM ('1788220800000') TO ('1790812800000');
+
+
+--
+-- Name: OrderBook_Features_2026_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_10" FOR VALUES FROM ('1790812800000') TO ('1793491200000');
+
+
+--
+-- Name: OrderBook_Features_2026_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_11" FOR VALUES FROM ('1793491200000') TO ('1796083200000');
+
+
+--
+-- Name: OrderBook_Features_2026_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_12" FOR VALUES FROM ('1796083200000') TO ('1798761600000');
+
+
+--
+-- Name: OrderBook_Features_2027_01; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_01" FOR VALUES FROM ('1798761600000') TO ('1801440000000');
+
+
+--
+-- Name: OrderBook_Features_2027_02; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_02" FOR VALUES FROM ('1801440000000') TO ('1803859200000');
+
+
+--
+-- Name: OrderBook_Features_2027_03; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_03" FOR VALUES FROM ('1803859200000') TO ('1806537600000');
+
+
+--
+-- Name: OrderBook_Features_2027_04; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_04" FOR VALUES FROM ('1806537600000') TO ('1809129600000');
+
+
+--
+-- Name: OrderBook_Features_2027_05; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_05" FOR VALUES FROM ('1809129600000') TO ('1811808000000');
+
+
+--
+-- Name: OrderBook_Features_2027_06; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_06" FOR VALUES FROM ('1811808000000') TO ('1814400000000');
+
+
+--
+-- Name: OrderBook_Features_2027_07; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_07" FOR VALUES FROM ('1814400000000') TO ('1817078400000');
+
+
+--
+-- Name: OrderBook_Features_2027_08; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_08" FOR VALUES FROM ('1817078400000') TO ('1819756800000');
+
+
+--
+-- Name: OrderBook_Features_2027_09; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_09" FOR VALUES FROM ('1819756800000') TO ('1822348800000');
+
+
+--
+-- Name: OrderBook_Features_2027_10; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_10" FOR VALUES FROM ('1822348800000') TO ('1825027200000');
+
+
+--
+-- Name: OrderBook_Features_2027_11; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_11" FOR VALUES FROM ('1825027200000') TO ('1827619200000');
+
+
+--
+-- Name: OrderBook_Features_2027_12; Type: TABLE ATTACH; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_12" FOR VALUES FROM ('1827619200000') TO ('1830297600000');
+
+
+--
 -- Name: Trades_2026_01; Type: TABLE ATTACH; Schema: public; Owner: -
 --
 
@@ -4434,6 +5330,206 @@ ALTER TABLE ONLY public."Ohlcv_Features_2027_11"
 
 ALTER TABLE ONLY public."Ohlcv_Features_2027_12"
     ADD CONSTRAINT "Ohlcv_Features_2027_12_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features PK_OrderBook_Features; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features"
+    ADD CONSTRAINT "PK_OrderBook_Features" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_01 OrderBook_Features_2026_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_01"
+    ADD CONSTRAINT "OrderBook_Features_2026_01_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_02 OrderBook_Features_2026_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_02"
+    ADD CONSTRAINT "OrderBook_Features_2026_02_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_03 OrderBook_Features_2026_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_03"
+    ADD CONSTRAINT "OrderBook_Features_2026_03_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_04 OrderBook_Features_2026_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_04"
+    ADD CONSTRAINT "OrderBook_Features_2026_04_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_05 OrderBook_Features_2026_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_05"
+    ADD CONSTRAINT "OrderBook_Features_2026_05_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_06 OrderBook_Features_2026_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_06"
+    ADD CONSTRAINT "OrderBook_Features_2026_06_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_07 OrderBook_Features_2026_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_07"
+    ADD CONSTRAINT "OrderBook_Features_2026_07_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_08 OrderBook_Features_2026_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_08"
+    ADD CONSTRAINT "OrderBook_Features_2026_08_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_09 OrderBook_Features_2026_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_09"
+    ADD CONSTRAINT "OrderBook_Features_2026_09_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_10 OrderBook_Features_2026_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_10"
+    ADD CONSTRAINT "OrderBook_Features_2026_10_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_11 OrderBook_Features_2026_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_11"
+    ADD CONSTRAINT "OrderBook_Features_2026_11_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_12 OrderBook_Features_2026_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2026_12"
+    ADD CONSTRAINT "OrderBook_Features_2026_12_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_01 OrderBook_Features_2027_01_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_01"
+    ADD CONSTRAINT "OrderBook_Features_2027_01_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_02 OrderBook_Features_2027_02_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_02"
+    ADD CONSTRAINT "OrderBook_Features_2027_02_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_03 OrderBook_Features_2027_03_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_03"
+    ADD CONSTRAINT "OrderBook_Features_2027_03_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_04 OrderBook_Features_2027_04_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_04"
+    ADD CONSTRAINT "OrderBook_Features_2027_04_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_05 OrderBook_Features_2027_05_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_05"
+    ADD CONSTRAINT "OrderBook_Features_2027_05_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_06 OrderBook_Features_2027_06_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_06"
+    ADD CONSTRAINT "OrderBook_Features_2027_06_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_07 OrderBook_Features_2027_07_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_07"
+    ADD CONSTRAINT "OrderBook_Features_2027_07_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_08 OrderBook_Features_2027_08_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_08"
+    ADD CONSTRAINT "OrderBook_Features_2027_08_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_09 OrderBook_Features_2027_09_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_09"
+    ADD CONSTRAINT "OrderBook_Features_2027_09_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_10 OrderBook_Features_2027_10_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_10"
+    ADD CONSTRAINT "OrderBook_Features_2027_10_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_11 OrderBook_Features_2027_11_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_11"
+    ADD CONSTRAINT "OrderBook_Features_2027_11_pkey" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_12 OrderBook_Features_2027_12_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."OrderBook_Features_2027_12"
+    ADD CONSTRAINT "OrderBook_Features_2027_12_pkey" PRIMARY KEY ("Symbol", "OpenTime");
 
 
 --
@@ -5717,6 +6813,13 @@ CREATE INDEX "IX_Ohlcv_1min_ProcessingStatus_OpenTime" ON ONLY public."Ohlcv_1mi
 
 
 --
+-- Name: IX_OrderBook_Features_OpenTime; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "IX_OrderBook_Features_OpenTime" ON ONLY public."OrderBook_Features" USING btree ("OpenTime");
+
+
+--
 -- Name: IX_TrackedSymbols_IsActive; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5889,6 +6992,174 @@ CREATE INDEX "Ohlcv_1min_2027_11_ProcessingStatus_OpenTime_idx" ON public."Ohlcv
 --
 
 CREATE INDEX "Ohlcv_1min_2027_12_ProcessingStatus_OpenTime_idx" ON public."Ohlcv_1min_2027_12" USING btree ("ProcessingStatus", "OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_01_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_01_OpenTime_idx" ON public."OrderBook_Features_2026_01" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_02_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_02_OpenTime_idx" ON public."OrderBook_Features_2026_02" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_03_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_03_OpenTime_idx" ON public."OrderBook_Features_2026_03" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_04_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_04_OpenTime_idx" ON public."OrderBook_Features_2026_04" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_05_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_05_OpenTime_idx" ON public."OrderBook_Features_2026_05" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_06_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_06_OpenTime_idx" ON public."OrderBook_Features_2026_06" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_07_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_07_OpenTime_idx" ON public."OrderBook_Features_2026_07" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_08_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_08_OpenTime_idx" ON public."OrderBook_Features_2026_08" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_09_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_09_OpenTime_idx" ON public."OrderBook_Features_2026_09" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_10_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_10_OpenTime_idx" ON public."OrderBook_Features_2026_10" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_11_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_11_OpenTime_idx" ON public."OrderBook_Features_2026_11" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2026_12_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2026_12_OpenTime_idx" ON public."OrderBook_Features_2026_12" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_01_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_01_OpenTime_idx" ON public."OrderBook_Features_2027_01" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_02_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_02_OpenTime_idx" ON public."OrderBook_Features_2027_02" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_03_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_03_OpenTime_idx" ON public."OrderBook_Features_2027_03" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_04_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_04_OpenTime_idx" ON public."OrderBook_Features_2027_04" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_05_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_05_OpenTime_idx" ON public."OrderBook_Features_2027_05" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_06_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_06_OpenTime_idx" ON public."OrderBook_Features_2027_06" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_07_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_07_OpenTime_idx" ON public."OrderBook_Features_2027_07" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_08_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_08_OpenTime_idx" ON public."OrderBook_Features_2027_08" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_09_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_09_OpenTime_idx" ON public."OrderBook_Features_2027_09" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_10_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_10_OpenTime_idx" ON public."OrderBook_Features_2027_10" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_11_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_11_OpenTime_idx" ON public."OrderBook_Features_2027_11" USING btree ("OpenTime");
+
+
+--
+-- Name: OrderBook_Features_2027_12_OpenTime_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "OrderBook_Features_2027_12_OpenTime_idx" ON public."OrderBook_Features_2027_12" USING btree ("OpenTime");
 
 
 --
@@ -8087,6 +9358,342 @@ ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features
 --
 
 ALTER INDEX public."Ohlcv_Features_pkey" ATTACH PARTITION public."Ohlcv_Features_2027_12_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_01_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_01_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_01_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_02_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_02_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_02_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_03_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_03_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_03_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_04_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_04_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_04_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_05_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_05_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_05_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_06_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_06_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_06_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_07_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_07_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_07_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_08_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_08_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_08_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_09_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_09_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_09_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_10_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_10_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_10_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_11_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_11_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_11_pkey";
+
+
+--
+-- Name: OrderBook_Features_2026_12_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2026_12_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2026_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2026_12_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_01_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_01_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_01_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_01_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_02_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_02_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_02_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_02_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_03_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_03_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_03_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_03_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_04_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_04_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_04_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_04_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_05_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_05_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_05_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_05_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_06_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_06_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_06_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_06_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_07_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_07_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_07_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_07_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_08_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_08_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_08_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_08_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_09_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_09_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_09_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_09_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_10_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_10_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_10_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_10_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_11_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_11_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_11_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_11_pkey";
+
+
+--
+-- Name: OrderBook_Features_2027_12_OpenTime_idx; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."IX_OrderBook_Features_OpenTime" ATTACH PARTITION public."OrderBook_Features_2027_12_OpenTime_idx";
+
+
+--
+-- Name: OrderBook_Features_2027_12_pkey; Type: INDEX ATTACH; Schema: public; Owner: -
+--
+
+ALTER INDEX public."PK_OrderBook_Features" ATTACH PARTITION public."OrderBook_Features_2027_12_pkey";
 
 
 --
