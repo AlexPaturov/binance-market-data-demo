@@ -40,6 +40,7 @@ public class FeatureCalculatorWorker
     // за ними. В `default` расчёт делил воркеров с импортом архивов и голодал вместе с
     // агрегатором.
     [Queue("realtime")]
+    [SkipWhenPreviousJobIsRunning]
     [DisableConcurrentExecution(30 * 60)] // Даем 20 минут на расчет
     public async Task CalculateFeaturesAsync()
     {
