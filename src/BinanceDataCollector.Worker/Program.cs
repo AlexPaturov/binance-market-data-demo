@@ -134,7 +134,11 @@ public class Program
             builder.Services.AddScoped<IDataQualityRepository, DataQualityRepository>();
             builder.Services.AddTransient<DataQualityCheckWorker>();
             builder.Services.AddHostedService<HangfireJobsService>();
-            //builder.Services.AddHostedService<BinanceCollectorWorker>();
+
+            // Realtime-сбор: подписка на WebSocket по активным парам. Это основной источник
+            // данных. Импорт архивов — бутстрап истории и восстановление после долгого
+            // простоя, а не рабочий режим.
+            builder.Services.AddHostedService<BinanceCollectorWorker>();
             
             builder.Services.AddHealthChecks()
                 .AddNpgSql(

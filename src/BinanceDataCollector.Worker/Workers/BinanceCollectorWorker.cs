@@ -1,4 +1,4 @@
-﻿using BinanceDataCollector.Application.Interfaces;
+using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Worker.Common;
 using System.Collections.Concurrent;
@@ -13,26 +13,23 @@ namespace BinanceDataCollector.Worker.Workers;
 public class BinanceCollectorWorker : BackgroundService
 {
     private readonly ILogger<BinanceCollectorWorker> _logger;
-    private readonly ITrackedSymbolRepository  _trackedSymbolRepository;
-    private readonly IBinanceService  _binanceService;
-    private readonly ITradeRepository  _tradeRepository;
-    private readonly double _collectorStartDelayMinutes = 5; // задержк запуска проверки
-    private readonly double _mainWhileRestartDelaySeconds = 10; // задержка перезапуска главного цикла
+    private readonly IServiceScopeFactory _scopeFactory;
 
     // Потокобезопасная очередь для сбора сделок.
     // Выступает в роли буфера между быстрым получением данных и более медленной записью в БД.
     private readonly ConcurrentQueue<Trade> _tradeQueue = new();
 
+    /// <summary>
+    /// Репозитории и клиент Binance зарегистрированы как scoped, а этот воркер —
+    /// синглтон (HostedService). Инжектить их напрямую нельзя: DI отвергает такую
+    /// конструкцию на старте. Скоуп создаётся под каждое обращение.
+    /// </summary>
     public BinanceCollectorWorker(
         ILogger<BinanceCollectorWorker> logger,
-        ITrackedSymbolRepository  trackedSymbolRepository, 
-        IBinanceService  binanceService, 
-        ITradeRepository tradeRepository)
+        IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
-        _trackedSymbolRepository = trackedSymbolRepository;
-        _binanceService = binanceService;
-        _tradeRepository = tradeRepository;
+        _scopeFactory = scopeFactory;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -47,7 +44,11 @@ public class BinanceCollectorWorker : BackgroundService
         {
             try
             {
-                var symbolsToTrack = (await _trackedSymbolRepository.GetActiveSymbolsAsync()).ToList();
+                using var scope = _scopeFactory.CreateScope();
+                var symbolRepository = scope.ServiceProvider.GetRequiredService<ITrackedSymbolRepository>();
+                var binanceService = scope.ServiceProvider.GetRequiredService<IBinanceService>();
+
+                var symbolsToTrack = (await symbolRepository.GetActiveSymbolsAsync()).ToList();
                 if (!symbolsToTrack.Any())
                 {
                     _logger.LogWarning("No active symbols to track. Retrying in 5 minutes.");
@@ -58,7 +59,7 @@ public class BinanceCollectorWorker : BackgroundService
                 _logger.LogInformation("Subscribing to {Count} trade streams...", symbolsToTrack.Count);
 
                 // Подписываемся на ВСЕ потоки ОДНИМ вызовом
-                await _binanceService.SubscribeToMultipleTradesAsync(symbolsToTrack,
+                await binanceService.SubscribeToMultipleTradesAsync(symbolsToTrack,
                     (trade) => // Единый обработчик для всех сделок
                     {
                         // Просто кладем сделку в потокобезопасную очередь
@@ -112,7 +113,10 @@ public class BinanceCollectorWorker : BackgroundService
                     try
                     {
                         _logger.LogInformation("Saving {Count} trades to the database...", buffer.Count);
-                        await _tradeRepository.BulkInsertAsync(buffer);
+
+                        using var scope = _scopeFactory.CreateScope();
+                        var tradeRepository = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
+                        await tradeRepository.BulkInsertAsync(buffer);
                     }
                     catch (Exception ex)
                     {
@@ -148,7 +152,9 @@ public class BinanceCollectorWorker : BackgroundService
         if (!buffer.Any()) return;
         try
         {
-            await _tradeRepository.BulkInsertAsync(buffer);
+            using var scope = _scopeFactory.CreateScope();
+            var tradeRepository = scope.ServiceProvider.GetRequiredService<ITradeRepository>();
+            await tradeRepository.BulkInsertAsync(buffer);
             _logger.LogInformation("Last batch of {Count} trades saved successfully.", buffer.Count);
         }
         catch (Exception ex)

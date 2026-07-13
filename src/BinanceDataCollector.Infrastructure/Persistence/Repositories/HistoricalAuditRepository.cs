@@ -24,14 +24,21 @@ public class HistoricalAuditRepository : IHistoricalAuditRepository
         using var db = Connection;
 
         // Находит все символы, у которых есть сделки, но нет записи в HistoricalAudit_Watermarks,
-        // и создает для них начальную вотермарку, начиная с самой первой сделки.
+        // и создает для них начальную вотермарку.
+        //
+        // Старт — не раньше границы ретенции: ниже неё партиций нет и создать их нельзя.
+        // Иначе аудитор нашёл бы «дыру» там, где данных не должно быть, полез бы качать
+        // архивы и упёрся в отказ вставки — и так по кругу.
         const string sql = @"
-            INSERT INTO public.""HistoricalAudit_Watermarks"" 
+            INSERT INTO public.""HistoricalAudit_Watermarks""
                 (""Symbol"", ""LastChecked_TradeId"", ""LastChecked_Timestamp"", ""Status"", ""LastAttempt_UTC"")
             SELECT
                 ts.""Symbol"",
                 0, -- Начинаем с самого начала
-                (EXTRACT(EPOCH FROM ts.""DateAdded"") * 1000)::BIGINT - 1, -- Начинаем со времени добавления
+                GREATEST(
+                    (EXTRACT(EPOCH FROM ts.""DateAdded"") * 1000)::BIGINT - 1,
+                    public.fn_retention_floor_ms()
+                ),
                 'Pending',
                 NOW() AT TIME ZONE 'utc'
             FROM public.""TrackedSymbols"" ts
