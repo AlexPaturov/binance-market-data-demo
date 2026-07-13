@@ -243,12 +243,28 @@
                 color: +x.closePrice >= +x.openPrice ? 'rgba(38,166,154,0.4)' : 'rgba(239,83,80,0.4)'
             }));
 
-            const toLine = pts => pts.map(p => ({ time: sec(p.openTime), value: +p.value }));
+            const histColor = v => v >= 0 ? 'rgba(38,166,154,0.6)' : 'rgba(239,83,80,0.6)';
 
-            const toHist = pts => pts.map(p => ({
-                time: sec(p.openTime), value: +p.value,
-                color: +p.value >= 0 ? 'rgba(38,166,154,0.6)' : 'rgba(239,83,80,0.6)'
-            }));
+            // Панели синхронизируются по логическому диапазону — по номерам баров, а не по времени.
+            // Поэтому у каждого ряда должно быть ровно столько же точек, сколько свечей, и в том же
+            // порядке: ряд короче свечного (индикатор на прогреве, CVD посчитан не для всех баров)
+            // сдвинул бы нумерацию и утащил бы все панели в свой диапазон — график схлопывался в
+            // полоску у правого края. Недостающие бары заполняем whitespace-точками: места в
+            // нумерации они занимают, а линию не рисуют.
+            const alignTo = (times, pts, decorate) => {
+                const byTime = new Map(pts.map(p => [sec(p.openTime), +p.value]));
+
+                return times.map(t => byTime.has(t)
+                    ? decorate(t, byTime.get(t))
+                    : { time: t });
+            };
+
+            const toLine = (times, pts) => alignTo(times, pts, (time, value) => ({ time, value }));
+
+            const toHist = (times, pts) =>
+                alignTo(times, pts, (time, value) => ({ time, value, color: histColor(value) }));
+
+            const barTimes = candles => candles.map(c => sec(c.openTime));
 
             function settings() {
                 return {
@@ -284,14 +300,15 @@
                         candleSeries.setData(toCandles(data.candles));
                         volumeSeries.setData(toVolume(data.candles));
 
+                        const times = barTimes(data.candles);
                         const i = data.indicators;
-                        maFastSeries.setData(toLine(i.maFast));
-                        maSlowSeries.setData(toLine(i.maSlow));
-                        rsiSeries.setData(toLine(i.rsi));
-                        macdLineSeries.setData(toLine(i.macdLine));
-                        macdSignalSeries.setData(toLine(i.macdSignal));
-                        macdHistSeries.setData(toHist(i.macdHistogram));
-                        cvdSeries.setData(toLine(i.cvd));
+                        maFastSeries.setData(toLine(times, i.maFast));
+                        maSlowSeries.setData(toLine(times, i.maSlow));
+                        rsiSeries.setData(toLine(times, i.rsi));
+                        macdLineSeries.setData(toLine(times, i.macdLine));
+                        macdSignalSeries.setData(toLine(times, i.macdSignal));
+                        macdHistSeries.setData(toHist(times, i.macdHistogram));
+                        cvdSeries.setData(toLine(times, i.cvd));
 
                         state.lastBarTime = data.candles[data.candles.length - 1].openTime;
                         priceChart.timeScale().fitContent();
@@ -308,6 +325,8 @@
                     { symbol: state.symbol, timeframe: state.timeframe, sinceMs: state.lastBarTime },
                     settings());
 
+                const knownBar = sec(state.lastBarTime);
+
                 $.getJSON('@Url.Action("Data", "Chart")', params)
                     .done(data => {
                         if (!data.candles || data.candles.length === 0) return;
@@ -320,14 +339,24 @@
 
                         toVolume(data.candles).forEach(v => volumeSeries.update(v));
 
+                        // Новые бары попадают в каждый ряд — со значением, если оно посчитано,
+                        // иначе whitespace-точкой: нумерация баров на панелях обязана совпадать.
+                        // Уже показанный бар whitespace'ом не затираем — иначе значение,
+                        // посчитанное в прошлый опрос, пропало бы с графика.
+                        const times = barTimes(data.candles);
+                        const push = (series, points) =>
+                            points.forEach(p => {
+                                if (p.value !== undefined || p.time > knownBar) series.update(p);
+                            });
+
                         const i = data.indicators;
-                        toLine(i.maFast).forEach(p => maFastSeries.update(p));
-                        toLine(i.maSlow).forEach(p => maSlowSeries.update(p));
-                        toLine(i.rsi).forEach(p => rsiSeries.update(p));
-                        toLine(i.macdLine).forEach(p => macdLineSeries.update(p));
-                        toLine(i.macdSignal).forEach(p => macdSignalSeries.update(p));
-                        toHist(i.macdHistogram).forEach(p => macdHistSeries.update(p));
-                        toLine(i.cvd).forEach(p => cvdSeries.update(p));
+                        push(maFastSeries,     toLine(times, i.maFast));
+                        push(maSlowSeries,     toLine(times, i.maSlow));
+                        push(rsiSeries,        toLine(times, i.rsi));
+                        push(macdLineSeries,   toLine(times, i.macdLine));
+                        push(macdSignalSeries, toLine(times, i.macdSignal));
+                        push(macdHistSeries,   toHist(times, i.macdHistogram));
+                        push(cvdSeries,        toLine(times, i.cvd));
 
                         state.lastBarTime = data.candles[data.candles.length - 1].openTime;
                     });
