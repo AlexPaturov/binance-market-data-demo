@@ -1,114 +1,78 @@
 # План: завершение переноса initial load на прод
 
-Перенос данных с dev на прод выполнен 2026-07-12: архивы (3652 ZIP + 475 CSV) перелиты в `binancecollector_bdc_data`, внешний 4TB-диск физически переставлен на GMKtec и примонтирован в `/mnt/ext` (fstab по UUID `25ddc534-13e6-479e-8392-a4487a975c80`), `docker-compose.prod.yml` переведён с named volume на bind mount `/mnt/ext/postgres_data` (коммит `88c14f9`). Проверено на проде: 7 таблиц + 24 партиции, `Trades` — partitioned table. DEV приведён к целевому состоянию: Postgres на docker volume `dev_postgres_data`, схема из baseline, без исторических данных. Дальше — то, что осталось.
+Перенос с dev на прод завершён 2026-07-12/13: архивы перелиты, внешний 4TB-диск переставлен на GMKtec, `docker-compose.prod.yml` переведён на bind mount `/mnt/ext/postgres_data`, автозапуск защищён от гонки с монтированием (systemd drop-in `RequiresMountsFor=/mnt/ext`), скрипты `prod-start.sh`/`prod-stop.sh` на сервере. DEV приведён к целевому состоянию: Postgres на docker volume `dev_postgres_data`, схема из baseline, без исторических данных. Дальше — то, что осталось.
 
 ## Текущее состояние
 
-- **Прод:** `Trades` заполнены за 6 из ~19 месяцев (апр, авг–дек 2025), 566 ГБ. `Ohlcv_1min`/`Ohlcv_Features`/`Processing_Watermarks`/`HistoricalAudit_Watermarks` — пустые (Фазы 4–6 из `docs/INITIAL_DATA_LOAD.md` не начинались).
-- Очередь `archive_import` приехала вместе с диском и дорабатывает сама — пересоздавать джобы не нужно. `UnpackArchiveAsync` резолвит путь через `IPathProvider` в момент выполнения; `ImportFromCsvAsync` несёт зашитый dev-путь, поэтому у `bdc_worker` тот же volume смонтирован дважды (`/opt/bdc_data` и `/home/lex/bdc_data`).
+- **Прод:** `Trades` заполнены за 6 из ~19 месяцев (апр, авг–дек 2025), 566 ГБ и растут. `Ohlcv_1min`/`Ohlcv_Features`/`Processing_Watermarks`/`HistoricalAudit_Watermarks` — пустые (Фазы 4–6 из `docs/INITIAL_DATA_LOAD.md` не начинались).
+- Очередь `archive_import` дорабатывает сама. `ImportFromCsvAsync` несёт зашитый dev-путь, поэтому у `bdc_worker` тот же volume смонтирован дважды (`/opt/bdc_data` и `/home/lex/bdc_data`); второй mount можно убрать, когда очередь опустеет.
 - Импорт crash-safe: CSV/ZIP удаляются только после успеха, вставка идемпотентна (`ON CONFLICT ... DO NOTHING`). Worker можно останавливать в любой момент.
 - `partition-maintenance` (rotation) отключена в коде (`HangfireJobsService.cs`) — включать после завершения загрузки.
-- Прод: GMKtec G2, Intel N150, Ubuntu 24.04, realtime-трафик не держит. SSH: `ssh -p 2237 lex@100.96.120.16`.
-- **DEV:** база лёгкая (8.7 МБ) — только схема, 24 пустые партиции. Ротация партиций (`sp_rotate_trades_partition`, 13 месяцев) общая с продом, отдельная dev-версия не делалась. Осталось руками: `sudo rm -rf /mnt/ext/postgres_data` (70 МБ мусора) и убрать запись про диск из `/etc/fstab`.
+- Железо: GMKtec G2, Intel N150, Ubuntu 24.04, realtime-трафик не держит. SSH: `ssh -p 2237 lex@100.96.120.16`.
+- **DEV:** база лёгкая (8.7 МБ) — только схема, 24 пустые партиции. Ротация партиций (`sp_rotate_trades_partition`, 13 месяцев) общая с продом, отдельная dev-версия не делалась.
 
-## Шаг 1 — Доделать прод (руками, на сервере)
-
-- Systemd drop-in, чтобы Docker дожидался монтирования диска (иначе при автозапуске гонка: `bdc_db` может стартовать раньше монтирования и создать пустую БД):
-  ```bash
-  sudo mkdir -p /etc/systemd/system/docker.service.d
-  sudo tee /etc/systemd/system/docker.service.d/wait-for-ext.conf > /dev/null <<'EOF'
-  [Unit]
-  RequiresMountsFor=/mnt/ext
-  EOF
-  sudo systemctl daemon-reload
-  ```
-- `x-systemd.device-timeout=30` в записи `/etc/fstab` для `/mnt/ext`.
-- Залить `prod-stop.sh` на сервер (`scp` в `/opt/BinanceCollector/docker/`) — CI скрипты не разносит.
-- Проверить ребутом, что стек поднимается на реальной базе.
-
-## Шаг 2 — Проверить вход в DataManager
+## Шаг 1 — Проверить вход в DataManager
 
 Фикс схемы применён (`Program.cs`: в Production форсируется `https`, коммит `3f369b2`) — TLS снимает Cloudflare, Traefik перезаписывает `X-Forwarded-Proto`, из-за чего `redirect_uri` строился с `http`. **Проверить, что логин через B2C теперь проходит.**
 
 Если нет — смотреть в Azure (App registrations → Authentication → Redirect URIs), есть ли там `https://datamanager.jahasim.com/signin-oidc`.
 
-## Гигиена секретов
+## Шаг 2 — Панель Data Quality: смержить и накатить
 
-- `src/BinanceDataCollector.Worker/Properties/launchSettings.json` **отслеживается гитом** и содержит `RabbitMQ__Password` — вынести из репозитория (user-secrets / env).
-- B2C client secret лежит только локально в `DataManager/Properties/launchSettings.json` (файл в `.gitignore`, в истории гита его нет — проверено `git log -S`). В репозиторий не утёк.
+**Код готов, лежит в ветке `feature/data-quality-panel` (коммит `860d11c`), в `master` не влит.** 34 теста зелёные, включая Testcontainers-тесты, которые сажают битые данные и проверяют, что каждая проверка их находит.
 
-## Шаг 2 — Фазы 3–6 из `docs/INITIAL_DATA_LOAD.md`, на проде
+Что в ветке:
+- Таблица `"DataQualityFindings"` (группа, тип проверки, символ, период, severity, счётчик, детали в JSONB).
+- 18 проверок в 4 группах: сырые тики / свечи / индикаторы / пайплайн (watermarks).
+- `DataQualityCheckWorker` — Hangfire-джоба **без расписания**, только по кнопке. Старый `DataQualityWorker` с `Cron.Never()` удалён, регистрация `data-quality-check` вычищена.
+- Страница `/DataQuality`: фильтры (символ, период, группы), живой журнал через SignalR, таблица находок с фильтрами по группе/статусу/символу. Запуск — `Operator`, просмотр — `Viewer`.
+- Диапазон одной проверки жёстко ограничен **31 днём** (проверяется в JS, в контроллере и в репозитории) — иначе любая проверка вырождается в полный скан сотен ГБ.
+
+**Осталось:**
+1. Смержить ветку в `master` (пойдёт деплой — учтите, что на проде идёт импорт).
+2. **Накатить миграцию на прод-базу вручную** — в baseline таблица есть, но baseline применяется только на чистом томе:
+   ```bash
+   docker exec -i bdc_db psql -U bindatacoll -d market_analytics < docker/postgres/migrations/001_data_quality_findings.sql
+   ```
+3. Открыть `/DataQuality` и проверить в браузере (в коде не проверялось — нужен вход через B2C).
+
+**Осознанно пропущено:** `CHECK`-констрейнты на инварианты (`High >= Low`, `RSI` в `[0,100]`, кратность `OpenTime`). Это размен «предотвращение → обнаружение»: битая строка попадёт в базу и будет найдена только при запуске проверки.
+
+## Шаг 3 — Фазы 3–6 из `docs/INITIAL_DATA_LOAD.md`, на проде
 
 1. **Фаза 3 (идёт):** дождаться, пока очередь `archive_import` разберётся сама. Мониторинг — Hangfire Dashboard.
 2. **Фаза 4 (историческая агрегация):** PL/pgSQL-скрипт из `INITIAL_DATA_LOAD.md`, выполнить через psql/DBeaver на проде, когда Фаза 3 дойдёт до конца.
 3. **Фаза 5:** SQL для заполнения `HistoricalAudit_Watermarks`.
 4. **Фаза 6:** включить recurring jobs (`ohlcv-aggregator`, `feature-calculator`, `historical-audit`, `quick_audit`, `partition-maintenance`) — раскомментировать в `HangfireJobsService.cs`, задеплоить.
+5. Прогнать полную проверку качества данных новой панелью — это и есть «проверка целостности прод-базы» из `docs/TODO_POST_INITIAL_LOAD.md`.
 
 **Критерий завершения:** `archive_import` пуст, скрипт агрегации вывел `Done`, вотермарки проставлены, recurring jobs видны в Hangfire Dashboard.
 
+## Гигиена секретов (отложено)
+
+- `src/BinanceDataCollector.Worker/Properties/launchSettings.json` **отслеживается гитом** и содержит `RabbitMQ__Password` — вынести из репозитория (user-secrets / env).
+- B2C client secret лежит только локально в `DataManager/Properties/launchSettings.json` (файл в `.gitignore`, в истории гита его нет — проверено `git log -S`). В репозиторий не утёк.
+
 ---
 
-# Data Quality: сценарии порчи данных
+# Сценарии порчи данных
 
-Порядок работы над остальным MVP (авторизация, тесты, пайплайн, документация) выполнен и закрыт. Этот раздел — рабочий список сценариев порчи данных для будущей стадии тест-сценариев: что проверять, где это уже проверяется, и что ещё нужно добавить.
+Каталог из 18 проверок, разложенных по 4 группам, **реализован** в ветке
+`feature/data-quality-panel` (см. Шаг 2) — держать его отдельным списком в этом
+документе больше нет смысла. Источник истины теперь код:
 
-## Что уже есть
+- Группы и пороги — `src/BinanceDataCollector.Application/Common/DataQualityChecks.cs`
+- Сами проверки (SQL) — `DataQualityRepository.Run*ChecksAsync`
+- Что каждая проверка ловит — тесты `DataQualityRepositoryTests`: они сажают
+  заведомо битые данные и проверяют, что проверка их находит.
 
-- `DataQualityRepository.CheckSymbolMonthAsync` — месячный отчёт по символу: `GapCount` (разрыв `TradeId`), `InvalidPriceCount` (`Price <= 0 OR Quantity <= 0`), `OutlierCount` (цена дальше 5σ от средней), пишется в `"DataQualityReports"`.
-- `DataQualityRepository.GetReportsAsync(symbol?, status?)` — выборка отчётов, есть, но нигде не подключена (не зарегистрирована в DataManager DI, нет контроллера/страницы). Подключить — задача на стадию тест-сценариев.
-- Разрывы по `TradeId` в окне — `TradeRepository.FindGapsInTimeWindowAsync` (используется `QuickAuditorWorker`), `AnalysisRepository.FindGapsInWindowAsync` → `sp_find_trade_id_gaps_in_window` (используется `HistoricalAuditorWorker`).
+**Не реализовано осознанно:**
 
-## 1. `"Trades"` (сырые тики)
-
-| # | Сценарий | Статус | Проверка |
-|---|---|---|---|
-| 1 | `Price <= 0` / `Quantity <= 0` | есть | `DataQualityRepository`, месячно |
-| 2 | Ценовой выброс (5σ) | есть | `DataQualityRepository`, месячно; порог фиксирован, можно уточнить (MAD вместо std, окно короче месяца) |
-| 3 | Разрыв последовательности `TradeId` | есть, но не на границе месяца | `CheckSymbolMonthAsync` не видит разрыв между последним тиком месяца N и первым тиком месяца N+1 — добавить пограничную проверку |
-| 4 | Разрыв **по времени**, не по `TradeId` | не подключено | `sp_find_trade_gaps`/`sp_find_gaps_in_window` есть в схеме, не вызываются из кода — решить, подключать или удалить как мёртвый код |
-| 5 | Дубликат: тот же `TradeId`+`Symbol`, другой `TradeTime` (PK — тройка, не пара) | нет | `GROUP BY TradeId, Symbol HAVING COUNT(DISTINCT TradeTime) > 1` |
-| 6 | `IsMyTrade=true`, но `Commission`/`CommissionAsset` не согласованы | нет | точечная проверка полей для собственных сделок |
-| 7 | `TradeTime` вне разумного диапазона (в будущем, раньше `TrackedSymbols.DateAdded`) | нет | сверка `TradeTime` с `now()` и `DateAdded` |
-| 8 | Сделка по символу, которого нет в `TrackedSymbols` | нет | `LEFT JOIN Trades.Symbol → TrackedSymbols.Symbol IS NULL` |
-
-## 2. `"Ohlcv_1min"` (агрегированные свечи)
-
-Пока не проверяется вообще — ни в БД, ни в приложении.
-
-| # | Сценарий | Проверка |
-|---|---|---|
-| 9 | `HighPrice < LowPrice`, либо `Open`/`Close` вне `[Low, High]` | `CHECK` constraint на таблице |
-| 10 | `Volume < 0`, либо `Volume = 0` при наличии тиков за минуту | сверка с `COUNT`/`SUM` по `Trades` за то же окно |
-| 11 | `OpenTime` не кратен 60000 мс | `CHECK ("OpenTime" % 60000 = 0)` |
-| 12 | Пропущенные минуты у активного символа | тот же `LAG`-паттерн, что и для `TradeId`, но по `OpenTime` с шагом 60000 |
-| 13 | Расхождение агрегата со свежим пересчётом из `Trades` | периодическая сверка пересчёта против сохранённого |
-
-## 3. `"Ohlcv_Features"` (индикаторы)
-
-Тоже без проверок.
-
-| # | Сценарий | Проверка |
-|---|---|---|
-| 14 | `RSI_14` вне `[0, 100]` | `CHECK` constraint |
-| 15 | `MA_*` сильно расходится с ценой свечи в тот же `OpenTime` | проверка относительного отклонения `MA` от `ClosePrice` |
-| 16 | `CVD` делает скачок, не объяснимый `Volume`/`IsBuyerMaker` из `Ohlcv_1min` | проверка дельты `CVD` против `Volume` |
-| 17 | Свеча `processed`, но строки в `Ohlcv_Features` нет (тихая потеря, FK нет) | `LEFT JOIN Ohlcv_1min → Ohlcv_Features` по `(Symbol, OpenTime)` |
-| 18 | Осиротевшая строка в `Ohlcv_Features` без `Ohlcv_1min` | обратный `LEFT JOIN` |
-
-## 4. Watermark / состояние пайплайна
-
-Самое опасное — тихая потеря данных, а не видимая ошибка.
-
-| # | Сценарий | Проверка |
-|---|---|---|
-| 19 | `Processing_Watermarks.LastProcessedTimestamp` обогнал реальные данные — выборка всегда `>= watermark`, всё до этой отметки выпадает из обработки молча | сравнить watermark с независимым пересчётом (MIN нового `TradeTime`/`OpenTime`, который должен был быть обработан) |
-| 20 | Watermark завис, хотя новые `'new'`-записи есть | возраст `LastUpdate_UTC` относительно `now()` и `MAX(...)` с `ProcessingStatus='new'` |
-| 21 | `HistoricalAudit_Watermarks.Status='Failed'` с исчерпанным `RetryCount` — по текущему запросу такой символ больше никогда не попадёт в выборку | алерт на символы с `RetryCount >= MaxRetries` |
-| 22 | `TrackedSymbols.IsActive` не согласован с состоянием аудита | сверка `IsActive` против статусов аудита |
-| 23 | `sp_rotate_trades_partition` дропает партиции старше 13 месяцев без проверки, что данные заархивированы | проверка перед `DROP TABLE`, что партиция экспортирована (если такой процесс есть) |
-
-## Реализация (когда дойдём)
-
-- Дешёвые структурные инварианты (#9, #11, #14) — `CHECK` constraint в БД, ловят порчу в момент записи.
-- Сверки, требующие агрегации/сравнения между таблицами (остальное) — расширение `DataQualityRepository` / отдельная джоба, по образцу уже существующего пайплайна.
-- Подключить `DataQualityRepository.GetReportsAsync` к DataManager (DI + контроллер/страница) — сейчас это единственный способ увидеть отчёты, кроме логов Worker'а.
+- `CHECK`-констрейнты на дешёвые инварианты (`High >= Low`, `Open`/`Close` внутри
+  диапазона, `OpenTime % 60000 = 0`, `RSI` в `[0, 100]`, `Price > 0`). Они ловили бы
+  порчу в момент записи, а не при запуске проверки. Решение отложено — накатывать
+  их дешевле, пока `Ohlcv_1min` пуста, то есть до Фазы 4.
+- Сверка агрегата свечи со свежим пересчётом из `"Trades"` — тяжёлая проверка,
+  требует полного пересчёта окна.
+- Уточнение порога выбросов (сейчас фиксированные 5σ; MAD устойчивее к «толстым
+  хвостам» крипторынка).
