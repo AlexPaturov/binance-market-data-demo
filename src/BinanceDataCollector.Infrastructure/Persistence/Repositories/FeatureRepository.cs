@@ -30,8 +30,7 @@ public class FeatureRepository : IFeatureRepository
         // 1. Формируем SQL-запрос, который ВЫЗЫВАЕТ функцию через SELECT.
         const string sql = @"
         SELECT public.sp_upsert_ohlcv_features(
-            @p_symbols, @p_open_times, @p_rsi_14, @p_macd_signals, @p_macd_hists,
-            @p_ma_1051200, @p_ma_201600, @p_cvds
+            @p_symbols, @p_open_times, @p_rsi_14, @p_macd_signals, @p_macd_hists, @p_cvds
         )";
 
         // 2. Создаем параметры. Имена свойств должны совпадать с именами в SQL-строке.
@@ -42,8 +41,6 @@ public class FeatureRepository : IFeatureRepository
             p_rsi_14 = featureList.Select(f => f.Rsi14).ToArray(),
             p_macd_signals = featureList.Select(f => f.MacdSignal).ToArray(),
             p_macd_hists = featureList.Select(f => f.MacdHist).ToArray(),
-            p_ma_1051200 = featureList.Select(f => f.Ma1051200).ToArray(),
-            p_ma_201600 = featureList.Select(f => f.Ma201600).ToArray(),
             p_cvds = featureList.Select(f => f.Cvd).ToArray()
         };
 

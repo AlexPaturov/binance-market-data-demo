@@ -15,8 +15,6 @@ public class IndicatorService : IIndicatorService
     private const int MacdFastPeriods = 12;
     private const int MacdSlowPeriods = 26;
     private const int MacdSignalPeriods = 9;
-    private const int Ma2yPeriods = 1051200;  // 2-year Moving Average (в минутных свечах)
-    private const int Ma200wPeriods = 2016000; // 200-week Moving Average (в минутных свечах)
 
     /// <summary>
     /// Главный метод, который принимает историю свечей и рассчитывает все необходимые индикаторы.
@@ -35,18 +33,17 @@ public class IndicatorService : IIndicatorService
         // Рассчитываем все индикаторы. Библиотека сама обрабатывает "прогрев".
         var rsiResult = quotes.GetRsi(RsiPeriods);
         var macdResult = quotes.GetMacd(MacdFastPeriods, MacdSlowPeriods, MacdSignalPeriods);
-        var ma2yResult = quotes.GetSma(Ma2yPeriods);
-        var ma200wResult = quotes.GetSma(Ma200wPeriods);
 
         // --- НАДЕЖНОЕ ОБЪЕДИНЕНИЕ РЕЗУЛЬТАТОВ ---
-        // Мы итерируемся по ИСХОДНОМУ списку свечей (quotes) и для каждой
-        // ищем соответствующий результат в коллекциях индикаторов.
+        // Итерируемся по исходному списку свечей и сопоставляем результаты индикаторов
+        // по дате через словари: пачки бывают в тысячи свечей, линейный поиск на каждую
+        // превращался бы в квадрат.
+        var rsiByDate = rsiResult.ToDictionary(r => r.Date);
+        var macdByDate = macdResult.ToDictionary(m => m.Date);
 
         var features = quotes.Select(q => {
-            var rsi = rsiResult.FirstOrDefault(r => r.Date == q.Date);                     // Ищем результат RSI для текущей даты
-            var macd = macdResult.FirstOrDefault(m => m.Date == q.Date);                 // Ищем результат MACD для текущей даты
-            var ma2y = ma2yResult.FirstOrDefault(m => m.Date == q.Date);        // Ищем результат MA 2Y для текущей даты
-            var ma200w = ma200wResult.FirstOrDefault(m => m.Date == q.Date);    // Ищем результат MA 200W для текущей даты
+            rsiByDate.TryGetValue(q.Date, out var rsi);
+            macdByDate.TryGetValue(q.Date, out var macd);
 
             return new FeatureData
             {
@@ -54,9 +51,7 @@ public class IndicatorService : IIndicatorService
                 OpenTime = ((DateTimeOffset)q.Date).ToUnixTimeMilliseconds(),
                 Rsi14 = (decimal?)rsi?.Rsi,
                 MacdSignal = (decimal?)macd?.Signal,
-                MacdHist = (decimal?)macd?.Histogram,
-                Ma1051200 = (decimal?)ma2y?.Sma,
-                Ma201600 = (decimal?)ma200w?.Sma
+                MacdHist = (decimal?)macd?.Histogram
             };
         });
 

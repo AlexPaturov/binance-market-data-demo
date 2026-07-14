@@ -62,9 +62,7 @@ $$;
 -- Name: sp_aggregate_dirty_minutes(integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_aggregate_dirty_minutes(
-    p_max_minutes integer DEFAULT 10000
-) RETURNS integer
+CREATE FUNCTION public.sp_aggregate_dirty_minutes(p_max_minutes integer DEFAULT 10000) RETURNS integer
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -470,10 +468,10 @@ $$;
 
 
 --
--- Name: sp_upsert_ohlcv_features(character varying[], bigint[], numeric[], numeric[], numeric[], numeric[], numeric[], numeric[]); Type: FUNCTION; Schema: public; Owner: -
+-- Name: sp_upsert_ohlcv_features(character varying[], bigint[], numeric[], numeric[], numeric[], numeric[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.sp_upsert_ohlcv_features(p_symbols character varying[], p_open_times bigint[], p_rsi_14 numeric[], p_macd_signals numeric[], p_macd_hists numeric[], p_ma_1051200 numeric[], p_ma_201600 numeric[], p_cvds numeric[]) RETURNS void
+CREATE FUNCTION public.sp_upsert_ohlcv_features(p_symbols character varying[], p_open_times bigint[], p_rsi_14 numeric[], p_macd_signals numeric[], p_macd_hists numeric[], p_cvds numeric[]) RETURNS void
     LANGUAGE plpgsql
     AS $$
 DECLARE
@@ -481,11 +479,9 @@ DECLARE
 BEGIN
     CREATE TEMP TABLE NewFeatures ON COMMIT DROP AS
     SELECT * FROM UNNEST(
-        p_symbols, p_open_times, p_rsi_14, p_macd_signals, p_macd_hists,
-        p_ma_1051200, p_ma_201600, p_cvds
+        p_symbols, p_open_times, p_rsi_14, p_macd_signals, p_macd_hists, p_cvds
     ) AS t(
-        "Symbol", "OpenTime", "RSI_14", "MACD_Signal", "MACD_Hist",
-        "MA_1051200", "MA_201600", "CVD"
+        "Symbol", "OpenTime", "RSI_14", "MACD_Signal", "MACD_Hist", "CVD"
     );
 
     FOR month_ms IN SELECT DISTINCT "OpenTime" FROM NewFeatures LOOP
@@ -493,8 +489,7 @@ BEGIN
     END LOOP;
 
     INSERT INTO public."Ohlcv_Features" (
-        "Symbol", "OpenTime", "RSI_14", "MACD_Signal", "MACD_Hist",
-        "MA_1051200", "MA_201600", "CVD"
+        "Symbol", "OpenTime", "RSI_14", "MACD_Signal", "MACD_Hist", "CVD"
     )
     SELECT * FROM NewFeatures
     ON CONFLICT ("Symbol", "OpenTime") DO UPDATE
@@ -502,8 +497,6 @@ BEGIN
         "RSI_14" = EXCLUDED."RSI_14",
         "MACD_Signal" = EXCLUDED."MACD_Signal",
         "MACD_Hist" = EXCLUDED."MACD_Hist",
-        "MA_1051200" = EXCLUDED."MA_1051200",
-        "MA_201600" = EXCLUDED."MA_201600",
         "CVD" = EXCLUDED."CVD";
 END;
 $$;
@@ -1854,8 +1847,6 @@ CREATE TABLE public."Ohlcv_Features" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 )
 PARTITION BY RANGE ("OpenTime");
@@ -1871,8 +1862,6 @@ CREATE TABLE public."Ohlcv_Features_2026_01" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -1887,8 +1876,6 @@ CREATE TABLE public."Ohlcv_Features_2026_02" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -1903,8 +1890,6 @@ CREATE TABLE public."Ohlcv_Features_2026_03" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -1919,8 +1904,6 @@ CREATE TABLE public."Ohlcv_Features_2026_04" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -1935,8 +1918,6 @@ CREATE TABLE public."Ohlcv_Features_2026_05" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -1951,8 +1932,6 @@ CREATE TABLE public."Ohlcv_Features_2026_06" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -1967,8 +1946,6 @@ CREATE TABLE public."Ohlcv_Features_2026_07" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -1983,8 +1960,6 @@ CREATE TABLE public."Ohlcv_Features_2026_08" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -1999,8 +1974,6 @@ CREATE TABLE public."Ohlcv_Features_2026_09" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2015,8 +1988,6 @@ CREATE TABLE public."Ohlcv_Features_2026_10" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2031,8 +2002,6 @@ CREATE TABLE public."Ohlcv_Features_2026_11" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2047,8 +2016,6 @@ CREATE TABLE public."Ohlcv_Features_2026_12" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2063,8 +2030,6 @@ CREATE TABLE public."Ohlcv_Features_2027_01" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2079,8 +2044,6 @@ CREATE TABLE public."Ohlcv_Features_2027_02" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2095,8 +2058,6 @@ CREATE TABLE public."Ohlcv_Features_2027_03" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2111,8 +2072,6 @@ CREATE TABLE public."Ohlcv_Features_2027_04" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2127,8 +2086,6 @@ CREATE TABLE public."Ohlcv_Features_2027_05" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2143,8 +2100,6 @@ CREATE TABLE public."Ohlcv_Features_2027_06" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2159,8 +2114,6 @@ CREATE TABLE public."Ohlcv_Features_2027_07" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2175,8 +2128,6 @@ CREATE TABLE public."Ohlcv_Features_2027_08" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2191,8 +2142,6 @@ CREATE TABLE public."Ohlcv_Features_2027_09" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2207,8 +2156,6 @@ CREATE TABLE public."Ohlcv_Features_2027_10" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2223,8 +2170,6 @@ CREATE TABLE public."Ohlcv_Features_2027_11" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 
@@ -2239,8 +2184,6 @@ CREATE TABLE public."Ohlcv_Features_2027_12" (
     "RSI_14" numeric(10,4),
     "MACD_Signal" numeric(18,8),
     "MACD_Hist" numeric(18,8),
-    "MA_1051200" numeric(18,8),
-    "MA_201600" numeric(18,8),
     "CVD" numeric(28,8)
 );
 

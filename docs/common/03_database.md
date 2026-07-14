@@ -101,8 +101,6 @@
 | `"RSI_14"` | `NUMERIC(10,4) NULL` | Relative Strength Index, период 14. |
 | `"MACD_Signal"` | `NUMERIC(18,8) NULL` | Сигнальная линия MACD. |
 | `"MACD_Hist"` | `NUMERIC(18,8) NULL` | Гистограмма MACD. |
-| `"MA_1051200"` | `NUMERIC(18,8) NULL` | Скользящая средняя (длинное окно). |
-| `"MA_201600"` | `NUMERIC(18,8) NULL` | Скользящая средняя (среднее окно). |
 | `"CVD"` | `NUMERIC(28,8) NULL` | Cumulative Volume Delta. |
 
 ### 3.5. `public."OrderBook_Features"`
