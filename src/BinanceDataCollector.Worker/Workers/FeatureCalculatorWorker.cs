@@ -19,8 +19,21 @@ public class FeatureCalculatorWorker
     private readonly IAnalysisRepository  _analysisRepository;
 
     // Конфигурация воркера
-    private const int BatchSize = 100;      // Сколько свечей обрабатывать за один цикл
-    private const int WarmupPeriod = 2016000; // 200 недель - максимальный период для наших MA
+
+    /// <summary>
+    /// Сколько свечей обрабатывать за один цикл. В обычном режиме поток — десятки свечей
+    /// в минуту, но после импорта архивов пересчитанных свечей сотни тысяч: при пачке
+    /// в 100 хвост в 395 тыс. разбирался бы 5.5 суток (ночь на 14.07.2026).
+    /// </summary>
+    private const int BatchSize = 2000;
+
+    /// <summary>
+    /// Прогрев индикаторов, в свечах. RSI(14) и MACD(26/9) сходятся в пределах ~150 баров;
+    /// 400 даёт запас. Больший прогрев не даёт ничего: колонки MA_1051200/MA_201600 пусты
+    /// при любом лимите — столько истории не существует (см. docs/TECH_DEBT.md, п. 2), —
+    /// а прежний лимит в 2 016 000 означал выборку всей истории символа каждый цикл.
+    /// </summary>
+    private const int WarmupPeriod = 400;
 
     public FeatureCalculatorWorker(
         ILogger<FeatureCalculatorWorker> logger, 
@@ -79,12 +92,12 @@ public class FeatureCalculatorWorker
                         // 4. Обогащаем данные индикатором CVD, который считается по тикам
                         var cvdStartTime = DateTimeOffset.FromUnixTimeMilliseconds(firstNewTime).DateTime;
                         var cvdEndTime = DateTimeOffset.FromUnixTimeMilliseconds(newKlinesForSymbol.Max(k => k.OpenTime)).DateTime.AddMinutes(1);
-                        var cvdData = (await _analysisRepository.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime)).ToList();
+                        var cvdByTime = (await _analysisRepository.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime))
+                            .ToDictionary(c => c.OpenTime, c => c.Cvd);
 
                         foreach (var feature in features)
                         {
-                            var cvdPoint = cvdData.FirstOrDefault(c => c.OpenTime == feature.OpenTime);
-                            if (cvdPoint != null) feature.Cvd = cvdPoint.Cvd;
+                            if (cvdByTime.TryGetValue(feature.OpenTime, out var cvd)) feature.Cvd = cvd;
                         }
 
                         // 5. Сохраняем только НОВЫЕ признаки (отсекаем "прогрев")

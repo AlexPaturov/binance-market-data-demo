@@ -24,14 +24,16 @@ public class OhlcvRepository : IOhlcvRepository
         using var db = Connection;
         const string sql = @"
             WITH candidates AS (
-                -- 1. Находим кандидатов для обработки
+                -- 1. Находим кандидатов для обработки. Свежие свечи первыми: индикаторы
+                --    на живом графике восстанавливаются сразу, а хвост пересчитанных
+                --    после импорта свечей докатывается следом.
                 SELECT ""Symbol"", ""OpenTime""
                 FROM public.""Ohlcv_1min""
                 WHERE ""ProcessingStatus"" = 'new'
-                ORDER BY ""OpenTime"" ASC
+                ORDER BY ""OpenTime"" DESC
                 LIMIT @BatchSize
                 -- Блокируем строки, чтобы другой воркер их не тронул
-                FOR UPDATE SKIP LOCKED 
+                FOR UPDATE SKIP LOCKED
             ),
             updated AS (
                 -- 2. Атомарно обновляем их статус на 'processing'
