@@ -34,6 +34,10 @@
 
 Образы Worker и DataManager — из GHCR, тег = SHA коммита.
 
+**Метрики конвейера** — отдельный compose-проект `bdc_monitoring` (Prometheus, node_exporter,
+два postgres_exporter, Grafana), поднимается независимо от app-стека, доступен через
+Tailscale. Подробности — [`observability.md`](./observability.md).
+
 ---
 
 ## 3. Сеть

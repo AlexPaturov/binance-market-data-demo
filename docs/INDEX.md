@@ -20,6 +20,7 @@ docs/
 └── prod/
     ├── ARCHITECTURE_PROD.md ← железо, сеть, хранилища, запуск/остановка
     ├── network.md           ← UFW, Tailscale, Docker-сети, порты
+    ├── observability.md     ← метрики конвейера: Prometheus + Grafana
     ├── 04_deployment.md     ← CI/CD, GitHub Actions, GHCR
     └── 05_setup.md          ← настройка сервера с нуля
 
@@ -39,6 +40,7 @@ docker/docs/               ← эксплуатация Docker-стека
 | Индикаторы и фичи стакана | [`common/analytics/indicators.md`](./common/analytics/indicators.md) |
 | Проверить качество данных | [`common/analytics/data_quality.md`](./common/analytics/data_quality.md) |
 | Задеплоить | [`prod/04_deployment.md`](./prod/04_deployment.md) |
+| Посмотреть метрики конвейера | [`prod/observability.md`](./prod/observability.md) |
 | Запустить или потушить прод | [`prod/ARCHITECTURE_PROD.md`](./prod/ARCHITECTURE_PROD.md#6-запуск-и-остановка) |
 | Настроить сервер с нуля | [`prod/05_setup.md`](./prod/05_setup.md) → [`prod/network.md`](./prod/network.md) |
 

@@ -1,0 +1,30 @@
+# Прикладные метрики из market_analytics. Читаются postgres_exporter'ом на каждый скрейп.
+# Имя метрики = ключ верхнего уровня + имя колонки: bdc_dirty_minutes + depth = bdc_dirty_minutes_depth.
+
+bdc_dirty_minutes:
+  query: 'SELECT count(*) AS depth FROM public."DirtyMinutes"'
+  metrics:
+    - depth:
+        usage: "GAUGE"
+        description: "Минут в очереди на агрегацию свечей. Норма — десятки; сотни тысяч — разбор хвоста."
+
+# Отставание живой свечи: сколько секунд назад закрыта последняя посчитанная минута.
+# max(OpenTime) по партиционированной таблице берётся index-scan'ом, дёшево.
+bdc_candle:
+  query: >
+    SELECT EXTRACT(EPOCH FROM now())::bigint - COALESCE(max("OpenTime") / 1000, EXTRACT(EPOCH FROM now())::bigint)
+    AS lag_seconds FROM public."Ohlcv_1min"
+  metrics:
+    - lag_seconds:
+        usage: "GAUGE"
+        description: "Секунд отставания свежайшей свечи от текущего времени."
+
+# Отставание индикаторов — следующее звено после свечей.
+bdc_feature:
+  query: >
+    SELECT EXTRACT(EPOCH FROM now())::bigint - COALESCE(max("OpenTime") / 1000, EXTRACT(EPOCH FROM now())::bigint)
+    AS lag_seconds FROM public."Ohlcv_Features"
+  metrics:
+    - lag_seconds:
+        usage: "GAUGE"
+        description: "Секунд отставания свежайшей строки фич (из неё берётся CVD графика)."

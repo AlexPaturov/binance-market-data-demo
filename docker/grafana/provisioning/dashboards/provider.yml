@@ -1,0 +1,14 @@
+# Grafana подхватывает дашборды из файлов — их правит git, а не UI.
+apiVersion: 1
+
+providers:
+  - name: BDC
+    orgId: 1
+    folder: BinanceDataCollector
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

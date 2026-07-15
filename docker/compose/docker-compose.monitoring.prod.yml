@@ -1,0 +1,101 @@
+# Стек наблюдаемости — отдельный проект, поверх тех же внешних сетей, что и app-стек.
+# Поднимается/гасится независимо от приложения:
+#   docker compose -p bdc_monitoring -f docker-compose.monitoring.prod.yml up -d
+#   docker compose -p bdc_monitoring -f docker-compose.monitoring.prod.yml down
+# Приложение и БД не трогаются — экспортеры читают БД в read-only. Grafana — на Tailscale.
+
+networks:
+  internal_network:
+    external: true
+    name: internal_network
+
+services:
+
+  bdc_prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: bdc_prometheus
+    restart: always
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    volumes:
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - internal_network
+    ports:
+      - "100.96.120.16:9091:9090"   # 9090 на хосте занят Cockpit; наружу — через Tailscale на 9091
+
+  bdc_node_exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: bdc_node_exporter
+    restart: always
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - internal_network
+
+  # market_analytics: очередь минут, отставание свечей и фич
+  bdc_pg_exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: bdc_pg_exporter
+    restart: always
+    command:
+      - "--extend.query-path=/queries.yaml"
+    environment:
+      - DATA_SOURCE_URI=bdc_db:5432/market_analytics?sslmode=disable
+      - DATA_SOURCE_USER=${POSTGRES_USER}
+      - DATA_SOURCE_PASS=${POSTGRES_PASSWORD}
+    volumes:
+      - ../prometheus/queries_bdc.yaml:/queries.yaml:ro
+    networks:
+      - internal_network
+
+  # market_analytics_jobs: успех/провал и длительность проходов агрегации
+  bdc_pg_exporter_jobs:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: bdc_pg_exporter_jobs
+    restart: always
+    command:
+      - "--extend.query-path=/queries.yaml"
+    environment:
+      - DATA_SOURCE_URI=bdc_db:5432/market_analytics_jobs?sslmode=disable
+      - DATA_SOURCE_USER=${POSTGRES_USER}
+      - DATA_SOURCE_PASS=${POSTGRES_PASSWORD}
+    volumes:
+      - ../prometheus/queries_jobs.yaml:/queries.yaml:ro
+    networks:
+      - internal_network
+
+  bdc_grafana:
+    image: grafana/grafana:11.2.0
+    container_name: bdc_grafana
+    restart: always
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - internal_network
+    ports:
+      - "100.96.120.16:3000:3000"   # http://100.96.120.16:3000 через Tailscale
+    depends_on:
+      - bdc_prometheus
+
+volumes:
+  prometheus_data:
+    name: bdc_prometheus_data
+  grafana_data:
+    name: bdc_grafana_data

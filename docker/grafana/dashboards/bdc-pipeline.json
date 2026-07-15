@@ -1,0 +1,98 @@
+{
+  "uid": "bdc-pipeline",
+  "title": "BDC — конвейер агрегации",
+  "tags": ["bdc"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Очередь минут (сейчас)",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1000 }, { "color": "red", "value": 100000 } ] }, "unit": "short" } },
+      "targets": [ { "refId": "A", "expr": "bdc_dirty_minutes_depth", "datasource": { "type": "prometheus", "uid": "prometheus" } } ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Отставание свечи (сейчас)",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 180 }, { "color": "red", "value": 900 } ] }, "unit": "s" } },
+      "targets": [ { "refId": "A", "expr": "bdc_candle_lag_seconds", "datasource": { "type": "prometheus", "uid": "prometheus" } } ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Доля успешных проходов (15 мин)",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 0.5 }, { "color": "green", "value": 0.9 } ] }, "unit": "percentunit" } },
+      "targets": [ { "refId": "A", "expr": "bdc_aggregation_succeeded_15m / clamp_min(bdc_aggregation_succeeded_15m + bdc_aggregation_failed_15m, 1)", "datasource": { "type": "prometheus", "uid": "prometheus" } } ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Очередь DirtyMinutes",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 15 } } },
+      "targets": [ { "refId": "A", "expr": "bdc_dirty_minutes_depth", "legendFormat": "минут в очереди", "datasource": { "type": "prometheus", "uid": "prometheus" } } ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Отставание свечи и фич (сек)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        { "refId": "A", "expr": "bdc_candle_lag_seconds", "legendFormat": "свеча", "datasource": { "type": "prometheus", "uid": "prometheus" } },
+        { "refId": "B", "expr": "bdc_feature_lag_seconds", "legendFormat": "фичи", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Диск: %util и iowait",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        { "refId": "A", "expr": "rate(node_disk_io_time_seconds_total[1m]) * 100", "legendFormat": "util {{device}}", "datasource": { "type": "prometheus", "uid": "prometheus" } },
+        { "refId": "B", "expr": "avg(rate(node_cpu_seconds_total{mode=\"iowait\"}[1m])) * 100", "legendFormat": "iowait", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Агрегация: успех / провал за 15 мин",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } } },
+      "targets": [
+        { "refId": "A", "expr": "bdc_aggregation_succeeded_15m", "legendFormat": "успех", "datasource": { "type": "prometheus", "uid": "prometheus" } },
+        { "refId": "B", "expr": "bdc_aggregation_failed_15m", "legendFormat": "провал", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Длительность прохода агрегации (сек) — линия 600 = стена таймаута",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 5, "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 600 } ] } } },
+      "targets": [
+        { "refId": "A", "expr": "bdc_aggregation_avg_duration_seconds", "legendFormat": "средняя", "datasource": { "type": "prometheus", "uid": "prometheus" } },
+        { "refId": "B", "expr": "bdc_aggregation_max_duration_seconds", "legendFormat": "максимум", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+      ]
+    }
+  ]
+}

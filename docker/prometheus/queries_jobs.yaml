@@ -1,0 +1,41 @@
+# Прикладные метрики из market_analytics_jobs (Hangfire).
+# Оконные gauge'и за последние 15 минут — именно они рисуют сигнатуру бага:
+# доля успехов проваливается, а длительность успешных проходов жмётся к стене таймаута.
+
+bdc_aggregation:
+  query: >
+    SELECT
+      count(*) FILTER (WHERE s.name = 'Succeeded')                                      AS succeeded_15m,
+      count(*) FILTER (WHERE s.name = 'Failed')                                         AS failed_15m,
+      COALESCE(round(avg((s.data->>'PerformanceDuration')::numeric)
+               FILTER (WHERE s.name = 'Succeeded') / 1000), 0)                          AS avg_duration_seconds,
+      COALESCE(round(max((s.data->>'PerformanceDuration')::numeric)
+               FILTER (WHERE s.name = 'Succeeded') / 1000), 0)                          AS max_duration_seconds
+    FROM hangfire.state s
+    JOIN hangfire.job j ON j.id = s.jobid
+    WHERE j.invocationdata->>'Method' = 'AggregateNextBatchAsync'
+      AND s.createdat > now() - interval '15 minutes'
+  metrics:
+    - succeeded_15m:
+        usage: "GAUGE"
+        description: "Успешных проходов агрегации за 15 минут."
+    - failed_15m:
+        usage: "GAUGE"
+        description: "Упавших проходов агрегации за 15 минут."
+    - avg_duration_seconds:
+        usage: "GAUGE"
+        description: "Средняя длительность успешного прохода, сек. Прижатие к 600 = стена таймаута."
+    - max_duration_seconds:
+        usage: "GAUGE"
+        description: "Максимальная длительность успешного прохода, сек."
+
+# Глубины очередей Hangfire — видно, как импорт забивает default/archive_import.
+bdc_hangfire_queue:
+  query: 'SELECT queue, count(*) AS depth FROM hangfire.jobqueue GROUP BY queue'
+  metrics:
+    - queue:
+        usage: "LABEL"
+        description: "Имя очереди Hangfire."
+    - depth:
+        usage: "GAUGE"
+        description: "Джоб в очереди."
