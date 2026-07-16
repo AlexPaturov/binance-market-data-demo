@@ -56,7 +56,13 @@ public  class AnalysisRepository : IAnalysisRepository
     ";
 
         using var db = Connection;
-        return await db.QueryAsync<CvdResult>(sql, new { Symbol = symbol, StartTimeMs = startTimeMs, EndTimeMs = endTimeMs });
+        // Таймаут задан явно: умолчание Npgsql — 30 с, и на фоне импорта архивов запрос
+        // в него не укладывался (16.07.2026: 26 отмен за 20 минут). Каждая отмена
+        // прилетала в catch по символу и оставляла его без фич. 600 — потолок, принятый
+        // в проекте для тяжёлых запросов по тикам (см. AggregateDirtyMinutesAsync).
+        return await db.QueryAsync<CvdResult>(sql,
+            new { Symbol = symbol, StartTimeMs = startTimeMs, EndTimeMs = endTimeMs },
+            commandTimeout: 600);
     }
 
     public async Task<List<DataGap>> FindGapsInWindowAsync(string symbol, long startTradeId, long endTradeId)

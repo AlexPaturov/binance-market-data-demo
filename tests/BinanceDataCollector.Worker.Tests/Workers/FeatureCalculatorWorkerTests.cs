@@ -53,6 +53,41 @@ public class FeatureCalculatorWorkerTests
     }
 
     /// <summary>
+    /// Упавший символ не помечается выполненным: его свечи остаются 'processing' и
+    /// возвращаются в расчёт перезахватом по протухшему ClaimedAt. Раньше пометка шла
+    /// по всей пачке скопом — свечи упавшего символа получали конечный статус и
+    /// оставались без фич навсегда (техдолг, п. 9 + 13).
+    /// </summary>
+    [Fact]
+    public async Task ProcessNextBatchAsync_WhenOneSymbolFails_MarksOnlySucceededKlinesProcessed()
+    {
+        const long openTime = 1_700_000_000_000;
+        var goodKline = new Ohlcv { Symbol = "BTCUSDT", OpenTime = openTime };
+        var badKline = new Ohlcv { Symbol = "ETHUSDT", OpenTime = openTime };
+
+        _ohlcvRepo.Setup(r => r.ClaimNewKlinesForProcessingAsync(It.IsAny<int>()))
+            .ReturnsAsync(new List<Ohlcv> { goodKline, badKline });
+        _ohlcvRepo.Setup(r => r.GetWarmupKlinesAsync(It.IsAny<string>(), It.IsAny<long>(), It.IsAny<int>()))
+            .ReturnsAsync(new List<Ohlcv>());
+        _indicatorService.Setup(s => s.CalculateAll(It.IsAny<string>(), It.IsAny<IEnumerable<Ohlcv>>()))
+            .Returns((string s, IEnumerable<Ohlcv> _) => new List<FeatureData>
+                { new() { Symbol = s, OpenTime = openTime } });
+        _analysisRepo.Setup(r => r.GetCvdForOhlcvAsync("BTCUSDT", It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new List<CvdResult>());
+        // Ровно так падал прод: CVD-запрос не укладывался в командный таймаут.
+        _analysisRepo.Setup(r => r.GetCvdForOhlcvAsync("ETHUSDT", It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ThrowsAsync(new TimeoutException("canceling statement due to user request"));
+
+        var processed = await CreateWorker().ProcessNextBatchAsync(CancellationToken.None);
+
+        // Взято в работу две свечи — для потребителя события очередь не пуста.
+        Assert.Equal(2, processed);
+
+        _ohlcvRepo.Verify(r => r.MarkKlinesAsProcessedAsync(
+            It.Is<IEnumerable<Ohlcv>>(klines => klines.Single().Symbol == "BTCUSDT")), Times.Once);
+    }
+
+    /// <summary>
     /// Ноль — признак пустой очереди: по нему потребитель события понимает, что дошёл
     /// до дна и пора ждать следующего `NOTIFY`.
     /// </summary>

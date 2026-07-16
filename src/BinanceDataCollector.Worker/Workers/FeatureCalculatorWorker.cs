@@ -65,6 +65,7 @@ public class FeatureCalculatorWorker
         _logger.LogInformation("Received {Count} new klines for processing.", newKlinesToProcess.Count);
 
         var klinesBySymbol = newKlinesToProcess.GroupBy(k => k.Symbol);
+        var failedSymbols = new HashSet<string>();
 
         foreach (var group in klinesBySymbol)
         {
@@ -105,15 +106,31 @@ public class FeatureCalculatorWorker
             {
                 _logger.LogError(ex, "[{Symbol}] Error calculating features for symbol.", symbol);
                 // Падение одного символа не роняет пачку: остальные считаются дальше.
+                failedSymbols.Add(symbol);
             }
         }
 
-        // 6. Помечаем нашу порцию работы как полностью выполненную.
+        // 6. Помечаем выполненными только свечи успешно посчитанных символов.
+        // Упавшие остаются 'processing' и вернутся в работу перезахватом по протухшему
+        // ClaimedAt (см. ClaimNewKlinesForProcessingAsync) — с паузой в TTL вместо
+        // горячего повтора той же ошибки. Пометка всей пачки скопом молча хоронила
+        // свечи упавших символов: статус конечный, к расчёту они не возвращались.
+        //
         // Передаём свечи целиком: ключ составной (Symbol, OpenTime), пометка
         // только по времени задела бы свечи других символов за ту же минуту.
-        await _ohlcvRepository.MarkKlinesAsProcessedAsync(newKlinesToProcess);
+        var succeededKlines = newKlinesToProcess.Where(k => !failedSymbols.Contains(k.Symbol)).ToList();
+        await _ohlcvRepository.MarkKlinesAsProcessedAsync(succeededKlines);
 
-        _logger.LogInformation("Successfully processed {Count} klines.", newKlinesToProcess.Count);
+        if (failedSymbols.Count > 0)
+        {
+            _logger.LogWarning(
+                "Processed {Succeeded} klines; {FailedSymbols} symbol(s) failed and will be reclaimed later.",
+                succeededKlines.Count, failedSymbols.Count);
+        }
+        else
+        {
+            _logger.LogInformation("Successfully processed {Count} klines.", succeededKlines.Count);
+        }
 
         return newKlinesToProcess.Count;
     }

@@ -9821,6 +9821,16 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_12_pkey";
 
 
 --
+-- Отметка времени захвата свечи расчётом фич (миграция 011): протухший захват снова
+-- становится кандидатом, свечи убитого воркера и упавших символов возвращаются в работу.
+-- ALTER стоит после всех ATTACH и распространяется на все партиции; NULL — «не захвачена».
+--
+
+ALTER TABLE public."Ohlcv_1min"
+    ADD COLUMN "ClaimedAt" timestamp with time zone;
+
+
+--
 -- PostgreSQL database dump complete
 --
 

@@ -27,9 +27,21 @@ public class OhlcvRepository : IOhlcvRepository
                 -- 1. Находим кандидатов для обработки. Свежие свечи первыми: индикаторы
                 --    на живом графике восстанавливаются сразу, а хвост пересчитанных
                 --    после импорта свечей докатывается следом.
+                --
+                --    Протухший захват ('processing' старше TTL) — снова кандидат: так
+                --    возвращаются в работу свечи воркера, убитого посреди пачки (деплой),
+                --    и свечи символов, на которых расчёт упал, — их не пометили
+                --    'processed', и после паузы в TTL они достаются заново.
+                --
+                --    NULL — захват кода, который ClaimedAt ещё не писал (до миграции 011):
+                --    возраст неизвестен, считаем протухшим, иначе эти свечи не вернутся
+                --    в работу никогда.
                 SELECT ""Symbol"", ""OpenTime""
                 FROM public.""Ohlcv_1min""
                 WHERE ""ProcessingStatus"" = 'new'
+                   OR (""ProcessingStatus"" = 'processing'
+                       AND (""ClaimedAt"" IS NULL
+                            OR ""ClaimedAt"" < now() - interval '15 minutes'))
                 ORDER BY ""OpenTime"" DESC
                 LIMIT @BatchSize
                 -- Блокируем строки, чтобы другой воркер их не тронул
@@ -38,7 +50,8 @@ public class OhlcvRepository : IOhlcvRepository
             updated AS (
                 -- 2. Атомарно обновляем их статус на 'processing'
                 UPDATE public.""Ohlcv_1min""
-                SET ""ProcessingStatus"" = 'processing'
+                SET ""ProcessingStatus"" = 'processing',
+                    ""ClaimedAt"" = now()
                 WHERE (""Symbol"", ""OpenTime"") IN (SELECT ""Symbol"", ""OpenTime"" FROM candidates)
                 -- 3. Возвращаем обновленные строки
                 RETURNING *
