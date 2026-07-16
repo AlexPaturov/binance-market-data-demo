@@ -31,8 +31,15 @@ public interface IOhlcvRepository
     /// <returns>Коллекция исторических свечей.</returns>
     Task<IEnumerable<Ohlcv>> GetWarmupKlinesAsync(string symbol, long beforeTime, int limit);
 
-   
+
     Task<long?> GetLastKlineOpenTimeAsync(string symbol);
+
+    /// <summary>
+    /// Время открытия самой свежей свечи по всем символам. NULL — свечей нет вовсе.
+    /// Разница с текущим временем — лаг конвейера агрегации; по нему импорт архивов
+    /// решает, есть ли у конвейера запас (backpressure).
+    /// </summary>
+    Task<long?> GetNewestCandleOpenTimeAsync();
 
     Task BulkUpsertAsync(IEnumerable<Ohlcv> klines);
 }

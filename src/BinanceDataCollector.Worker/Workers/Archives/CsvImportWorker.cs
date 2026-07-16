@@ -28,18 +28,21 @@ public class CsvImportWorker
     private readonly ITradeRepository _tradeRepo;
     private readonly IArchiveService _archiveService;
     private readonly IStatusNotifier _notifier;
+    private readonly IImportBackpressure _backpressure;
     private const int BatchSize = 10000; // Увеличим пачку для импорта из файла
 
     public CsvImportWorker(
         ILogger<CsvImportWorker> logger,
         ITradeRepository tradeRepo,
         IArchiveService archiveService,
-        IStatusNotifier notifier)
+        IStatusNotifier notifier,
+        IImportBackpressure backpressure)
     {
         _logger = logger;
         _tradeRepo = tradeRepo;
         _archiveService = archiveService;
         _notifier = notifier;
+        _backpressure = backpressure;
     }
 
     /// <summary>
@@ -79,6 +82,10 @@ public class CsvImportWorker
 
                 if (batch.Count >= BatchSize)
                 {
+                    // Импорт работает на остатке ресурса: реалтайм-конвейер делит с ним
+                    // IOPS диска, и когда лаг свечи выходит за порог — пачка ждёт.
+                    await _backpressure.WaitForPipelineHeadroomAsync(cancellationToken.ShutdownToken);
+
                     await _tradeRepo.BulkInsertAsync(batch);
                     totalInserted += batch.Count;
                     _logger.LogDebug("[{Symbol}] Inserted batch of {Count} trades...", symbol, batch.Count);
@@ -89,6 +96,8 @@ public class CsvImportWorker
 
             if (batch.Any())
             {
+                await _backpressure.WaitForPipelineHeadroomAsync(cancellationToken.ShutdownToken);
+
                 await _tradeRepo.BulkInsertAsync(batch);
                 totalInserted += batch.Count;
             }

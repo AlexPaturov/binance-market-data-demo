@@ -102,11 +102,12 @@ BEGIN
     -- array_agg(ORDER BY): цена первой и последней сделки берутся потоковым агрегатом,
     -- без сортировки тиков минуты.
     INSERT INTO public."Ohlcv_1min"
-        ("Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume", "ProcessingStatus")
+        ("Symbol", "OpenTime", "OpenPrice", "HighPrice", "LowPrice", "ClosePrice", "Volume", "CvdDelta", "ProcessingStatus")
     SELECT
         b."Symbol",
         b."OpenTime",
         c."OpenPrice", c."HighPrice", c."LowPrice", c."ClosePrice", c."Volume",
+        c."CvdDelta",
         'new'
     FROM batch b
     CROSS JOIN LATERAL (
@@ -115,7 +116,11 @@ BEGIN
             MAX(t."Price")                                                                          AS "HighPrice",
             MIN(t."Price")                                                                          AS "LowPrice",
             (MAX(ARRAY[t."TradeTime"::numeric, t."TradeId"::numeric, t."Price"]))[3]::numeric(18,8) AS "ClosePrice",
-            SUM(t."Quantity")                                                                       AS "Volume"
+            SUM(t."Quantity")                                                                       AS "Volume",
+            -- Дельта CVD: IsBuyerMaker = false — агрессор покупатель, объём в плюс.
+            -- Тот же проход по тикам даёт и свечу, и дельту — тики для CVD отдельно
+            -- не перечитываются (миграция 012).
+            SUM(CASE WHEN t."IsBuyerMaker" THEN -t."Quantity" ELSE t."Quantity" END)                AS "CvdDelta"
         FROM public."Trades" t
         WHERE t."Symbol" = b."Symbol"
           AND t."TradeTime" >= b."OpenTime"
@@ -130,6 +135,7 @@ BEGIN
         "LowPrice"   = EXCLUDED."LowPrice",
         "ClosePrice" = EXCLUDED."ClosePrice",
         "Volume"     = EXCLUDED."Volume",
+        "CvdDelta"   = EXCLUDED."CvdDelta",
         -- Свеча пересчитана → индикаторы по ней устарели, feature-pipeline возьмёт её заново.
         "ProcessingStatus" = 'new';
 
@@ -9828,6 +9834,16 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_12_pkey";
 
 ALTER TABLE public."Ohlcv_1min"
     ADD COLUMN "ClaimedAt" timestamp with time zone;
+
+
+--
+-- CVD-дельта минуты (миграция 012): считается агрегацией в том же проходе по тикам,
+-- что и свеча. NULL — «дельта не посчитана» (свеча до миграции или из klines API);
+-- читающая сторона в этом случае откатывается на запрос по тикам.
+--
+
+ALTER TABLE public."Ohlcv_1min"
+    ADD COLUMN "CvdDelta" numeric(28,8);
 
 
 --

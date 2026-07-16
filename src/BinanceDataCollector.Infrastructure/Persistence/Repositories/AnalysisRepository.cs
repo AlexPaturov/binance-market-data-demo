@@ -32,37 +32,51 @@ public  class AnalysisRepository : IAnalysisRepository
         var startTimeMs = new DateTimeOffset(startTime.ToUniversalTime()).ToUnixTimeMilliseconds();
         var endTimeMs = new DateTimeOffset(endTime.ToUniversalTime()).ToUnixTimeMilliseconds();
 
-        const string sql = @"
-        WITH VolumeDelta AS (
-            SELECT
-                ""TradeTime"",
-                CASE WHEN ""IsBuyerMaker"" = false THEN ""Quantity"" ELSE -""Quantity"" END as ""Delta""
-            FROM public.""Trades""
-            WHERE ""Symbol"" = @Symbol AND ""TradeTime"" >= @StartTimeMs AND ""TradeTime"" <= @EndTimeMs
-        ),
-        CumulativeDelta AS (
-            SELECT
-                ""TradeTime"",
-                SUM(""Delta"") OVER (ORDER BY ""TradeTime"" ASC) as ""Cvd""
-            FROM VolumeDelta
-        )
-        -- Агрегируем CVD по минутам, беря последнее значение за каждую минуту
-        SELECT
-            ( ""TradeTime"" / 60000 ) * 60000 as ""OpenTime"",
-            (array_agg(""Cvd"" ORDER BY ""TradeTime"" DESC))[1] as ""Cvd""
-        FROM CumulativeDelta
-        GROUP BY 1
-        ORDER BY 1;
-    ";
-
         using var db = Connection;
-        // Таймаут задан явно: умолчание Npgsql — 30 с, и на фоне импорта архивов запрос
-        // в него не укладывался (16.07.2026: 26 отмен за 20 минут). Каждая отмена
-        // прилетала в catch по символу и оставляла его без фич. 600 — потолок, принятый
-        // в проекте для тяжёлых запросов по тикам (см. AggregateDirtyMinutesAsync).
-        return await db.QueryAsync<CvdResult>(sql,
+
+        // CVD считается ТОЛЬКО по свечам: дельту минуты уже посчитала агрегация в том же
+        // проходе по тикам, что и OHLCV (миграция 012). Этот метод тики не читает вовсе.
+        //
+        // История, почему здесь нет чтения тиков даже как запасного пути: скан тиков
+        // на фоне импорта архивов не укладывался ни в 30 с (умолчание Npgsql, 26 отмен
+        // за 20 минут), ни в 600 с — а зависший скан продолжал жевать диск на сервере
+        // и после отвала клиента. 16.07.2026 три таких скана остановили слив очереди
+        // агрегации до нуля. Тиковый путь для CVD запрещён по конструкции.
+        //
+        // NULL в дельте — «не посчитана»: свеча построена до миграции 012 или записана
+        // без тиковых данных (klines API). Одна неизвестная минута делает неверными все
+        // накопленные суммы после себя, поэтому такое окно возвращается пустым — у этих
+        // свечей в этом проходе CVD не будет. Потеря временная: минуты из очереди
+        // переагрегируются, дельта заполняется, свеча снова 'new' — фичи пересчитаются
+        // уже с CVD.
+        const string hasUncomputedSql = @"
+        SELECT EXISTS (
+            SELECT 1 FROM public.""Ohlcv_1min""
+            WHERE ""Symbol"" = @Symbol
+              AND ""OpenTime"" >= @StartTimeMs AND ""OpenTime"" < @EndTimeMs
+              AND ""CvdDelta"" IS NULL);";
+
+        var hasUncomputed = await db.ExecuteScalarAsync<bool>(hasUncomputedSql,
             new { Symbol = symbol, StartTimeMs = startTimeMs, EndTimeMs = endTimeMs },
-            commandTimeout: 600);
+            commandTimeout: 60);
+
+        if (hasUncomputed)
+        {
+            return Enumerable.Empty<CvdResult>();
+        }
+
+        const string candleSql = @"
+        SELECT
+            ""OpenTime"",
+            SUM(""CvdDelta"") OVER (ORDER BY ""OpenTime"") as ""Cvd""
+        FROM public.""Ohlcv_1min""
+        WHERE ""Symbol"" = @Symbol
+          AND ""OpenTime"" >= @StartTimeMs AND ""OpenTime"" < @EndTimeMs
+        ORDER BY ""OpenTime"";";
+
+        return await db.QueryAsync<CvdResult>(candleSql,
+            new { Symbol = symbol, StartTimeMs = startTimeMs, EndTimeMs = endTimeMs },
+            commandTimeout: 60);
     }
 
     public async Task<List<DataGap>> FindGapsInWindowAsync(string symbol, long startTradeId, long endTradeId)

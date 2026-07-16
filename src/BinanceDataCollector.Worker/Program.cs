@@ -126,6 +126,10 @@ public class Program
             builder.Services.AddTransient<FeatureCalculatorWorker>();
             builder.Services.AddTransient<PartitionMaintenanceWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
+
+            // Импорт архивов работает на остатке ресурса: перед каждой пачкой вставки
+            // проверяет лаг свечи и ждёт, если реалтайм-конвейер не успевает.
+            builder.Services.AddSingleton<IImportBackpressure, ImportBackpressure>();
             // builder.Services.AddTransient<ArchiveDownloaderWorker>(); // must be deleted
             builder.Services.AddTransient<IArchiveDownloaderWorker, ArchiveDownloaderWorker>();
             builder.Services.AddTransient<IArchiveUnpackerWorker, ArchiveUnpackerWorker>();
