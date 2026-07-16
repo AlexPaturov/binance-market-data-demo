@@ -123,7 +123,6 @@ public class Program
             builder.Services.AddTransient<FillGapWorker>();
             builder.Services.AddTransient<IArchiveService, ArchiveService>();
             builder.Services.AddTransient<OnlineArchiveImportWorker>();
-            builder.Services.AddTransient<OhlcvAggregatorWorker>();
             builder.Services.AddTransient<FeatureCalculatorWorker>();
             builder.Services.AddTransient<PartitionMaintenanceWorker>();
             builder.Services.AddSingleton<GapProcessingTracker>();
@@ -136,6 +135,13 @@ public class Program
             builder.Services.AddSingleton<IOrderBookFeatureCalculator, OrderBookFeatureCalculator>();
             builder.Services.AddTransient<DataQualityCheckWorker>();
             builder.Services.AddHostedService<HangfireJobsService>();
+
+            // Конвейер обработки: постоянные потребители событий Postgres. Ждут NOTIFY
+            // (миграция 010) и разбирают очередь кусками — каждый кусок отдельной
+            // транзакцией. Пришли на смену расписанию `Cron.Minutely()`, у которого пачка
+            // целиком не укладывалась в командный таймаут и откатывалась (13–14.07.2026).
+            builder.Services.AddHostedService<OhlcvAggregationService>();
+            builder.Services.AddHostedService<FeatureCalculationService>();
 
             // Realtime-сбор: подписка на WebSocket по активным парам. Это основной источник
             // данных. Импорт архивов — бутстрап истории и восстановление после долгого

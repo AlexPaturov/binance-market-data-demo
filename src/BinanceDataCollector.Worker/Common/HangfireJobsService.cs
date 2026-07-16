@@ -8,15 +8,14 @@ namespace BinanceDataCollector.Worker.Common;
 /// <summary>
 /// Регистрирует периодические задачи.
 ///
-/// Рабочий режим: данные идут с WebSocket (`BinanceCollectorWorker`), агрегируются в свечи,
-/// по свечам считаются индикаторы, аудиторы закрывают дыры от обрывов связи, ротация
-/// следит за размером диска. Импорт архивов — бутстрап истории и восстановление после
-/// долгого простоя, запускается вручную со страницы Archive.
+/// Рабочий режим: данные идут с WebSocket (`BinanceCollectorWorker`), аудиторы закрывают
+/// дыры от обрывов связи, ротация следит за размером диска. Импорт архивов — бутстрап
+/// истории и восстановление после долгого простоя, запускается вручную со страницы Archive.
 ///
-/// Агрегатор безопасно работает параллельно с любой докачкой: он идёт от статуса тиков,
-/// а не от watermark'а по времени, поэтому данные, приехавшие «позади», не теряются
-/// (см. docs/adr/0004-watermarking-idempotency.md). Раньше это было не так, и на время
-/// загрузки его приходилось выключать.
+/// Здесь только та работа, у которой поводом служит само время: обход рынка раз в сутки,
+/// проверка на дыры, ротация партиций. Обработка данных поводом ко времени не привязана —
+/// свечи и индикаторы считают постоянные потребители событий (`OhlcvAggregationService`,
+/// `FeatureCalculationService`), которых будит появление работы, а не тик расписания.
 /// </summary>
 public class HangfireJobsService : IHostedService
 {
@@ -44,27 +43,18 @@ public class HangfireJobsService : IHostedService
 
         _recurringJobManager.RemoveIfExists("update-symbols-history");
 
+        // Агрегация свечей и расчёт индикаторов больше не расписание, а постоянные
+        // потребители событий Postgres (`OhlcvAggregationService`, `FeatureCalculationService`,
+        // миграция 010). Снимаем расписания, оставшиеся на проде от таймерной модели:
+        // без этого обе модели работали бы одновременно.
+        _recurringJobManager.RemoveIfExists("ohlcv-aggregator");
+        _recurringJobManager.RemoveIfExists("feature-calculator");
+
         // Список отслеживаемых пар — раз в день.
         _recurringJobManager.AddOrUpdate<SymbolUpdateWorker>(
             "update-symbols",
             worker => worker.ScanMarketAndUpdateSymbolsAsync(),
             Cron.Daily(),
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        );
-
-        // Тики → минутные свечи.
-        _recurringJobManager.AddOrUpdate<OhlcvAggregatorWorker>(
-            "ohlcv-aggregator",
-            worker => worker.AggregateNextBatchAsync(),
-            Cron.Minutely(),
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        );
-
-        // Свечи → индикаторы.
-        _recurringJobManager.AddOrUpdate<FeatureCalculatorWorker>(
-            "feature-calculator",
-            worker => worker.CalculateFeaturesAsync(),
-            "*/2 * * * *",
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
         );
 

@@ -22,7 +22,7 @@ public class FeatureCalculatorWorkerTests
         _analysisRepo.Object);
 
     [Fact]
-    public async Task DoWorkAsync_WhenNewKlinesExist_UpsertsCalculatedFeaturesAndMarksProcessed()
+    public async Task ProcessNextBatchAsync_WhenNewKlinesExist_UpsertsCalculatedFeaturesAndMarksProcessed()
     {
         const string symbol = "BTCUSDT";
         const long openTime = 1_700_000_000_000;
@@ -39,7 +39,9 @@ public class FeatureCalculatorWorkerTests
         _analysisRepo.Setup(r => r.GetCvdForOhlcvAsync(symbol, It.IsAny<DateTime>(), It.IsAny<DateTime>()))
             .ReturnsAsync(new List<CvdResult>());
 
-        await CreateWorker().DoWorkAsync(CancellationToken.None);
+        var processed = await CreateWorker().ProcessNextBatchAsync(CancellationToken.None);
+
+        Assert.Equal(1, processed);
 
         _featureRepo.Verify(r => r.UpsertFeaturesAsync(
             It.Is<IEnumerable<FeatureData>>(features => features.Single().OpenTime == openTime)), Times.Once);
@@ -50,13 +52,19 @@ public class FeatureCalculatorWorkerTests
                 klines.Single().OpenTime == openTime && klines.Single().Symbol == symbol)), Times.Once);
     }
 
+    /// <summary>
+    /// Ноль — признак пустой очереди: по нему потребитель события понимает, что дошёл
+    /// до дна и пора ждать следующего `NOTIFY`.
+    /// </summary>
     [Fact]
-    public async Task DoWorkAsync_WhenNoNewKlines_DoesNotCalculateOrMark()
+    public async Task ProcessNextBatchAsync_WhenNoNewKlines_ReturnsZeroAndDoesNotCalculateOrMark()
     {
         _ohlcvRepo.Setup(r => r.ClaimNewKlinesForProcessingAsync(It.IsAny<int>()))
             .ReturnsAsync(new List<Ohlcv>());
 
-        await CreateWorker().DoWorkAsync(CancellationToken.None);
+        var processed = await CreateWorker().ProcessNextBatchAsync(CancellationToken.None);
+
+        Assert.Equal(0, processed);
 
         _indicatorService.Verify(
             s => s.CalculateAll(It.IsAny<string>(), It.IsAny<IEnumerable<Ohlcv>>()), Times.Never);

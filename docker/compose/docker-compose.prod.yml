@@ -178,6 +178,10 @@ services:
       - ASPNETCORE_URLS=http://0.0.0.0:8080
       - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      # Слушатели NOTIFY идут в базу напрямую: PgBouncer в режиме transaction возвращает
+      # серверное соединение в пул после каждой транзакции, и регистрация LISTEN до него
+      # не доживает. Два долгоживущих соединения; вся остальная работа — через пул.
+      - ConnectionStrings__DirectConnection=Host=bdc_db;Port=5432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=${RABBITMQ_HOST}
       - RabbitMQ__Port=${RABBITMQ_PORT}
       - RabbitMQ__UserName=${RABBITMQ_USER}

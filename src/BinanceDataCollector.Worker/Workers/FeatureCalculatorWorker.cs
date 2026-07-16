@@ -1,14 +1,15 @@
-﻿using BinanceDataCollector.Application.Interfaces;
-using BinanceDataCollector.Worker.Common;
-using Hangfire;
+using BinanceDataCollector.Application.Interfaces;
 
 namespace BinanceDataCollector.Worker.Workers;
 
 /// <summary>
-/// Фоновый сервис, который отвечает за расчет всех технических индикаторов (признаков)
-/// и сохранение их в "витрину данных" Ohlcv_Features.
-/// Работает по инкрементальному принципу ("статусы + вотермарки").
-/// Двигается по свечам
+/// Считает технические индикаторы (признаки) по свечам и складывает их в витрину
+/// `Ohlcv_Features`. Работает инкрементально: берёт свечи со статусом 'new', считает,
+/// помечает 'processed'.
+///
+/// Работу находит статус свечи, а не время: пересчитанная свеча снова становится 'new'
+/// (см. `sp_aggregate_dirty_minutes`), и индикаторы по ней пересчитываются заново.
+/// Порядок вызовов задаёт <see cref="FeatureCalculationService"/>.
 /// </summary>
 public class FeatureCalculatorWorker
 {
@@ -34,10 +35,10 @@ public class FeatureCalculatorWorker
     private const int WarmupPeriod = 400;
 
     public FeatureCalculatorWorker(
-        ILogger<FeatureCalculatorWorker> logger, 
+        ILogger<FeatureCalculatorWorker> logger,
         IOhlcvRepository ohlcvRepository,
-        IFeatureRepository  featureRepository, 
-        IIndicatorService  indicatorService, 
+        IFeatureRepository  featureRepository,
+        IIndicatorService  indicatorService,
         IAnalysisRepository  analysisRepository)
     {
         _logger = logger;
@@ -47,100 +48,21 @@ public class FeatureCalculatorWorker
         _analysisRepository = analysisRepository;
     }
 
-    // Очередь приоритетного сервера: индикаторы идут следом за свечами и должны поспевать
-    // за ними. В `default` расчёт делил воркеров с импортом архивов и голодал вместе с
-    // агрегатором.
-    [Queue("realtime")]
-    [SkipWhenPreviousJobIsRunning]
-    [DisableConcurrentExecution(30 * 60)] // Даем 20 минут на расчет
-    public async Task CalculateFeaturesAsync()
+    /// <summary>
+    /// Обрабатывает одну пачку свечей. Возвращает сколько свечей взято в работу;
+    /// 0 — новых свечей нет.
+    /// </summary>
+    public async Task<int> ProcessNextBatchAsync(CancellationToken stoppingToken)
     {
-        using (_logger.TimedOperation("Scheduled feature calculation"))
-        {
-            try
-            {
-                // 1. "Резервируем" и получаем новую порцию работы (свечи со статусом 'new')
-                var newKlinesToProcess = (await _ohlcvRepository.ClaimNewKlinesForProcessingAsync(BatchSize)).ToList();
-
-                if (!newKlinesToProcess.Any())
-                {
-                    _logger.LogInformation("No new klines for feature calculation. Cycle skipped.");
-                    return;
-                }
-
-                _logger.LogInformation("Received {Count} new klines for processing.", newKlinesToProcess.Count);
-
-                var klinesBySymbol = newKlinesToProcess.GroupBy(k => k.Symbol);
-
-                foreach (var group in klinesBySymbol)
-                {
-                    var symbol = group.Key;
-                    var newKlinesForSymbol = group.ToList();
-
-                    try
-                    {
-                        // 2. Подгружаем "хвост" истории для "прогрева" индикаторов
-                        var firstNewTime = newKlinesForSymbol.Min(k => k.OpenTime);
-                        var historyKlines = await _ohlcvRepository.GetWarmupKlinesAsync(symbol, firstNewTime, WarmupPeriod);
-                        var allKlines = historyKlines.Concat(newKlinesForSymbol).OrderBy(k => k.OpenTime);
-
-                        // 3. Рассчитываем индикаторы на основе свечей
-                        var features = _indicatorService.CalculateAll(symbol, allKlines).ToList();
-
-                        // 4. Обогащаем данные индикатором CVD, который считается по тикам
-                        var cvdStartTime = DateTimeOffset.FromUnixTimeMilliseconds(firstNewTime).DateTime;
-                        var cvdEndTime = DateTimeOffset.FromUnixTimeMilliseconds(newKlinesForSymbol.Max(k => k.OpenTime)).DateTime.AddMinutes(1);
-                        var cvdByTime = (await _analysisRepository.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime))
-                            .ToDictionary(c => c.OpenTime, c => c.Cvd);
-
-                        foreach (var feature in features)
-                        {
-                            if (cvdByTime.TryGetValue(feature.OpenTime, out var cvd)) feature.Cvd = cvd;
-                        }
-
-                        // 5. Сохраняем только НОВЫЕ признаки (отсекаем "прогрев")
-                        var featuresToSave = features.Where(f => f.OpenTime >= firstNewTime).ToList();
-                        if (featuresToSave.Any())
-                        {
-                            await _featureRepository.UpsertFeaturesAsync(featuresToSave);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "[{Symbol}] Error calculating features for symbol.", symbol);
-                        // В этой архитектуре мы не откатываем статус, а просто пробуем снова в след. цикле
-                    }
-                }
-
-                // 6. Помечаем нашу порцию работы как полностью выполненную.
-                // Передаём свечи целиком: ключ составной (Symbol, OpenTime), пометка
-                // только по времени задела бы свечи других символов за ту же минуту.
-                await _ohlcvRepository.MarkKlinesAsProcessedAsync(newKlinesToProcess);
-
-                _logger.LogInformation("Successfully processed {Count} klines.", newKlinesToProcess.Count);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error in FeatureCalculatorWorker main loop.");
-            }
-
-        }
-    }
-
-    public async Task DoWorkAsync(CancellationToken stoppingToken)
-    {
-        _logger.LogInformation("--- Starting scheduled feature calculation ---");
-
         // 1. "Резервируем" и получаем новую порцию работы (свечи со статусом 'new')
         var newKlinesToProcess = (await _ohlcvRepository.ClaimNewKlinesForProcessingAsync(BatchSize)).ToList();
 
-        if (!newKlinesToProcess.Any())
+        if (newKlinesToProcess.Count == 0)
         {
-            _logger.LogInformation("Нет новых свечей для расчета признаков. Цикл пропущен.");
-            return;
+            return 0;
         }
 
-        _logger.LogInformation("Получено {Count} новых свечей для обработки.", newKlinesToProcess.Count);
+        _logger.LogInformation("Received {Count} new klines for processing.", newKlinesToProcess.Count);
 
         var klinesBySymbol = newKlinesToProcess.GroupBy(k => k.Symbol);
 
@@ -164,12 +86,12 @@ public class FeatureCalculatorWorker
                 // 4. Обогащаем данные индикатором CVD, который считается по тикам
                 var cvdStartTime = DateTimeOffset.FromUnixTimeMilliseconds(firstNewTime).DateTime;
                 var cvdEndTime = DateTimeOffset.FromUnixTimeMilliseconds(newKlinesForSymbol.Max(k => k.OpenTime)).DateTime.AddMinutes(1);
-                var cvdData = (await _analysisRepository.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime)).ToList();
+                var cvdByTime = (await _analysisRepository.GetCvdForOhlcvAsync(symbol, cvdStartTime, cvdEndTime))
+                    .ToDictionary(c => c.OpenTime, c => c.Cvd);
 
                 foreach (var feature in features)
                 {
-                    var cvdPoint = cvdData.FirstOrDefault(c => c.OpenTime == feature.OpenTime);
-                    if (cvdPoint != null) feature.Cvd = cvdPoint.Cvd;
+                    if (cvdByTime.TryGetValue(feature.OpenTime, out var cvd)) feature.Cvd = cvd;
                 }
 
                 // 5. Сохраняем только НОВЫЕ признаки (отсекаем "прогрев")
@@ -181,14 +103,18 @@ public class FeatureCalculatorWorker
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[{Symbol}] Ошибка при расчете признаков для символа.", symbol);
-                // В этой архитектуре мы не откатываем статус, а просто пробуем снова в след. цикле
+                _logger.LogError(ex, "[{Symbol}] Error calculating features for symbol.", symbol);
+                // Падение одного символа не роняет пачку: остальные считаются дальше.
             }
         }
 
-        // 6. Помечаем нашу порцию работы как полностью выполненную (по паре Symbol+OpenTime).
+        // 6. Помечаем нашу порцию работы как полностью выполненную.
+        // Передаём свечи целиком: ключ составной (Symbol, OpenTime), пометка
+        // только по времени задела бы свечи других символов за ту же минуту.
         await _ohlcvRepository.MarkKlinesAsProcessedAsync(newKlinesToProcess);
 
-        _logger.LogInformation("Успешно обработано {Count} свечей.", newKlinesToProcess.Count);
+        _logger.LogInformation("Successfully processed {Count} klines.", newKlinesToProcess.Count);
+
+        return newKlinesToProcess.Count;
     }
 }

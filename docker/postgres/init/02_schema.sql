@@ -62,10 +62,15 @@ $$;
 -- Name: sp_aggregate_dirty_minutes(integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
+-- ВОЗВРАТ: сколько минут снято с очереди, а не сколько построено свечей. Потребитель пьёт
+-- очередь до дна и по возврату решает, осталась ли работа. Минута без тиков (их удалила
+-- ротация партиций) свечи не даёт, но с очереди уходит — по числу свечей такой кусок
+-- выглядел бы как пустая очередь, и разбор останавливался бы на нём, не дойдя до дна.
 CREATE FUNCTION public.sp_aggregate_dirty_minutes(p_max_minutes integer DEFAULT 10000) RETURNS integer
     LANGUAGE plpgsql
     AS $$
 DECLARE
+    v_minutes INT := 0;
     v_candles INT := 0;
     v_max_time BIGINT;
     m BIGINT;
@@ -135,6 +140,8 @@ BEGIN
     WHERE d."Symbol" = b."Symbol"
       AND d."OpenTime" = b."OpenTime";
 
+    GET DIAGNOSTICS v_minutes = ROW_COUNT;
+
     SELECT MAX("OpenTime") INTO v_max_time FROM batch;
 
     -- Watermark — индикатор прогресса. Корректность на нём не держится: работу находит очередь.
@@ -147,7 +154,12 @@ BEGIN
         "Status"         = 'Pending',
         "LastUpdate_UTC" = NOW();
 
-    RETURN v_candles;
+    -- Свечи пересчитаны → индикаторы по ним устарели: будим расчёт фич (канал `candles_new`).
+    IF v_candles > 0 THEN
+        PERFORM pg_notify('candles_new', '');
+    END IF;
+
+    RETURN v_minutes;
 END;
 $$;
 
@@ -159,6 +171,8 @@ $$;
 CREATE FUNCTION public.sp_bulk_insert_trades(p_trade_ids bigint[], p_symbols character varying[], p_prices numeric[], p_quantities numeric[], p_quote_quantities numeric[], p_trade_times bigint[], p_is_buyer_makers boolean[], p_is_best_matches boolean[]) RETURNS void
     LANGUAGE plpgsql
     AS $$
+DECLARE
+    v_dirty INT := 0;
 BEGIN
     -- Грязными помечаем минуты только тех тиков, что действительно вставились (RETURNING).
     -- Повторный импорт того же архива упирается в ON CONFLICT DO NOTHING и очередь не пачкает:
@@ -174,11 +188,21 @@ BEGIN
         )
         ON CONFLICT ("TradeId", "Symbol", "TradeTime") DO NOTHING
         RETURNING "Symbol", "TradeTime"
+    ),
+    dirty AS (
+        INSERT INTO public."DirtyMinutes" ("Symbol", "OpenTime")
+        SELECT DISTINCT "Symbol", ("TradeTime" / 60000) * 60000
+        FROM inserted
+        ON CONFLICT DO NOTHING
+        RETURNING 1
     )
-    INSERT INTO public."DirtyMinutes" ("Symbol", "OpenTime")
-    SELECT DISTINCT "Symbol", ("TradeTime" / 60000) * 60000
-    FROM inserted
-    ON CONFLICT DO NOTHING;
+    SELECT count(*) INTO v_dirty FROM dirty;
+
+    -- Появились новые грязные минуты — будим агрегатор (канал `dirty_minutes`).
+    -- Уведомление доставляется при COMMIT, поэтому раньше самих данных не придёт.
+    IF v_dirty > 0 THEN
+        PERFORM pg_notify('dirty_minutes', '');
+    END IF;
 END;
 $$;
 
