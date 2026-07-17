@@ -1,0 +1,54 @@
+# Алерты задаются файлом, а не кликами — чтобы воспроизводились из репозитория.
+#
+# Одно правило: лаг свечи. Это сквозной индикатор здоровья конвейера — он растёт при
+# любом отказе на пути тик → свеча (умер слушатель событий, встала БД, диск деградировал).
+# Глубина очереди в алерт не годится: во время импорта архивов она растёт по построению,
+# а реалтайм при этом здоров (backpressure держит лаг, разбор идёт от свежих минут).
+#
+# Порог 600 с при здоровых 60–130 с: под импортом лаг кратковременно доходит до ~400 с
+# (потолок backpressure + время догона), устойчивые 10 минут — уже не нагрузка, а отказ.
+# for: 5m отсекает одиночные выбросы.
+#
+# Нет данных или ошибка запроса приравнены к аварии: молчащий экспортёр или лежащая
+# база — это тоже «свечи не считаются», тишина не означает здоровье.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: bdc-pipeline
+    folder: BinanceDataCollector
+    interval: 1m
+    rules:
+      - uid: bdc-candle-lag-high
+        title: Лаг свечи выше 10 минут
+        condition: C
+        for: 5m
+        noDataState: Alerting
+        execErrState: Alerting
+        isPaused: false
+        annotations:
+          summary: >-
+            Свежайшая свеча отстаёт от текущего времени дольше 10 минут подряд:
+            конвейер тик → свеча не успевает или стоит. Смотреть: слушатели NOTIFY
+            в pg_stat_activity, слив очереди на дашборде bdc-pipeline, логи воркера.
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: bdc_candle_lag_seconds
+              instant: true
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [600]
