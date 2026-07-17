@@ -4,7 +4,7 @@
   "tags": ["bdc"],
   "timezone": "utc",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": { "from": "now-3h", "to": "now" },
   "templating": { "list": [] },
@@ -31,11 +31,11 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Доля успешных проходов (15 мин)",
+      "title": "Слив очереди (минут/мин, окно 5м)",
       "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 0.5 }, { "color": "green", "value": 0.9 } ] }, "unit": "percentunit" } },
-      "targets": [ { "refId": "A", "expr": "bdc_aggregation_succeeded_15m / clamp_min(bdc_aggregation_succeeded_15m + bdc_aggregation_failed_15m, 1)", "datasource": { "type": "prometheus", "uid": "prometheus" } } ]
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "blue", "value": null } ] }, "unit": "short" } },
+      "targets": [ { "refId": "A", "expr": "rate(bdc_pipeline_minutes_out_total[5m]) * 60", "datasource": { "type": "prometheus", "uid": "prometheus" } } ]
     },
     {
       "id": 4,
@@ -73,25 +73,36 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Агрегация: успех / провал за 15 мин",
+      "title": "Очередь: приток и слив (минут/мин)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
       "targets": [
-        { "refId": "A", "expr": "bdc_aggregation_succeeded_15m", "legendFormat": "успех", "datasource": { "type": "prometheus", "uid": "prometheus" } },
-        { "refId": "B", "expr": "bdc_aggregation_failed_15m", "legendFormat": "провал", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+        { "refId": "A", "expr": "rate(bdc_pipeline_minutes_in_total[5m]) * 60", "legendFormat": "приток (вставка тиков)", "datasource": { "type": "prometheus", "uid": "prometheus" } },
+        { "refId": "B", "expr": "rate(bdc_pipeline_minutes_out_total[5m]) * 60", "legendFormat": "слив (агрегация)", "datasource": { "type": "prometheus", "uid": "prometheus" } }
       ]
     },
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Длительность прохода агрегации (сек) — линия 600 = стена таймаута",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "title": "Темп записи: свечи и фичи (строк/мин)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 5, "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 600 } ] } } },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
       "targets": [
-        { "refId": "A", "expr": "bdc_aggregation_avg_duration_seconds", "legendFormat": "средняя", "datasource": { "type": "prometheus", "uid": "prometheus" } },
-        { "refId": "B", "expr": "bdc_aggregation_max_duration_seconds", "legendFormat": "максимум", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+        { "refId": "A", "expr": "rate(bdc_pipeline_candles_written_total[5m]) * 60", "legendFormat": "свечи", "datasource": { "type": "prometheus", "uid": "prometheus" } },
+        { "refId": "B", "expr": "rate(bdc_pipeline_features_written_total[5m]) * 60", "legendFormat": "фичи", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Очереди Hangfire (импорт и аудиты)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } } },
+      "targets": [
+        { "refId": "A", "expr": "bdc_hangfire_queue_depth", "legendFormat": "{{queue}}", "datasource": { "type": "prometheus", "uid": "prometheus" } }
       ]
     }
   ]
