@@ -90,6 +90,15 @@ public class HangfireJobsService : IHostedService
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
         );
 
+        // Закрытые месяцы тиков — с горячего диска на холодный. Раз в час, а не в сутки:
+        // при импорте архивов горячий диск набивается за часы.
+        _recurringJobManager.AddOrUpdate<PartitionMaintenanceWorker>(
+            "partition-evacuation",
+            worker => worker.EvacuateNextColdPartitionAsync(),
+            Cron.Hourly(),
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
+        );
+
         // Проверки качества данных — только вручную, кнопкой на странице /DataQuality.
         _recurringJobManager.RemoveIfExists("data-quality-check");
 

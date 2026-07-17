@@ -6,8 +6,8 @@ using Microsoft.Extensions.Options;
 namespace BinanceDataCollector.Worker.Workers;
 
 /// <summary>
-/// Обслуживание партиций, ежедневно: ротация по размеру диска и эвакуация закрытых
-/// месяцев на холодное пространство.
+/// Обслуживание партиций: ротация по размеру диска (раз в сутки) и эвакуация закрытых
+/// месяцев на холодный диск (раз в час) — разные задачи с разным ритмом.
 ///
 /// Ротация: создаёт партиции на текущий и следующий месяц, затем — пока суммарный
 /// размер партиционированных данных выше порога — дропает самый старый месяц во всех
@@ -66,27 +66,35 @@ public class PartitionMaintenanceWorker
             _logger.LogInformation(
                 "Partition rotation complete, nothing dropped. Size: {SizeGb:F1} GB.", Gb(after));
         }
-
-        await EvacuateColdPartitionsAsync();
     }
 
     /// <summary>
-    /// Переносит закрытые месяцы Trades на холодное пространство, по одной партиции
-    /// за вызов. Предохранитель от бесконечного цикла — на случай, если функция
-    /// когда-нибудь начнёт возвращать одно и то же имя.
+    /// Переносит на холодный диск одну партицию — старейший закрытый месяц тиков.
+    ///
+    /// Ритм — час, а не сутки: при импорте архивов горячий диск набивается за часы,
+    /// и суточной уборки не хватает (17.07.2026 — SSD ушёл на 78% за одну ночь импорта).
+    ///
+    /// Одна партиция за запуск, а не сколько получится: месяц весит 50–150 ГБ и едет
+    /// на HDD десятки минут. Переезд по одной удерживает запуск заметно короче часа,
+    /// поэтому следующий не встаёт в очередь за блокировкой, а остаток разбирается
+    /// на следующих часах — торопиться некуда, каждый переезд освобождает свои
+    /// сто гигабайт сразу.
     /// </summary>
-    private async Task EvacuateColdPartitionsAsync()
+    [Queue("default")]
+    [DisableConcurrentExecution(timeoutInSeconds: 30 * 60)]
+    [AutomaticRetry(Attempts = 0)]
+    public async Task EvacuateNextColdPartitionAsync()
     {
-        const int maxMovesPerRun = 12;
+        var partition = await _tradeRepository.EvacuateNextColdPartitionAsync();
 
-        for (var moved = 0; moved < maxMovesPerRun; moved++)
+        if (partition is null)
         {
-            var partition = await _tradeRepository.EvacuateNextColdPartitionAsync();
-            if (partition is null) return;
-
-            // Переезд гигабайтов — событие, которое должно быть видно в логах без раскопок.
-            _logger.LogWarning("Partition {Partition} evacuated to the cold tablespace.", partition);
+            _logger.LogInformation("Nothing to evacuate: no closed month left on the hot disk.");
+            return;
         }
+
+        // Переезд гигабайтов — событие, которое должно быть видно в логах без раскопок.
+        _logger.LogWarning("Partition {Partition} evacuated to the cold tablespace.", partition);
     }
 
     private static double Gb(long bytes) => bytes / (1024.0 * 1024 * 1024);
