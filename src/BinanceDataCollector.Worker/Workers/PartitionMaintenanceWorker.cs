@@ -38,7 +38,7 @@ public class PartitionMaintenanceWorker
         _logger = logger;
     }
 
-    [Queue("default")]
+    [Queue("maintenance")]
     [DisableConcurrentExecution(timeoutInSeconds: 60 * 60)]
     public async Task RotatePartitionsAsync()
     {
@@ -80,7 +80,7 @@ public class PartitionMaintenanceWorker
     /// на следующих часах — торопиться некуда, каждый переезд освобождает свои
     /// сто гигабайт сразу.
     /// </summary>
-    [Queue("default")]
+    [Queue("maintenance")]
     [DisableConcurrentExecution(timeoutInSeconds: 30 * 60)]
     [AutomaticRetry(Attempts = 0)]
     public async Task EvacuateNextColdPartitionAsync()

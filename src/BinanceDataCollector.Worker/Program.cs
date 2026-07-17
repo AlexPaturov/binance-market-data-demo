@@ -191,7 +191,12 @@ public class Program
             builder.Services.AddHangfireServer(options =>
             {
                 options.ServerName = "PriorityServer";
-                options.Queues = new[] { "realtime", "quick_audit" }; // Слушает ТОЛЬКО эти очереди
+                // `maintenance` — здесь, а не на фоновом сервере: на фоновом обслуживание
+                // делит воркеров с импортом архивов и не начинается вовсе, пока тот идёт
+                // (17.07.2026: эвакуация партиции висела в `default` за 263 распаковками,
+                // хотя диск был на 78%). Приоритет внутри сервера — по порядку очередей,
+                // так что обслуживание берётся последним и живой работе не мешает.
+                options.Queues = new[] { "realtime", "quick_audit", "maintenance" };
                 options.WorkerCount =
                     (Debugger.IsAttached || builder.Environment.IsDevelopment())
                         ? Math.Max(4, Environment.ProcessorCount) // на деве 8 ядер у маширы
