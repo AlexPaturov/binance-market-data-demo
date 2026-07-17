@@ -79,7 +79,14 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=market_analytics
     volumes:
-      - /mnt/ext/postgres_data:/var/lib/postgresql/data
+      # Горячие данные (каталоги, WAL, активные партиции) — на внутреннем SSD:
+      # случайный доступ, которым живёт конвейер, требует IOPS, а не мегабайт в секунду.
+      - /opt/BinanceCollector/pgdata:/var/lib/postgresql/data
+      # Холодное табличное пространство — на внешнем HDD: закрытые месяцы Trades
+      # переезжают сюда одним последовательным копированием (эвакуация в
+      # PartitionMaintenanceWorker). Отключён диск — свежие данные работают,
+      # запросы за старые периоды падают с ошибкой undefined_file.
+      - /mnt/ext/pg_tablespaces:/mnt/pg_tablespaces
     command:
       - "postgres"
       - "-c"

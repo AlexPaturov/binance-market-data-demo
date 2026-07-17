@@ -9839,11 +9839,97 @@ ALTER TABLE public."Ohlcv_1min"
 --
 -- CVD-дельта минуты (миграция 012): считается агрегацией в том же проходе по тикам,
 -- что и свеча. NULL — «дельта не посчитана» (свеча до миграции или из klines API);
--- читающая сторона в этом случае откатывается на запрос по тикам.
+-- окно с такой свечой возвращает пустой CVD, тики не читаются.
 --
 
 ALTER TABLE public."Ohlcv_1min"
     ADD COLUMN "CvdDelta" numeric(28,8);
+
+
+--
+-- Эвакуация закрытых месяцев Trades на холодное пространство `cold` (миграция 013).
+-- Горячие партиции живут на SSD (IOPS), закрытые месяцы тиков переезжают на HDD
+-- одним последовательным копированием. Без пространства `cold` функция бездействует.
+--
+
+CREATE FUNCTION public.sp_evacuate_next_cold_partition()
+RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_suffix TEXT;
+    v_part TEXT;
+    v_month TIMESTAMP;
+    v_start_ms BIGINT;
+    v_end_ms BIGINT;
+    v_has_data BOOLEAN;
+    v_index RECORD;
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_tablespace WHERE spcname = 'cold') THEN
+        RETURN NULL;
+    END IF;
+
+    SET LOCAL lock_timeout = '60s';
+
+    -- Кандидаты — партиции Trades в горячем (базовом) пространстве за прошедшие
+    -- месяцы, от старых к новым. reltablespace = 0 — базовое пространство БД (SSD).
+    -- Перебор, а не первый кандидат: незакрытый месяц (докачивается) не должен
+    -- запирать на SSD более поздние, уже закрытые.
+    FOR v_suffix IN
+        SELECT substring(c.relname FROM 'Trades_(\d{4}_\d{2})')
+        FROM pg_inherits i
+        JOIN pg_class c ON c.oid = i.inhrelid
+        WHERE i.inhparent = 'public."Trades"'::regclass
+          AND c.reltablespace = 0
+          AND TO_DATE(substring(c.relname FROM 'Trades_(\d{4}_\d{2})'), 'YYYY_MM')
+              < DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')
+        ORDER BY substring(c.relname FROM 'Trades_(\d{4}_\d{2})')
+    LOOP
+        v_part := 'Trades_' || v_suffix;
+        v_month := TO_DATE(v_suffix, 'YYYY_MM');
+        v_start_ms := EXTRACT(EPOCH FROM v_month)::BIGINT * 1000;
+        v_end_ms := EXTRACT(EPOCH FROM v_month + INTERVAL '1 month')::BIGINT * 1000;
+
+        -- Пустую партицию возить незачем: партиции создаются впрок на месяцы вперёд.
+        EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I)', v_part) INTO v_has_data;
+        IF NOT v_has_data THEN
+            CONTINUE;
+        END IF;
+
+        -- Месяц ещё не закрыт: агрегация будет читать его тики — не трогаем.
+        IF EXISTS (
+            SELECT 1 FROM public."DirtyMinutes"
+            WHERE "OpenTime" >= v_start_ms AND "OpenTime" < v_end_ms)
+        THEN
+            CONTINUE;
+        END IF;
+
+        -- Фичи месяца не досчитаны: свечи месяца ещё могут пересчитаться и снова
+        -- запачкать минуты — подождём.
+        IF EXISTS (
+            SELECT 1 FROM public."Ohlcv_1min"
+            WHERE "OpenTime" >= v_start_ms AND "OpenTime" < v_end_ms
+              AND "ProcessingStatus" <> 'processed')
+        THEN
+            CONTINUE;
+        END IF;
+
+        EXECUTE format('ALTER TABLE public.%I SET TABLESPACE cold', v_part);
+
+        -- SET TABLESPACE у таблицы НЕ переносит её индексы — каждый переезжает отдельно.
+        FOR v_index IN
+            SELECT indexname FROM pg_indexes
+            WHERE schemaname = 'public' AND tablename = v_part
+        LOOP
+            EXECUTE format('ALTER INDEX public.%I SET TABLESPACE cold', v_index.indexname);
+        END LOOP;
+
+        RETURN v_part;
+    END LOOP;
+
+    RETURN NULL;
+END;
+$$;
 
 
 --

@@ -6,15 +6,21 @@ using Microsoft.Extensions.Options;
 namespace BinanceDataCollector.Worker.Workers;
 
 /// <summary>
-/// Ротация партиций по размеру диска, ежедневно.
+/// Обслуживание партиций, ежедневно: ротация по размеру диска и эвакуация закрытых
+/// месяцев на холодное пространство.
 ///
-/// Создаёт партиции на текущий и следующий месяц, затем — пока суммарный размер
-/// партиционированных данных выше порога — дропает самый старый месяц во всех
+/// Ротация: создаёт партиции на текущий и следующий месяц, затем — пока суммарный
+/// размер партиционированных данных выше порога — дропает самый старый месяц во всех
 /// таблицах сразу (тики, свечи, индикаторы, отчёты о качестве).
 ///
 /// Окно задаётся размером, а не календарём: реальные месячные партиции различаются
 /// в 4.6 раза (32–148 ГБ), поэтому «держим N месяцев» непредсказуемо в байтах.
 /// См. docs/adr/0007-size-based-retention-and-unified-partitioning.md
+///
+/// Эвакуация: закрытые месяцы Trades переезжают с горячего SSD на холодный HDD
+/// (`sp_evacuate_next_cold_partition`, миграция 013) — SSD держит только активные
+/// месяцы, шпиндель получает единственную нагрузку, в которой он хорош:
+/// последовательную запись.
 /// </summary>
 public class PartitionMaintenanceWorker
 {
@@ -59,6 +65,27 @@ public class PartitionMaintenanceWorker
         {
             _logger.LogInformation(
                 "Partition rotation complete, nothing dropped. Size: {SizeGb:F1} GB.", Gb(after));
+        }
+
+        await EvacuateColdPartitionsAsync();
+    }
+
+    /// <summary>
+    /// Переносит закрытые месяцы Trades на холодное пространство, по одной партиции
+    /// за вызов. Предохранитель от бесконечного цикла — на случай, если функция
+    /// когда-нибудь начнёт возвращать одно и то же имя.
+    /// </summary>
+    private async Task EvacuateColdPartitionsAsync()
+    {
+        const int maxMovesPerRun = 12;
+
+        for (var moved = 0; moved < maxMovesPerRun; moved++)
+        {
+            var partition = await _tradeRepository.EvacuateNextColdPartitionAsync();
+            if (partition is null) return;
+
+            // Переезд гигабайтов — событие, которое должно быть видно в логах без раскопок.
+            _logger.LogWarning("Partition {Partition} evacuated to the cold tablespace.", partition);
         }
     }
 
