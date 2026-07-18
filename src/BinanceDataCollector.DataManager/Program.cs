@@ -177,9 +177,19 @@ public class Program {
                 .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
                 .UseSimpleAssemblyNameTypeSerializer()
                 .UseRecommendedSerializerSettings()
-                .UsePostgreSqlStorage(options => {
-                    options.UseNpgsqlConnection(builder.Configuration.GetConnectionString("HangfireConnection")); 
-                }));
+                .UsePostgreSqlStorage(
+                    options => options.UseNpgsqlConnection(
+                        builder.Configuration.GetConnectionString("HangfireConnection")),
+                    new PostgreSqlStorageOptions
+                    {
+                        // Установщик схемы выключен — как в Worker. PgBouncer в transaction-режиме
+                        // роняет session advisory locks, которыми Hangfire страхует создание схемы,
+                        // и установщик падает на старте (на чистой БД он повторно накатывал
+                        // миграции и спотыкался о already-existing колонку). Схема заводится
+                        // out of band init-скриптом, приложение её только использует.
+                        PrepareSchemaIfNecessary = false,
+                        SchemaName = "hangfire"
+                    }));
             #endregion
             
             builder.Services.AddHealthChecks()
