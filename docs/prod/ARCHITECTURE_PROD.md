@@ -67,20 +67,25 @@ Internet → Cloudflare (TLS) → Cloudflare Tunnel → Traefik → Worker / Dat
 
 ## 5. Хранилища
 
-### 5.1. Данные PostgreSQL — внешний диск
+### 5.1. Данные PostgreSQL — горячий SSD + холодный внешний диск
 
-Лежат на внешнем 4 TB диске в `/mnt/ext` (fstab, UUID `25ddc534-13e6-479e-8392-a4487a975c80`, опция `nofail`). В `docker-compose.prod.yml` это **bind mount**, не Docker volume:
+Раскладка по силе дисков ([ADR 0011](../adr/0011-hot-cold-tiering-pg-cron.md)): случайный доступ конвейера живёт на быстром SSD, холодная история — на ёмком HDD.
 
 ```yaml
-bdc_db:
+bdc_db:                       # образ собирается из docker/postgres/Dockerfile:
+  build: { context: ../postgres }   # postgres:16 (Debian) + postgresql-16-cron
   volumes:
-    - /mnt/ext/postgres_data:/var/lib/postgresql/data
+    - /opt/BinanceCollector/pgdata:/var/lib/postgresql/data   # PGDATA — внутренний SSD
+    - /mnt/ext/pg_tablespaces:/mnt/pg_tablespaces             # холодное пространство — внешний HDD
 ```
 
-**Если поднять `bdc_db` при непримонтированном диске, Postgres молча создаст новую пустую базу на системном диске.** Приложение стартует, подключается — и не находит таблиц. Защита стоит на двух уровнях:
+- **PGDATA (каталоги, WAL, активные партиции)** — на внутреннем SATA SSD в `/opt/BinanceCollector/pgdata`. IOPS для случайного доступа.
+- **Табличное пространство `cold`** — на внешнем 4 TB диске в `/mnt/ext/pg_tablespaces/cold` (fstab, UUID `25ddc534-13e6-479e-8392-a4487a975c80`, опция `nofail`; каталог принадлежит uid postgres). Закрытые месяцы `Trades` переезжают сюда `pg_cron`-джобой раз в час.
+- **Коллация базы — `C.UTF-8`** (задаётся на `initdb`, `POSTGRES_INITDB_ARGS`): байтовый порядок, независимый от libc.
 
-- **Ребут:** drop-in `/etc/systemd/system/docker.service.d/wait-for-ext.conf` с `RequiresMountsFor=/mnt/ext` — Docker не стартует, пока диск не примонтирован.
-- **Ручной запуск:** `prod-start.sh` проверяет монтирование, наличие `PG_VERSION` и партиций.
+Отключён внешний диск — свежие данные работают, запросы за эвакуированные месяцы падают с `undefined_file`.
+
+**Если поднять `bdc_db` при непримонтированном внешнем диске, `CREATE TABLESPACE cold` на чистой инициализации не пройдёт, а на живой базе запросы к холодным партициям упрутся в отсутствующие файлы.** Защита: drop-in `/etc/systemd/system/docker.service.d/wait-for-ext.conf` с `RequiresMountsFor=/mnt/ext` — Docker не стартует, пока диск не примонтирован; `prod-start.sh` проверяет монтирование.
 
 ### 5.2. External named volumes
 

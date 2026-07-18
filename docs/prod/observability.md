@@ -1,7 +1,7 @@
 # Наблюдаемость: метрики конвейера (Prometheus + Grafana)
 
 Стек метрик прод-конвейера. Отвечает на вопрос «**как система себя чувствует во времени**» —
-глубина очереди агрегации, отставание свечей и фич, загрузка диска, доля успешных проходов.
+глубина очереди агрегации, приток и слив, отставание свечей и фич, загрузка диска.
 Дополняет Seq (логи, «что произошло»), не заменяет его.
 
 > Смежное: [`ARCHITECTURE_PROD.md`](./ARCHITECTURE_PROD.md) — состав прод-стека ·
@@ -32,7 +32,7 @@ app-стек. Поднимается и гасится независимо; э�
 | `bdc_node_exporter` | `prom/node-exporter:v1.8.2` | метрики хоста: диск (%util, iowait), CPU, память |
 | `bdc_pg_exporter` | `postgres-exporter:v0.15.0` | прикладные метрики из `market_analytics` |
 | `bdc_pg_exporter_jobs` | `postgres-exporter:v0.15.0` | прикладные метрики из `market_analytics_jobs` (Hangfire) |
-| `bdc_grafana` | `grafana/grafana:11.2.0` | дашборд и (в перспективе) алерты |
+| `bdc_grafana` | `grafana/grafana:11.2.0` | дашборд и алерт в Telegram |
 
 **Почему два экспортера Postgres.** Прикладные числа лежат в двух разных БД: очередь и
 отставания — в `market_analytics`, статистика проходов — в `market_analytics_jobs`. Один
@@ -51,9 +51,11 @@ app-стек. Поднимается и гасится независимо; э�
 | `bdc_dirty_minutes_depth` | `count(*)` по `DirtyMinutes` | минут в очереди на агрегацию; норма — десятки |
 | `bdc_candle_lag_seconds` | `now − max(OpenTime)` по `Ohlcv_1min` | отставание свежайшей свечи |
 | `bdc_feature_lag_seconds` | то же по `Ohlcv_Features` | отставание фич (из них берётся CVD графика) |
-| `bdc_aggregation_succeeded_15m` / `_failed_15m` | `hangfire.state` за 15 мин | успех/провал проходов агрегации |
-| `bdc_aggregation_avg_duration_seconds` / `_max_...` | `PerformanceDuration` успешных за 15 мин | длительность прохода; прижатие к 600 = стена таймаута |
-| `bdc_hangfire_queue_depth{queue}` | `hangfire.jobqueue` | глубины очередей Hangfire |
+| `bdc_pipeline_minutes_in_total` / `_out_total` | счётчики `n_tup_ins`/`n_tup_del` у `DirtyMinutes` | приток и слив очереди; `rate()` в Grafana даёт минут/мин |
+| `bdc_pipeline_candles_written_total` / `_features_written_total` | `n_tup_ins+n_tup_upd` по партициям | темп записи свечей и фич |
+| `bdc_hangfire_queue_depth{queue}` | `hangfire.jobqueue` | глубины очередей Hangfire (импорт, аудиты) |
+
+Агрегация и расчёт фич — событийные сервисы, а не Hangfire-джобы ([ADR 0010](../adr/0010-event-driven-aggregation.md)), поэтому «доля успешных проходов» и «длительность прохода» больше не существуют — их место заняли счётчики потока `bdc_pipeline_*`. Здоровье конвейера видно по расхождению притока и слива очереди и по лагам, а не по исходу джобы.
 
 Метрики хоста — стандартные `node_*` (диск: `rate(node_disk_io_time_seconds_total[1m])*100`
 для %util, `node_cpu_seconds_total{mode="iowait"}` для iowait).
@@ -65,12 +67,21 @@ app-стек. Поднимается и гасится независимо; э�
 Grafana, папка **BinanceDataCollector**, дашборд «BDC — конвейер агрегации»
 (`docker/grafana/dashboards/bdc-pipeline.json`, провижинится из файла — правит git, не UI).
 
-Три плитки (текущая очередь, лаг свечи, доля успеха за 15 мин) и пять графиков: очередь
-`DirtyMinutes` · отставание свечи и фич · диск %util и iowait · успех/провал агрегации ·
-длительность прохода с линией-порогом на **600 секундах**. Последний график показывает
-сигнатуру инцидента: успешные проходы, прижатые к стене таймаута.
+Три плитки (текущая очередь, лаг свечи, слив очереди минут/мин) и графики: очередь
+`DirtyMinutes` · отставание свечи и фич · диск %util и iowait · приток/слив очереди ·
+темп записи свечей и фич · глубины очередей Hangfire.
 
-Алерты пока не настроены (Grafana alerting — следующий шаг плана, этап 1.6).
+## Алерт
+
+Одно правило (`docker/grafana/provisioning/alerting/rules.yml`, из файла, не из UI):
+**«Лаг свечи выше 10 минут»** — `bdc_candle_lag_seconds > 600` устойчиво `for: 5m`.
+Лаг свечи — сквозной индикатор: он растёт при любом отказе на пути тик → свеча.
+`noDataState`/`execErrState` = `Alerting`: молчащий экспортёр или лежащая база — тоже
+«свечи не считаются», тишина не считается здоровьем. Глубина очереди в алерт не годится:
+под импортом она растёт по построению, а реалтайм при этом здоров.
+
+Доставка — **Telegram** (`contactpoints.yml` + `policies.yml`): бот `@bdc_alerts_bot`,
+токен и chat_id из GitHub Secrets → `.env` (в репозитории значений нет).
 
 ---
 

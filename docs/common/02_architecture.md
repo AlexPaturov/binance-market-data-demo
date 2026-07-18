@@ -35,6 +35,15 @@ Binance WebSocket ──► книга в памяти ──► OrderBook_Featu
 
 **Сырой L2 не хранится**: 190 ГБ/месяц против 0.4 ГБ у фич, и восстановить его неоткуда — архивов глубины по споту Binance не публикует. Подробности — [`03_database.md`](./03_database.md), раздел 3.5.
 
+### `OhlcvAggregationService` и `FeatureCalculationService` — конвейер свечей и индикаторов
+
+Событийные потребители: слушают `NOTIFY` PostgreSQL и разбирают работу по мере её появления, а не по тику расписания.
+
+- `OhlcvAggregationService` слушает канал `dirty_minutes` (его шлёт вставка тиков) и пьёт очередь `DirtyMinutes` кусками по 1000 минут: тики → свечи, попутно CVD-дельта минуты тем же проходом;
+- `FeatureCalculationService` слушает канал `candles_new` (его шлёт агрегация): свечи → RSI, MACD, CVD.
+
+Каждый кусок — отдельная транзакция и отдельный коммит: обрыв посреди разбора не обнуляет проход. Слушатели ходят в базу **напрямую, мимо PgBouncer** (`DirectConnection`) — в transaction-режиме он не переносит регистрацию `LISTEN`. Потерянное уведомление страхует перепроверка очереди раз в 60 с. Общий контур обоих — `PgNotifyConsumer`. Пришли на смену cron-джобам `ohlcv-aggregator`/`feature-calculator` — [ADR 0010](../adr/0010-event-driven-aggregation.md).
+
 ---
 
 ## Периодические задачи (Hangfire)
@@ -42,14 +51,14 @@ Binance WebSocket ──► книга в памяти ──► OrderBook_Featu
 | Джоба | Воркер | Расписание | Очередь | Что делает |
 | :--- | :--- | :--- | :--- | :--- |
 | `update-symbols` | `SymbolUpdateWorker` | раз в день | `realtime` | Сканирует рынок, отбирает топ-40 ликвидных торгуемых (`status = TRADING`) пар в `TrackedSymbols` |
-| `ohlcv-aggregator` | `OhlcvAggregatorWorker` | раз в минуту | `realtime` | Тики → минутные свечи |
-| `feature-calculator` | `FeatureCalculatorWorker` | раз в 2 минуты | `realtime` | Свечи → RSI, MACD, CVD |
 | `quick_audit` | `QuickAuditorWorker` | раз в 10 минут | `quick_audit` | Дыры за последние 24 часа — то, что оставляет обрыв связи |
 | `historical-audit` | `HistoricalAuditorWorker` | раз в 6 часов | `historical_audit` | Глубокая проверка истории на пропуски |
 | `audit-initializer` | `AuditInitializationWorker` | раз в день | `default` | Вотермарки аудита для новых символов |
-| `partition-maintenance` | `PartitionMaintenanceWorker` | раз в день | `default` | Ротация партиций по размеру диска |
+| `partition-maintenance` | `PartitionMaintenanceWorker` | раз в день | `maintenance` | Ротация партиций по размеру диска |
 
-Очереди разнесены по двум серверам Hangfire: `realtime` и `quick_audit` разбирает `PriorityServer`, остальные — `BackgroundServer`. Весь конвейер реального времени (агрегация свечей, расчёт индикаторов) стоит на приоритетном сервере, чтобы импорт архивов не мог его вытеснить — [ADR 0003](../adr/0003-hangfire-queue-model.md).
+Агрегация свечей и расчёт индикаторов **в этой таблице отсутствуют намеренно**: у них поводом служит появление работы, а не время, — их ведут событийные сервисы выше. Эвакуацию закрытых месяцев на холодный диск планирует сама БД через `pg_cron` (см. [`03_database.md`](./03_database.md)), тоже вне Hangfire.
+
+Очереди разнесены по двум серверам Hangfire: `realtime`, `quick_audit` и `maintenance` разбирает `PriorityServer`, остальные — `BackgroundServer`. Обслуживание партиций стоит на приоритетном сервере последней очередью, чтобы импорт архивов не мог его вытеснить (та же логика, что раньше держала на нём агрегацию) — [ADR 0003](../adr/0003-hangfire-queue-model.md).
 
 ---
 
@@ -82,7 +91,7 @@ Binance WebSocket ──► книга в памяти ──► OrderBook_Featu
 | **Постоянная** | битый архив, отсутствующий файл | Fail сразу, без повторов |
 | **Фатальная** | нет обязательной строки в `Processing_Watermarks` | `LogCritical` + исключение: нужна ручная починка |
 
-`[AutomaticRetry(Attempts = 0)]` стоит там, где повтор бессмыслен или вреден: у `DataQualityCheckWorker` (проверка долгая, повтор её удвоит) и `OhlcvAggregatorWorker` (следующий цикл через минуту всё равно подхватит).
+`[AutomaticRetry(Attempts = 0)]` стоит там, где повтор бессмыслен или вреден, — например у `DataQualityCheckWorker` (проверка долгая, повтор её удвоит). Событийные потребители свечей и фич живут вне Hangfire: упавший кусок не роняет цикл, к нему возвращает перепроверка очереди раз в 60 с.
 
 **Восстановление** — это и есть аудиторы: `quick_audit` закрывает дыры от коротких обрывов, `historical-audit` — от долгих простоев. Ручное вмешательство нужно, только если упала БД или сломалась схема.
 
@@ -92,7 +101,7 @@ Binance WebSocket ──► книга в памяти ──► OrderBook_Featu
 
 **Логи (Seq):**
 - `Saving N trades to the database` — тики идут;
-- `Aggregated N candles from the dirty minute queue` — свечи считаются;
+- `Aggregated N minutes from the dirty minute queue` — свечи считаются;
 - `Saved order book features for N symbols` — стакан пишется.
 
 **База — все четыре растут:**

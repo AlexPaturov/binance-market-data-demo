@@ -13,3 +13,5 @@
 | 0007 | [Ротация по размеру диска и единая партиционная сетка](./0007-size-based-retention-and-unified-partitioning.md) |
 | 0008 | [Отбор пар: фильтр по статусу торгов и гистерезис при снятии](./0008-symbol-selection-status-filter-and-hysteresis.md) |
 | 0009 | [Очередь грязных минут вместо статус-колонки у тиков](./0009-dirty-minutes-queue.md) |
+| 0010 | [Событийная агрегация через LISTEN/NOTIFY вместо cron-джоб](./0010-event-driven-aggregation.md) |
+| 0011 | [Горячий/холодный тиринг дисков и эвакуация через pg_cron](./0011-hot-cold-tiering-pg-cron.md) |

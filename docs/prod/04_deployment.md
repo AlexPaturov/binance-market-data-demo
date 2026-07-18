@@ -33,14 +33,15 @@ Runner стоит **на самом прод-сервере**: у сервера
 
 ## Что делает деплой
 
-1. Собирает два образа из одного multi-stage `docker/Dockerfile`:
+1. Собирает два образа приложения из одного multi-stage `docker/Dockerfile`:
    - `--target worker` → `ghcr.io/alexpaturov/binancedatacollector/worker`
    - `--target datamanager` → `ghcr.io/alexpaturov/binancedatacollector/datamanager`
 2. Пушит их в GHCR. Аутентификация — встроенным `GITHUB_TOKEN`, не PAT: он не протухает.
 3. Копирует `docker-compose.prod.yml` в `/opt/BinanceCollector/docker/compose/`.
 4. Генерирует там `.env` из GitHub Secrets.
 5. Идемпотентно создаёт external volumes и networks (`... || true`).
-6. `docker compose pull && docker compose up -d`.
+6. Собирает образ БД локально: `docker compose build bdc_db` (`docker/postgres/Dockerfile` = postgres:16 + pg_cron; его нет в реестре, только сборка). Кэш слоёв на self-hosted раннере делает пересборку мгновенной, image id не меняется — живая база не пересоздаётся.
+7. `docker compose pull --ignore-buildable && docker compose up -d`. `--ignore-buildable` пропускает `bdc_db` (иначе `pull` падает на «repository does not exist» для локального образа).
 
 **Версионирование:** `APP_VERSION = ${GITHUB_SHA::7}`. Тега `:latest` нет — каждый push даёт уникальный иммутабельный тег, и всегда видно, что именно крутится в проде.
 
@@ -57,6 +58,8 @@ Runner стоит **на самом прод-сервере**: у сервера
 | `ACME_EMAIL` | Let's Encrypt в Traefik |
 | `CLOUDFLARE_TUNNEL_TOKEN` | Cloudflare Tunnel |
 | `AUTH_B2C_CLIENTID`, `AUTH_B2C_CLIENT_SECRET` | Azure AD B2C для DataManager |
+| `GRAFANA_ADMIN_PASSWORD` | пароль admin в Grafana (мониторинг-стек) |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | доставка алертов Grafana в Telegram |
 
 Логин в GHCR идёт встроенным `GITHUB_TOKEN` — отдельного секрета не нужно. Репозиторию выдано право `write` на пакеты `worker` и `datamanager`.
 
