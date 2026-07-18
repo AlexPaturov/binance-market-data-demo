@@ -112,6 +112,9 @@ jobs:
           CLOUDFLARE_TUNNEL_TOKEN=${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
           AUTH_B2C_CLIENTID=${{ secrets.AUTH_B2C_CLIENTID }}
           AUTH_B2C_CLIENT_SECRET=${{ secrets.AUTH_B2C_CLIENT_SECRET }}
+          GRAFANA_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           EOF
 
           # 4. Создаем контракты
@@ -127,6 +130,15 @@ jobs:
           docker network create binancecollector_web || true
           docker network create internal_network || true
 
-          # 5. Скачиваем свежие образы и перезапускаем сервисы
-          docker compose pull
+          # 5. Собираем локальный образ БД (postgres + pg_cron): в реестре его нет,
+          #    поэтому его нельзя тянуть — только строить. Кэш слоёв на self-hosted
+          #    раннере делает повторную сборку почти мгновенной и не меняет image id,
+          #    так что работающая база на деплое приложения не пересоздаётся.
+          docker compose build bdc_db
+
+          # 6. Тянем свежие образы приложения и стоковые сервисы; --ignore-buildable
+          #    пропускает bdc_db (иначе pull ломается на «repository does not exist»).
+          docker compose pull --ignore-buildable
+
+          # 7. Поднимаем всё
           docker compose up -d
