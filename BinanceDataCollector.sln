@@ -10,10 +10,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{3E238BA4-0B1
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.DataManager", "src\BinanceDataCollector.DataManager\BinanceDataCollector.DataManager.csproj", "{71A30FF4-77A8-49E5-B552-DCDD77F9E95A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.MarketScreenService", "src\BinanceDataCollector.MarketScreenService\BinanceDataCollector.MarketScreenService.csproj", "{69331109-1937-4911-9F32-5FF0420F1936}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Symbols", "src\BinanceDataCollector.Symbols\BinanceDataCollector.Symbols.csproj", "{80A4A8EE-F99F-447A-B469-4C40F388B0DC}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Domain", "src\BinanceDataCollector.Domain\BinanceDataCollector.Domain.csproj", "{FFA32857-4E17-4F55-895E-EB910EC01783}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Worker", "src\BinanceDataCollector.Worker\BinanceDataCollector.Worker.csproj", "{0A5B2340-AFE4-4998-A672-DCA93578C5A4}"
@@ -157,14 +153,6 @@ Global
 		{71A30FF4-77A8-49E5-B552-DCDD77F9E95A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{71A30FF4-77A8-49E5-B552-DCDD77F9E95A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{71A30FF4-77A8-49E5-B552-DCDD77F9E95A}.Release|Any CPU.Build.0 = Release|Any CPU
-		{69331109-1937-4911-9F32-5FF0420F1936}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{69331109-1937-4911-9F32-5FF0420F1936}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{69331109-1937-4911-9F32-5FF0420F1936}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{69331109-1937-4911-9F32-5FF0420F1936}.Release|Any CPU.Build.0 = Release|Any CPU
-		{80A4A8EE-F99F-447A-B469-4C40F388B0DC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{80A4A8EE-F99F-447A-B469-4C40F388B0DC}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{80A4A8EE-F99F-447A-B469-4C40F388B0DC}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{80A4A8EE-F99F-447A-B469-4C40F388B0DC}.Release|Any CPU.Build.0 = Release|Any CPU
 		{FFA32857-4E17-4F55-895E-EB910EC01783}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{FFA32857-4E17-4F55-895E-EB910EC01783}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FFA32857-4E17-4F55-895E-EB910EC01783}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -207,8 +195,6 @@ Global
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{71A30FF4-77A8-49E5-B552-DCDD77F9E95A} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}
-		{69331109-1937-4911-9F32-5FF0420F1936} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}
-		{80A4A8EE-F99F-447A-B469-4C40F388B0DC} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}
 		{FFA32857-4E17-4F55-895E-EB910EC01783} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}
 		{0A5B2340-AFE4-4998-A672-DCA93578C5A4} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}
 		{CDFDA90B-752E-4F5D-BC79-737B84426271} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}

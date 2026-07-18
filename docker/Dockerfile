@@ -10,8 +10,6 @@ COPY src/BinanceDataCollector.Application/BinanceDataCollector.Application.cspro
 COPY src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj src/BinanceDataCollector.DataManager/
 COPY src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj src/BinanceDataCollector.Domain/
 COPY src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj src/BinanceDataCollector.Infrastructure/
-COPY src/BinanceDataCollector.MarketScreenService/BinanceDataCollector.MarketScreenService.csproj src/BinanceDataCollector.MarketScreenService/
-COPY src/BinanceDataCollector.Symbols/BinanceDataCollector.Symbols.csproj src/BinanceDataCollector.Symbols/
 COPY src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj src/BinanceDataCollector.Worker/
 
 RUN dotnet restore BinanceDataCollector.Prod.sln
@@ -22,8 +20,6 @@ COPY src/BinanceDataCollector.Domain/ ./src/BinanceDataCollector.Domain/
 COPY src/BinanceDataCollector.Infrastructure/ ./src/BinanceDataCollector.Infrastructure/
 COPY src/BinanceDataCollector.Worker/ ./src/BinanceDataCollector.Worker/
 COPY src/BinanceDataCollector.DataManager/ ./src/BinanceDataCollector.DataManager/
-COPY src/BinanceDataCollector.MarketScreenService/ ./src/BinanceDataCollector.MarketScreenService/
-COPY src/BinanceDataCollector.Symbols/ ./src/BinanceDataCollector.Symbols/
 
 # ================================================
 # Ступень 2: Публикация Worker
