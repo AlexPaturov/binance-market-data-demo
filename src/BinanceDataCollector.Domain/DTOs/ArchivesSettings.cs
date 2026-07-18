@@ -6,12 +6,6 @@
 public class ArchivesSettings
 {
     /// <summary>
-    /// Абсолютный путь к папке скачанных архивов сделок. Используется
-    /// OnlineArchiveImportWorker для импорта уже лежащих на диске zip.
-    /// </summary>
-    public string TradeArcihvesPath { get; set; } = string.Empty;
-
-    /// <summary>
     /// Абсолютный корневой путь к директории с данными.
     /// Prod: /opt/bdc_data (монтируется как Docker volume).
     /// Dev: локальный путь, например C:\bdc_data.

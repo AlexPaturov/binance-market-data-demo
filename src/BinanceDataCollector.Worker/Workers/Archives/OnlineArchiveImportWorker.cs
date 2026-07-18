@@ -1,12 +1,8 @@
 ﻿using BinanceDataCollector.Application.Archives.Interfaces;
-using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.Application.Interfaces;
-using BinanceDataCollector.Domain.DTOs;
 using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Worker.Common;
 using Hangfire;
-using Microsoft.Extensions.Options;
-using System.Text.RegularExpressions;
 
 namespace BinanceDataCollector.Worker.Workers.Archives;
 
@@ -16,7 +12,6 @@ public class OnlineArchiveImportWorker
     private readonly ITradeRepository _tradeRepo;
     private readonly GapProcessingTracker _tracker;
     private readonly ILogger<OnlineArchiveImportWorker> _logger;
-    private readonly IOptions<ArchivesSettings> _options;
     private const int BatchSize = 5000; // <-- КОНФИГУРИРУЕМЫЙ РАЗМЕР ПАЧКИ
     private readonly List<Trade> _batch = new(BatchSize);
     private int _totalInserted;
@@ -24,13 +19,11 @@ public class OnlineArchiveImportWorker
     public OnlineArchiveImportWorker(
         IArchiveService archiveService,
         ITradeRepository tradeRepo,
-        IOptions<ArchivesSettings> options,
         GapProcessingTracker tracker,
         ILogger<OnlineArchiveImportWorker> logger)
     {
         _archiveService = archiveService;
         _tradeRepo = tradeRepo;
-        _options = options;
         _tracker = tracker;
         _logger = logger;
     }
@@ -63,65 +56,6 @@ public class OnlineArchiveImportWorker
             _tracker.MarkArchiveAsCompleted(symbol, date); // Снимаем блокировку
             _logger.LogInformation("[{Symbol}] Archive processing for {Date} completed, lock released.", symbol, date);
         }
-    }
-
-    // НОВЫЙ МЕТОД, для вызова из UI
-    [Queue("archive_import")]
-    [DisableConcurrentExecution(timeoutInSeconds: 60 * 60)]
-    public async Task ImportFromLocalFileAsync(string fileName, IJobCancellationToken cancellationToken)
-    {
-        // var (symbol, date) = ParseSymbolAndDateFromFileName(fileName); // old version
-        var (symbol, date) = ArchiveFileNameParser.Parse(fileName);
-        var filePath = Path.Combine(_options.Value.TradeArcihvesPath, fileName);
-
-        try
-        {
-            await foreach (var trade in _archiveService.ParseTradesFromLocalZipAsync(filePath, symbol, cancellationToken.ShutdownToken))
-            {
-                _batch.Add(trade);
-
-                if (_batch.Count >= BatchSize)
-                {
-                    await FlushBatch(symbol);
-                }
-
-                if (_batch.Any())
-                    await FlushBatch(symbol);
-
-                _logger.LogInformation("[{Symbol}] Inserted {TotalCount} trades for {Date}.", symbol, _totalInserted, date);
-            }
-        }
-        finally
-        {
-            _tracker.MarkArchiveAsCompleted(symbol, date); // Снимаем блокировку
-            _logger.LogInformation("[{Symbol}] Archive processing for {Date} completed, lock released.", symbol, date);
-        }
-    }
-
-    private (string, DateOnly) ParseSymbolAndDateFromFileName(string fileName) 
-    {
-        // Паттерн: 
-        // ^(?<symbol>.+?) - от начала строки захватываем любые символы (не жадно) в группу "symbol"
-        // -trades-        - дословно ищем "-trades-"
-        // (?<date>\d{4}-\d{2}-\d{2}) - захватываем дату в формате YYYY-MM-DD в группу "date"
-        // .zip$           - файл должен заканчиваться на .zip
-        var regex = new Regex(@"^(?<symbol>.+?)-trades-(?<date>\d{4}-\d{2}-\d{2})\.zip$");
-
-        var match = regex.Match(fileName);
-
-        if (match.Success)
-        {
-            var symbol = match.Groups["symbol"].Value;
-            var dateString = match.Groups["date"].Value;
-
-            if (DateOnly.TryParse(dateString, out var date))
-            {
-                return (symbol, date);
-            }
-        }
-
-        _logger.LogWarning("Failed to parse file name using Regex: {FileName}", fileName);
-        return ("UNKNOWN", DateOnly.MinValue);
     }
 
     private async Task FlushBatch(string symbol)
