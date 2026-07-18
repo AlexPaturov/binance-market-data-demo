@@ -97,16 +97,6 @@ public class TradeRepository : ITradeRepository
             commandTimeout: 600);
     }
 
-    public async Task<string?> EvacuateNextColdPartitionAsync()
-    {
-        using var db = Connection;
-        // Один вызов — одна партиция — одна транзакция. Перенос 50–150 ГБ на HDD идёт
-        // последовательной записью ~100 МБ/с: таймаут с запасом под самый большой месяц.
-        return await db.ExecuteScalarAsync<string?>(
-            "SELECT public.sp_evacuate_next_cold_partition()",
-            commandTimeout: 3600);
-    }
-
     public async Task<long> GetPartitionedSizeBytesAsync()
     {
         using var db = Connection;

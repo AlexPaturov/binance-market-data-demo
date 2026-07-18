@@ -63,7 +63,7 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
         await _repository.AggregateDirtyMinutesAsync(100);
         await ExecuteAsync(@"UPDATE public.""Ohlcv_1min"" SET ""ProcessingStatus"" = 'processed';");
 
-        var moved = await _repository.EvacuateNextColdPartitionAsync();
+        var moved = await EvacuateAsync();
 
         Assert.Equal("Trades_2026_01", moved);
 
@@ -82,7 +82,7 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
         Assert.Equal(1, ticks);
 
         // Второй заход: закрытых месяцев в горячем пространстве больше нет.
-        Assert.Null(await _repository.EvacuateNextColdPartitionAsync());
+        Assert.Null(await EvacuateAsync());
     }
 
     /// <summary>Грязные минуты — месяц ещё пересчитывается, агрегация будет читать его тики.</summary>
@@ -91,7 +91,7 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
     {
         await InsertTradeAsync(1, Jan2026Ms + 1_000);   // минута в очереди, не агрегирована
 
-        Assert.Null(await _repository.EvacuateNextColdPartitionAsync());
+        Assert.Null(await EvacuateAsync());
     }
 
     /// <summary>Необработанные свечи — фичи месяца не досчитаны, месяц не закрыт.</summary>
@@ -101,7 +101,7 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
         await InsertTradeAsync(1, Jan2026Ms + 1_000);
         await _repository.AggregateDirtyMinutesAsync(100);   // свечи остались 'new'
 
-        Assert.Null(await _repository.EvacuateNextColdPartitionAsync());
+        Assert.Null(await EvacuateAsync());
     }
 
     /// <summary>Текущий месяц не эвакуируется никогда, каким бы «тихим» он ни был.</summary>
@@ -116,7 +116,17 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
         await _repository.AggregateDirtyMinutesAsync(100);
         await ExecuteAsync(@"UPDATE public.""Ohlcv_1min"" SET ""ProcessingStatus"" = 'processed';");
 
-        Assert.Null(await _repository.EvacuateNextColdPartitionAsync());
+        Assert.Null(await EvacuateAsync());
+    }
+
+    // Эвакуацию планирует pg_cron через SELECT sp_evacuate_next_cold_partition();
+    // в тестах зовём ту же функцию напрямую.
+    private async Task<string?> EvacuateAsync()
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync();
+        return await connection.QuerySingleOrDefaultAsync<string?>(
+            "SELECT public.sp_evacuate_next_cold_partition()");
     }
 
     // --- вспомогательное ---
@@ -187,6 +197,14 @@ public sealed class ColdPartitionEvacuationWithoutTablespaceTests : IAsyncLifeti
     [Fact]
     public async Task Evacuate_DoesNothing_WhenColdTablespaceIsAbsent()
     {
-        Assert.Null(await _repository.EvacuateNextColdPartitionAsync());
+        Assert.Null(await EvacuateAsync());
+    }
+
+    private async Task<string?> EvacuateAsync()
+    {
+        await using var connection = new NpgsqlConnection(_db.GetConnectionString());
+        await connection.OpenAsync();
+        return await connection.QuerySingleOrDefaultAsync<string?>(
+            "SELECT public.sp_evacuate_next_cold_partition()");
     }
 }

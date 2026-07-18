@@ -40,14 +40,6 @@ public interface ITradeRepository
     /// </returns>
     Task<int> AggregateDirtyMinutesAsync(int maxMinutes);
 
-    /// <summary>
-    /// Переносит на холодное табличное пространство одну партицию Trades — старейший
-    /// закрытый месяц (прошёл, без грязных минут, свечи обработаны). Возвращает имя
-    /// перенесённой партиции; NULL — переносить нечего. Без пространства `cold`
-    /// (dev-окружения) бездействует.
-    /// </summary>
-    Task<string?> EvacuateNextColdPartitionAsync();
-
     // на удаление
     /// <summary>
     /// Находит максимальный TradeId для указанного символа.

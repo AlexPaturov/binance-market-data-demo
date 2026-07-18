@@ -6,21 +6,18 @@ using Microsoft.Extensions.Options;
 namespace BinanceDataCollector.Worker.Workers;
 
 /// <summary>
-/// Обслуживание партиций: ротация по размеру диска (раз в сутки) и эвакуация закрытых
-/// месяцев на холодный диск (раз в час) — разные задачи с разным ритмом.
+/// Ротация партиций по размеру диска, ежедневно.
 ///
-/// Ротация: создаёт партиции на текущий и следующий месяц, затем — пока суммарный
-/// размер партиционированных данных выше порога — дропает самый старый месяц во всех
+/// Создаёт партиции на текущий и следующий месяц, затем — пока суммарный размер
+/// партиционированных данных выше порога — дропает самый старый месяц во всех
 /// таблицах сразу (тики, свечи, индикаторы, отчёты о качестве).
 ///
 /// Окно задаётся размером, а не календарём: реальные месячные партиции различаются
 /// в 4.6 раза (32–148 ГБ), поэтому «держим N месяцев» непредсказуемо в байтах.
 /// См. docs/adr/0007-size-based-retention-and-unified-partitioning.md
 ///
-/// Эвакуация: закрытые месяцы Trades переезжают с горячего SSD на холодный HDD
-/// (`sp_evacuate_next_cold_partition`, миграция 013) — SSD держит только активные
-/// месяцы, шпиндель получает единственную нагрузку, в которой он хорош:
-/// последовательную запись.
+/// Эвакуацию закрытых месяцев на холодный диск этот воркер больше не делает — её
+/// планирует сама БД через pg_cron (`sp_evacuate_next_cold_partition`, миграция 014).
 /// </summary>
 public class PartitionMaintenanceWorker
 {
@@ -66,35 +63,6 @@ public class PartitionMaintenanceWorker
             _logger.LogInformation(
                 "Partition rotation complete, nothing dropped. Size: {SizeGb:F1} GB.", Gb(after));
         }
-    }
-
-    /// <summary>
-    /// Переносит на холодный диск одну партицию — старейший закрытый месяц тиков.
-    ///
-    /// Ритм — час, а не сутки: при импорте архивов горячий диск набивается за часы,
-    /// и суточной уборки не хватает (17.07.2026 — SSD ушёл на 78% за одну ночь импорта).
-    ///
-    /// Одна партиция за запуск, а не сколько получится: месяц весит 50–150 ГБ и едет
-    /// на HDD десятки минут. Переезд по одной удерживает запуск заметно короче часа,
-    /// поэтому следующий не встаёт в очередь за блокировкой, а остаток разбирается
-    /// на следующих часах — торопиться некуда, каждый переезд освобождает свои
-    /// сто гигабайт сразу.
-    /// </summary>
-    [Queue("maintenance")]
-    [DisableConcurrentExecution(timeoutInSeconds: 30 * 60)]
-    [AutomaticRetry(Attempts = 0)]
-    public async Task EvacuateNextColdPartitionAsync()
-    {
-        var partition = await _tradeRepository.EvacuateNextColdPartitionAsync();
-
-        if (partition is null)
-        {
-            _logger.LogInformation("Nothing to evacuate: no closed month left on the hot disk.");
-            return;
-        }
-
-        // Переезд гигабайтов — событие, которое должно быть видно в логах без раскопок.
-        _logger.LogWarning("Partition {Partition} evacuated to the cold tablespace.", partition);
     }
 
     private static double Gb(long bytes) => bytes / (1024.0 * 1024 * 1024);

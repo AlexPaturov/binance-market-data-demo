@@ -90,14 +90,10 @@ public class HangfireJobsService : IHostedService
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
         );
 
-        // Закрытые месяцы тиков — с горячего диска на холодный. Раз в час, а не в сутки:
-        // при импорте архивов горячий диск набивается за часы.
-        _recurringJobManager.AddOrUpdate<PartitionMaintenanceWorker>(
-            "partition-evacuation",
-            worker => worker.EvacuateNextColdPartitionAsync(),
-            Cron.Hourly(),
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        );
+        // Эвакуация закрытых месяцев на холодный диск здесь НЕ регистрируется: её планирует
+        // сама БД через pg_cron (миграция 014, init/04_tablespace_and_cron.sql). Снимаем
+        // расписание, оставшееся на проде от прежней Hangfire-версии.
+        _recurringJobManager.RemoveIfExists("partition-evacuation");
 
         // Проверки качества данных — только вручную, кнопкой на странице /DataQuality.
         _recurringJobManager.RemoveIfExists("data-quality-check");

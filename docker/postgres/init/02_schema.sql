@@ -9865,6 +9865,14 @@ DECLARE
     v_has_data BOOLEAN;
     v_index RECORD;
 BEGIN
+    -- Защита от наложения запусков — внутри функции, а не в планировщике: копия месяца
+    -- (50–150 ГБ) идёт дольше часового тика pg_cron, и второй запуск не должен начать
+    -- параллельный переезд. Транзакционный advisory-lock снимается сам на COMMIT/ROLLBACK,
+    -- ручного освобождения не требует. Не взяли — копия уже идёт, тихо выходим.
+    IF NOT pg_try_advisory_xact_lock(hashtext('sp_evacuate_next_cold_partition')) THEN
+        RETURN NULL;
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM pg_tablespace WHERE spcname = 'cold') THEN
         RETURN NULL;
     END IF;

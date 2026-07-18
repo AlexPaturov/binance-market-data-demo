@@ -71,26 +71,43 @@ services:
 
   # --- БАЗА ДАННЫХ ---
   bdc_db:
-    image: postgres:16-alpine
+    # Свой образ: postgres:16 (Debian) + pg_cron. Эвакуацию партиций планирует сама БД,
+    # не приложение (docker/postgres/Dockerfile).
+    build:
+      context: ../postgres
+      dockerfile: Dockerfile
+    image: bdc/postgres-cron:16
     container_name: bdc_db
     restart: always
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=market_analytics
+      # Коллация C.UTF-8: байтовый порядок сравнения, одинаковый на любой libc —
+      # текстовые индексы больше не привязаны к musl/glibc, база переносима между
+      # образами. Действует только на чистой инициализации.
+      - POSTGRES_INITDB_ARGS=--locale=C.UTF-8 --encoding=UTF8
     volumes:
       # Горячие данные (каталоги, WAL, активные партиции) — на внутреннем SSD:
       # случайный доступ, которым живёт конвейер, требует IOPS, а не мегабайт в секунду.
       - /opt/BinanceCollector/pgdata:/var/lib/postgresql/data
       # Холодное табличное пространство — на внешнем HDD: закрытые месяцы Trades
-      # переезжают сюда одним последовательным копированием (эвакуация в
-      # PartitionMaintenanceWorker). Отключён диск — свежие данные работают,
+      # переезжают сюда одним последовательным копированием (pg_cron →
+      # sp_evacuate_next_cold_partition). Отключён диск — свежие данные работают,
       # запросы за старые периоды падают с ошибкой undefined_file.
       - /mnt/ext/pg_tablespaces:/mnt/pg_tablespaces
+      # Init-скрипты отрабатывают только на чистой инициализации: схема, схема Hangfire,
+      # холодное пространство, расширение pg_cron и расписание эвакуации.
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
     command:
       - "postgres"
       - "-c"
       - "password_encryption=md5"
+      # pg_cron грузится только через preload; планировщик работает в БД данных.
+      - "-c"
+      - "shared_preload_libraries=pg_cron"
+      - "-c"
+      - "cron.database_name=market_analytics"
     networks:
       - internal_network # База данных подключена к внутренней сети
     ports:
