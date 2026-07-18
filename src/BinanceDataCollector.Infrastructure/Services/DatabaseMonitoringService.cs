@@ -3,16 +3,22 @@ using BinanceDataCollector.Application.Models;
 using BinanceDataCollector.Application.ViewModels;
 using Dapper;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace BinanceDataCollector.Infrastructure.Services;
 
 public class DatabaseMonitoringService : IDatabaseMonitoringService
 {
+    // Страница мониторинга не должна висеть и не должна ронять запрос в 500 из-за
+    // транзиентной недоступности БД: короткий таймаут + мягкая деградация к «N/A».
+    private const int QueryTimeoutSeconds = 10;
+
     private readonly string _connectionString;
     private readonly IConfiguration _configuration;
-    
-    public DatabaseMonitoringService(IConfiguration configuration)
+    private readonly ILogger<DatabaseMonitoringService> _logger;
+
+    public DatabaseMonitoringService(IConfiguration configuration, ILogger<DatabaseMonitoringService> logger)
     {
         // Используем "служебное" подключение к базе 'postgres', так как из него можно получить размер любой другой базы.
         var originalConnectionString = configuration.GetConnectionString("DefaultConnection");
@@ -22,6 +28,24 @@ public class DatabaseMonitoringService : IDatabaseMonitoringService
         };
         _connectionString = builder.ConnectionString;
         _configuration = configuration;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Выполняет запрос мониторинга, а при сбое возвращает fallback вместо исключения:
+    /// временная недоступность БД деградирует до заглушки, а не в 500 на всей странице.
+    /// </summary>
+    private async Task<T> SafeQueryAsync<T>(Func<Task<T>> query, T fallback, string what)
+    {
+        try
+        {
+            return await query();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Database monitoring: '{What}' unavailable, degrading to fallback.", what);
+            return fallback;
+        }
     }
     
     public async Task<string> GetDatabaseSizeAsync(string databaseName)
@@ -46,8 +70,9 @@ public class DatabaseMonitoringService : IDatabaseMonitoringService
             ORDER BY ConnectionCount DESC;";
         
         await using var connection = new NpgsqlConnection(_connectionString);
-        
-        var connections = await connection.QueryAsync<PostgresConnectionInfo>(sql);
+
+        var connections = await connection.QueryAsync<PostgresConnectionInfo>(
+            new CommandDefinition(sql, commandTimeout: QueryTimeoutSeconds));
         return connections.ToList();
     }
     
@@ -71,31 +96,37 @@ public class DatabaseMonitoringService : IDatabaseMonitoringService
         // --- ЗАПРОС ОБЩЕГО РАЗМЕРА ---
         const string totalSizeSql = "SELECT pg_size_pretty(pg_database_size(@DatabaseName));";
 
-        // --- ЗАПРОС ПОДКЛЮЧЕНИЙ ---
-        const string connectionsSql = "SELECT ..."; // старый запрос подключений
-
         // Подключаемся к ЦЕЛЕВОЙ базе для получения размеров таблиц
         var dbConnectionString = new NpgsqlConnectionStringBuilder(_configuration.GetConnectionString("DefaultConnection"))
             { Database = databaseName }.ConnectionString;
 
-        // Подключаемся к СЛУЖЕБНОЙ базе для получения общего размера и коннектов
-        var serviceConnectionString = new NpgsqlConnectionStringBuilder(_configuration.GetConnectionString("DefaultConnection"))
-            { Database = "postgres" }.ConnectionString;
+        // Три источника независимы: каждый со своим таймаутом и мягкой деградацией,
+        // чтобы недоступность одного не роняла страницу и не блокировала остальные.
+        var tableSizesTask = SafeQueryAsync(async () =>
+        {
+            await using var dbConnection = new NpgsqlConnection(dbConnectionString);
+            var rows = await dbConnection.QueryAsync<TableSizeInfo>(
+                new CommandDefinition(sizeSql, commandTimeout: QueryTimeoutSeconds));
+            return rows.ToList();
+        }, new List<TableSizeInfo>(), "table sizes");
 
-        await using var dbConnection = new NpgsqlConnection(dbConnectionString);
-        await using var serviceConnection = new NpgsqlConnection(serviceConnectionString);
+        var totalSizeTask = SafeQueryAsync(async () =>
+        {
+            await using var serviceConnection = new NpgsqlConnection(_connectionString);
+            return await serviceConnection.QuerySingleOrDefaultAsync<string>(
+                new CommandDefinition(totalSizeSql, new { DatabaseName = databaseName },
+                    commandTimeout: QueryTimeoutSeconds)) ?? "N/A";
+        }, "N/A", "total size");
 
-        // Выполняем все запросы асинхронно и параллельно
-        var tableSizesTask = dbConnection.QueryAsync<TableSizeInfo>(sizeSql);
-        var totalSizeTask = serviceConnection.QuerySingleOrDefaultAsync<string>(totalSizeSql, new { DatabaseName = databaseName });
-        var connectionsTask = GetActiveConnectionsAsync(); // Вызываем существующий метод
+        var connectionsTask = SafeQueryAsync(
+            GetActiveConnectionsAsync, new List<PostgresConnectionInfo>(), "connections");
 
         await Task.WhenAll(tableSizesTask, totalSizeTask, connectionsTask);
 
         return new DatabaseDetailsViewModel
         {
-            TableSizes = (await tableSizesTask).ToList(),
-            TotalDatabaseSize = (await totalSizeTask) ?? "N/A",
+            TableSizes = await tableSizesTask,
+            TotalDatabaseSize = await totalSizeTask,
             Connections = await connectionsTask
         };
     }

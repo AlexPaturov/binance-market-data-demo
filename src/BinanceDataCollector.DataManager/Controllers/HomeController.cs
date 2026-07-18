@@ -106,6 +106,19 @@ namespace BinanceDataCollector.DataManager.Controllers
             var details = await _dbMonitoringService.GetDatabaseDetailsAsync("market_analytics_jobs");
             return PartialView("~/Views/Shared/_DatabaseDetailsPartial.cshtml", details);
         }
+
+        // Цель UseExceptionHandler("/Home/Error"). Без этого action путь 404-ил, и обработчик
+        // исключений падал с InvalidOperationException, маскируя исходную ошибку.
+        // AllowAnonymous — страница ошибки должна открываться даже когда проблема в авторизации.
+        [AllowAnonymous]
+        [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
+        public IActionResult Error()
+        {
+            return View(new ErrorViewModel
+            {
+                RequestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier
+            });
+        }
         
         // public async Task<IActionResult> GetPostgresConnections() { ... }
     }
