@@ -18,6 +18,8 @@ namespace BinanceDataCollector.Worker.Workers;
 ///
 /// Эвакуацию закрытых месяцев на холодный диск этот воркер больше не делает — её
 /// планирует сама БД через pg_cron (`sp_evacuate_next_cold_partition`, миграция 014).
+/// Но решение «месяц закрыт» (печать `MonthSeal`, миграция 015) принимает здесь:
+/// оно требует знания очереди импорта Hangfire, которого у pg_cron-функции нет.
 /// </summary>
 public class PartitionMaintenanceWorker
 {
@@ -63,6 +65,42 @@ public class PartitionMaintenanceWorker
             _logger.LogInformation(
                 "Partition rotation complete, nothing dropped. Size: {SizeGb:F1} GB.", Gb(after));
         }
+    }
+
+    /// <summary>
+    /// Пересчитывает печати закрытых месяцев (`MonthSeal`) — точный критерий эвакуации.
+    ///
+    /// Решение принимается здесь, а не в pg_cron-функции, потому что требует знания,
+    /// которого у SQL нет: идёт ли ещё backfill (очередь импорта Hangfire в другой БД).
+    /// Пока хоть одна задача импорта в полёте — печати не трогаем: месяц может ещё
+    /// докачиваться. Иначе для каждого прошлого месяца с покрытием: данные готовы
+    /// (`fn_month_data_complete`) — ставим печать, иначе снимаем (месяц регрессировал).
+    /// </summary>
+    [Queue("maintenance")]
+    [DisableConcurrentExecution(timeoutInSeconds: 30 * 60)]
+    public async Task ReconcileMonthSealsAsync()
+    {
+        if (await _tradeRepository.IsArchiveImportInFlightAsync())
+        {
+            _logger.LogInformation("Import is in flight — month seals left unchanged.");
+            return;
+        }
+
+        var sealedCount = 0;
+        foreach (var month in await _tradeRepository.GetSealCandidateMonthsAsync())
+        {
+            if (await _tradeRepository.IsMonthDataCompleteAsync(month))
+            {
+                await _tradeRepository.UpsertMonthSealAsync(month);
+                sealedCount++;
+            }
+            else
+            {
+                await _tradeRepository.DeleteMonthSealAsync(month);
+            }
+        }
+
+        _logger.LogInformation("Month seal reconciliation complete. Sealed months: {Sealed}.", sealedCount);
     }
 
     private static double Gb(long bytes) => bytes / (1024.0 * 1024 * 1024);

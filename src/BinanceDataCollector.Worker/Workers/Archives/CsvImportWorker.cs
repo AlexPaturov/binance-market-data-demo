@@ -105,6 +105,10 @@ public class CsvImportWorker
             _logger.LogInformation("Import from file {FileName} completed successfully. Total inserted: {TotalCount} trades.", Path.GetFileName(csvFilePath), totalInserted);
             await _notifier.SendStatusUpdateAsync(connectionId, $"Import from file {Path.GetFileName(csvFilePath)} completed successfully. Total inserted: {totalInserted} trades.");
 
+            // Отмечаем в журнале покрытия: этот (символ, день) у нас есть. По журналу
+            // критерий закрытого месяца понимает полноту (миграция 015).
+            await _tradeRepo.RecordArchiveImportedAsync(symbol, date);
+
             // (Опционально) Очистка после успешного импорта
             var parentDirectory = Directory.GetParent(csvFilePath)?.FullName;
             if (parentDirectory != null && Directory.Exists(parentDirectory))

@@ -12,6 +12,7 @@ namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 public class TradeRepository : ITradeRepository
 {
     private readonly string _connectionString;
+    private readonly string? _hangfireConnectionString;
     private readonly ILogger<TradeRepository> _logger;
 
     public TradeRepository(
@@ -21,6 +22,8 @@ public class TradeRepository : ITradeRepository
     {
         _connectionString = configuration.GetConnectionString("DefaultConnection")
                         ?? throw new InvalidOperationException("Connection string not found.");
+        // Проверка «идёт ли импорт» смотрит в БД Hangfire; в тестах её может не быть.
+        _hangfireConnectionString = configuration.GetConnectionString("HangfireConnection");
         _logger = logger;
     }
 
@@ -217,5 +220,72 @@ public class TradeRepository : ITradeRepository
             LIMIT 1";
 
         return await db.QuerySingleOrDefaultAsync<Trade?>(sql, commandTimeout: 30);
+    }
+
+    // --- Покрытие архивами и печати закрытых месяцев (миграция 015) ---
+
+    public async Task RecordArchiveImportedAsync(string symbol, DateOnly tradeDate)
+    {
+        using var db = Connection;
+        const string sql = @"
+            INSERT INTO public.""ArchiveImportLog"" (""Symbol"", ""TradeDate"", ""ImportedAt"")
+            VALUES (@Symbol, @TradeDate, now())
+            ON CONFLICT (""Symbol"", ""TradeDate"") DO UPDATE SET ""ImportedAt"" = now();";
+        await db.ExecuteAsync(sql, new { Symbol = symbol, TradeDate = tradeDate }, commandTimeout: 30);
+    }
+
+    public async Task<bool> IsArchiveImportInFlightAsync()
+    {
+        // Backfill «в полёте» = есть задача пайплайна импорта в Enqueued/Processing.
+        // Пока хоть одна идёт — печати закрытых месяцев не трогаем.
+        if (string.IsNullOrEmpty(_hangfireConnectionString))
+            return false;
+
+        using var db = new NpgsqlConnection(_hangfireConnectionString);
+        const string sql = @"
+            SELECT EXISTS (
+                SELECT 1 FROM hangfire.job
+                WHERE statename IN ('Enqueued', 'Processing')
+                  AND invocationdata->>'Method' IN
+                      ('DownloadArchiveAsync', 'UnpackArchiveAsync', 'ImportFromCsvAsync', 'ImportArchiveAsync'));";
+        return await db.ExecuteScalarAsync<bool>(sql, commandTimeout: 30);
+    }
+
+    public async Task<IEnumerable<DateOnly>> GetSealCandidateMonthsAsync()
+    {
+        // Кандидаты — прошлые месяцы, для которых вообще есть покрытие в журнале.
+        using var db = Connection;
+        const string sql = @"
+            SELECT DISTINCT date_trunc('month', ""TradeDate"")::date AS month
+            FROM public.""ArchiveImportLog""
+            WHERE date_trunc('month', ""TradeDate"") < date_trunc('month', now())
+            ORDER BY month;";
+        return await db.QueryAsync<DateOnly>(sql, commandTimeout: 60);
+    }
+
+    public async Task<bool> IsMonthDataCompleteAsync(DateOnly month)
+    {
+        using var db = Connection;
+        return await db.ExecuteScalarAsync<bool>(
+            "SELECT public.fn_month_data_complete(@Month)",
+            new { Month = month }, commandTimeout: 120);
+    }
+
+    public async Task UpsertMonthSealAsync(DateOnly month)
+    {
+        using var db = Connection;
+        const string sql = @"
+            INSERT INTO public.""MonthSeal"" (""PeriodMonth"", ""SealedAt"")
+            VALUES (@Month, now())
+            ON CONFLICT (""PeriodMonth"") DO NOTHING;";
+        await db.ExecuteAsync(sql, new { Month = month }, commandTimeout: 30);
+    }
+
+    public async Task DeleteMonthSealAsync(DateOnly month)
+    {
+        using var db = Connection;
+        await db.ExecuteAsync(
+            @"DELETE FROM public.""MonthSeal"" WHERE ""PeriodMonth"" = @Month;",
+            new { Month = month }, commandTimeout: 30);
     }
 }

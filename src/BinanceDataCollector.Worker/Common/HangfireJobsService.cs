@@ -95,6 +95,15 @@ public class HangfireJobsService : IHostedService
         // расписание, оставшееся на проде от прежней Hangfire-версии.
         _recurringJobManager.RemoveIfExists("partition-evacuation");
 
+        // Печати закрытых месяцев (MonthSeal) — точный критерий эвакуации. Решение требует
+        // знания очереди импорта, поэтому его принимает приложение, а не pg_cron. Раз в час.
+        _recurringJobManager.AddOrUpdate<PartitionMaintenanceWorker>(
+            "month-seal-reconcile",
+            worker => worker.ReconcileMonthSealsAsync(),
+            Cron.Hourly(),
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
+        );
+
         // Проверки качества данных — только вручную, кнопкой на странице /DataQuality.
         _recurringJobManager.RemoveIfExists("data-quality-check");
 

@@ -62,6 +62,7 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
         await InsertTradeAsync(1, Jan2026Ms + 1_000);
         await _repository.AggregateDirtyMinutesAsync(100);
         await ExecuteAsync(@"UPDATE public.""Ohlcv_1min"" SET ""ProcessingStatus"" = 'processed';");
+        await SealMonthAsync(Jan2026Ms);
 
         var moved = await EvacuateAsync();
 
@@ -85,26 +86,41 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
         Assert.Null(await EvacuateAsync());
     }
 
-    /// <summary>Грязные минуты — месяц ещё пересчитывается, агрегация будет читать его тики.</summary>
+    /// <summary>Грязные минуты — месяц ещё пересчитывается: не закрыт, хоть и запечатан.</summary>
     [Fact]
     public async Task Evacuate_SkipsMonth_WithDirtyMinutes()
     {
         await InsertTradeAsync(1, Jan2026Ms + 1_000);   // минута в очереди, не агрегирована
+        await SealMonthAsync(Jan2026Ms);                // печать есть, но данные не готовы
 
         Assert.Null(await EvacuateAsync());
     }
 
-    /// <summary>Необработанные свечи — фичи месяца не досчитаны, месяц не закрыт.</summary>
+    /// <summary>Необработанные свечи — индикаторы не досчитаны: не закрыт, хоть и запечатан.</summary>
     [Fact]
     public async Task Evacuate_SkipsMonth_WithUnprocessedCandles()
     {
         await InsertTradeAsync(1, Jan2026Ms + 1_000);
         await _repository.AggregateDirtyMinutesAsync(100);   // свечи остались 'new'
+        await SealMonthAsync(Jan2026Ms);
 
         Assert.Null(await EvacuateAsync());
     }
 
-    /// <summary>Текущий месяц не эвакуируется никогда, каким бы «тихим» он ни был.</summary>
+    /// <summary>Нет покрытия в журнале — месяц не считается закрытым, даже с печатью.</summary>
+    [Fact]
+    public async Task Evacuate_SkipsMonth_WithoutCoverage()
+    {
+        await InsertTradeAsync(1, Jan2026Ms + 1_000);
+        await _repository.AggregateDirtyMinutesAsync(100);
+        await ExecuteAsync(@"UPDATE public.""Ohlcv_1min"" SET ""ProcessingStatus"" = 'processed';");
+        // Печать без записи в журнал покрытия: fn_month_data_complete = false.
+        await ExecuteAsync(@"INSERT INTO public.""MonthSeal"" (""PeriodMonth"") VALUES ('2026-01-01');");
+
+        Assert.Null(await EvacuateAsync());
+    }
+
+    /// <summary>Текущий месяц не эвакуируется никогда, каким бы «закрытым» он ни выглядел.</summary>
     [Fact]
     public async Task Evacuate_NeverTouchesCurrentMonth()
     {
@@ -115,6 +131,20 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
         await InsertTradeAsync(1, currentMonthStart + 1_000);
         await _repository.AggregateDirtyMinutesAsync(100);
         await ExecuteAsync(@"UPDATE public.""Ohlcv_1min"" SET ""ProcessingStatus"" = 'processed';");
+        await SealMonthAsync(currentMonthStart);
+
+        Assert.Null(await EvacuateAsync());
+    }
+
+    /// <summary>Дыра в покрытии месяца (пропущен день внутри диапазона) — не закрыт.</summary>
+    [Fact]
+    public async Task Evacuate_SkipsMonth_WithCoverageGap()
+    {
+        await InsertTradeAsync(1, Jan2026Ms + 1_000);
+        await _repository.AggregateDirtyMinutesAsync(100);
+        await ExecuteAsync(@"UPDATE public.""Ohlcv_1min"" SET ""ProcessingStatus"" = 'processed';");
+        // Покрытие 1-е и 3-е января, 2-е пропущено → диапазон не сплошной.
+        await SealMonthAsync(Jan2026Ms, 1, 3);
 
         Assert.Null(await EvacuateAsync());
     }
@@ -139,6 +169,24 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
                   ARRAY[1.0]::numeric[], ARRAY[100.0]::numeric[], ARRAY[@T]::bigint[],
                   ARRAY[false]::boolean[], ARRAY[true]::boolean[]);",
             new { Id = id, T = timeMs });
+    }
+
+    // Печать закрытого месяца + покрытие в журнале (то, что ставит воркер) — эвакуация
+    // теперь гейтится на них.
+    private async Task SealMonthAsync(long monthStartMs, params int[] days)
+    {
+        var m = DateTimeOffset.FromUnixTimeMilliseconds(monthStartMs).UtcDateTime;
+        foreach (var d in days.Length > 0 ? days : new[] { 1 })
+        {
+            await ExecuteAsync(
+                @"INSERT INTO public.""ArchiveImportLog"" (""Symbol"", ""TradeDate"")
+                  VALUES ('BTCUSDT', @D) ON CONFLICT DO NOTHING;",
+                new { D = new DateOnly(m.Year, m.Month, d) });
+        }
+        await ExecuteAsync(
+            @"INSERT INTO public.""MonthSeal"" (""PeriodMonth"")
+              VALUES (@M) ON CONFLICT DO NOTHING;",
+            new { M = new DateOnly(m.Year, m.Month, 1) });
     }
 
     private async Task ExecuteAsync(string sql, object? param = null)

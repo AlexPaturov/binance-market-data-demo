@@ -80,4 +80,30 @@ public interface ITradeRepository
     /// архивы за такие даты бессмысленно.
     /// </summary>
     Task<long> GetRetentionFloorMsAsync();
+
+    // --- Покрытие архивами и печати закрытых месяцев (миграция 015) ---
+
+    /// <summary>Отмечает в журнале покрытия успешный импорт (символ, день).</summary>
+    Task RecordArchiveImportedAsync(string symbol, DateOnly tradeDate);
+
+    /// <summary>
+    /// Идёт ли backfill: есть ли задача пайплайна импорта в Enqueued/Processing (Hangfire).
+    /// Пока хоть одна идёт, печати закрытых месяцев не пересчитываются.
+    /// </summary>
+    Task<bool> IsArchiveImportInFlightAsync();
+
+    /// <summary>Прошлые месяцы, для которых в журнале покрытия есть хоть какие-то дни.</summary>
+    Task<IEnumerable<DateOnly>> GetSealCandidateMonthsAsync();
+
+    /// <summary>
+    /// Данные месяца готовы (`fn_month_data_complete`): всё сагрегировано, все свечи
+    /// обработаны, покрытие по журналу сплошное.
+    /// </summary>
+    Task<bool> IsMonthDataCompleteAsync(DateOnly month);
+
+    /// <summary>Ставит печать «месяц закрыт».</summary>
+    Task UpsertMonthSealAsync(DateOnly month);
+
+    /// <summary>Снимает печать (месяц перестал быть закрытым — появилась работа).</summary>
+    Task DeleteMonthSealAsync(DateOnly month);
 }

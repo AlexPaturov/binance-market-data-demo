@@ -1467,6 +1467,29 @@ CREATE TABLE public."HistoricalAudit_Watermarks" (
 
 
 --
+-- Журнал покрытия (миграция 015): какой (символ, день) импортирован из архива.
+-- Ground truth для критерия «месяц закрыт». Пишет CsvImportWorker при успешном импорте.
+--
+CREATE TABLE public."ArchiveImportLog" (
+    "Symbol"     character varying(20) NOT NULL,
+    "TradeDate"  date NOT NULL,
+    "ImportedAt" timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT "PK_ArchiveImportLog" PRIMARY KEY ("Symbol", "TradeDate")
+);
+
+CREATE INDEX "IX_ArchiveImportLog_TradeDate" ON public."ArchiveImportLog" USING btree ("TradeDate");
+
+--
+-- Маркер закрытого месяца (миграция 015): печатает воркер, читает эвакуация.
+--
+CREATE TABLE public."MonthSeal" (
+    "PeriodMonth" date NOT NULL,
+    "SealedAt"    timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT "PK_MonthSeal" PRIMARY KEY ("PeriodMonth")
+);
+
+
+--
 -- Name: Ohlcv_1min; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9847,9 +9870,44 @@ ALTER TABLE public."Ohlcv_1min"
 
 
 --
--- Эвакуация закрытых месяцев Trades на холодное пространство `cold` (миграция 013).
--- Горячие партиции живут на SSD (IOPS), закрытые месяцы тиков переезжают на HDD
--- одним последовательным копированием. Без пространства `cold` функция бездействует.
+-- Данные месяца готовы (миграция 015): всё сагрегировано, все свечи обработаны,
+-- покрытие по ArchiveImportLog сплошное. «Backfill не в полёте» проверяет воркер
+-- по очереди Hangfire — сюда не входит.
+--
+CREATE FUNCTION public.fn_month_data_complete(p_month date)
+RETURNS boolean
+    LANGUAGE sql
+    STABLE
+    AS $$
+    WITH bounds AS (
+        SELECT "Symbol",
+               min("TradeDate") AS lo,
+               max("TradeDate") AS hi,
+               count(*)         AS n
+        FROM public."ArchiveImportLog"
+        WHERE "TradeDate" >= p_month
+          AND "TradeDate" <  (p_month + interval '1 month')
+        GROUP BY "Symbol"
+    )
+    SELECT
+        EXISTS (SELECT 1 FROM bounds)
+        AND NOT EXISTS (SELECT 1 FROM bounds WHERE n <> (hi - lo + 1))
+        AND NOT EXISTS (
+            SELECT 1 FROM public."DirtyMinutes"
+            WHERE "OpenTime" >= (EXTRACT(EPOCH FROM p_month)::bigint * 1000)
+              AND "OpenTime" <  (EXTRACT(EPOCH FROM (p_month + interval '1 month'))::bigint * 1000))
+        AND NOT EXISTS (
+            SELECT 1 FROM public."Ohlcv_1min"
+            WHERE "OpenTime" >= (EXTRACT(EPOCH FROM p_month)::bigint * 1000)
+              AND "OpenTime" <  (EXTRACT(EPOCH FROM (p_month + interval '1 month'))::bigint * 1000)
+              AND "ProcessingStatus" <> 'processed');
+$$;
+
+
+--
+-- Эвакуация закрытых месяцев Trades на холодное пространство `cold` (миграция 013,
+-- гейт на MonthSeal — миграция 015). Горячие партиции живут на SSD (IOPS), закрытые
+-- месяцы тиков переезжают на HDD. Без пространства `cold` функция бездействует.
 --
 
 CREATE FUNCTION public.sp_evacuate_next_cold_partition()
@@ -9904,20 +9962,10 @@ BEGIN
             CONTINUE;
         END IF;
 
-        -- Месяц ещё не закрыт: агрегация будет читать его тики — не трогаем.
-        IF EXISTS (
-            SELECT 1 FROM public."DirtyMinutes"
-            WHERE "OpenTime" >= v_start_ms AND "OpenTime" < v_end_ms)
-        THEN
-            CONTINUE;
-        END IF;
-
-        -- Фичи месяца не досчитаны: свечи месяца ещё могут пересчитаться и снова
-        -- запачкать минуты — подождём.
-        IF EXISTS (
-            SELECT 1 FROM public."Ohlcv_1min"
-            WHERE "OpenTime" >= v_start_ms AND "OpenTime" < v_end_ms
-              AND "ProcessingStatus" <> 'processed')
+        -- Месяц закрыт: маркер MonthSeal от воркера (backfill не в полёте + покрытие)
+        -- плюс перепроверка данных на момент эвакуации (страховка от устаревшего маркера).
+        IF NOT EXISTS (SELECT 1 FROM public."MonthSeal" WHERE "PeriodMonth" = v_month::date)
+           OR NOT public.fn_month_data_complete(v_month::date)
         THEN
             CONTINUE;
         END IF;
