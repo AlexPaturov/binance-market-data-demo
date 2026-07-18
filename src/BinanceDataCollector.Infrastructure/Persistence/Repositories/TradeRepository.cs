@@ -6,7 +6,6 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using System.Data;
 using System.Data.Common;
-using System.Diagnostics;
 
 namespace BinanceDataCollector.Infrastructure.Persistence.Repositories;
 
@@ -111,13 +110,6 @@ public class TradeRepository : ITradeRepository
             "SELECT public.fn_retention_floor_ms()", commandTimeout: 30);
     }
 
-    public async Task<long?> GetLastTradeTimeAsync(string symbol)
-    {
-        using var db = Connection;
-        const string sql = "SELECT MAX(\"TradeTime\") FROM \"Trades\" WHERE \"Symbol\" = @Symbol";
-        return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol }, commandTimeout: 120);
-    }
-
     public async Task<int> AggregateDirtyMinutesAsync(int maxMinutes)
     {
         using var db = Connection;
@@ -125,65 +117,6 @@ public class TradeRepository : ITradeRepository
             "SELECT public.sp_aggregate_dirty_minutes(@MaxMinutes)",
             new { MaxMinutes = maxMinutes },
             commandTimeout: 600);
-    }
-
-    // на уаление ?
-    public async Task<long?> GetLastTradeIdAsync(string symbol)
-    {
-        using var db = Connection;
-        const string sql = @"SELECT MAX(""TradeId"") FROM public.""Trades"" WHERE ""Symbol"" = @Symbol";
-        return await db.QuerySingleOrDefaultAsync<long?>(sql, new { Symbol = symbol }, commandTimeout: 120);
-    }
-
-    // список всех дыр для символа за 24 часа
-    public async Task<List<DataGap>> GetGapsForSymbolDayAsync(string symbol)
-    {
-        const string sql = @"
-            WITH OrderedTrades AS (
-                SELECT
-                    ""TradeId"",
-                    -- Используем LAG() для получения ID предыдущей сделки
-                    LAG(""TradeId"", 1) OVER (ORDER BY ""TradeId"" ASC) AS ""PrevTradeId""
-                FROM public.""Trades""
-                WHERE 
-                    ""Symbol"" = @Symbol 
-                    -- Фильтрация по TradeTime гораздо эффективнее, если по нему есть индекс.
-                    -- Мы вычисляем временную метку 48 часов назад ОДИН РАЗ.
-                    AND ""TradeTime"" >= (EXTRACT(EPOCH FROM (NOW() - INTERVAL '24 hours')) * 1000)::BIGINT
-            )
-            SELECT
-                ""PrevTradeId"" + 1 AS ""GapStart"", -- Маппинг на record DataGap
-                ""TradeId"" - 1 AS ""GapEnd""       -- Маппинг на record DataGap
-            FROM OrderedTrades
-            WHERE
-                -- Дыра есть, если ID не идут подряд
-                ""TradeId"" > ""PrevTradeId"" + 1
-            ORDER BY 
-                ""GapStart"" ASC; -- Сортируем по началу дыры
-            ";
-        using var db = Connection;
-        var gaps = await db.QueryAsync<DataGap>(sql, new { Symbol = symbol }, commandTimeout: 120);
-        return gaps.AsList();
-    }
-
-    public async Task<long?> GetLastTradeIdBeforeTimestampAsync(string symbol, long timestampMs)
-    {
-        using var db = Connection;
-
-        // Этот запрос очень эффективно использует индекс IX_Trades_Symbol_TradeTime
-        const string sql = @"
-            SELECT ""TradeId""
-            FROM public.""Trades""
-            WHERE ""Symbol"" = @Symbol AND ""TradeTime"" < @TimestampMs
-            ORDER BY ""TradeTime"" DESC, ""TradeId"" DESC
-            LIMIT 1;
-        ";
-
-        return await db.QuerySingleOrDefaultAsync<long?>(sql, new
-        {
-            Symbol = symbol,
-            TimestampMs = timestampMs
-        }, commandTimeout: 120);
     }
 
     public async Task<Trade?> GetLastTradeAsync(string symbol)
@@ -199,55 +132,6 @@ public class TradeRepository : ITradeRepository
             LIMIT 1;
     ";
         return await db.QuerySingleOrDefaultAsync<Trade>(sql, new { Symbol = symbol }, commandTimeout: 120);
-    }
-
-    public async Task<IEnumerable<long>> GetTradeIdsInWindowAsync(string symbol, long startTradeId, long endTradeId)
-    {
-        // 1. Создаем Stopwatch для замера времени
-        var stopwatch = Stopwatch.StartNew();
-        using var db = Connection;
-
-        const string sql = @"
-        SELECT ""TradeId"" 
-        FROM public.""Trades""
-        WHERE ""Symbol"" = @Symbol 
-          AND ""TradeId"" >= @StartTradeId 
-          AND ""TradeId"" <= @EndTradeId
-        ORDER BY ""TradeId"" ASC";
-
-        try
-        {
-            return await db.QueryAsync<long>(sql, new
-            {
-                Symbol = symbol,
-                StartTradeId = startTradeId,
-                EndTradeId = endTradeId
-            }, commandTimeout: 600);
-        }
-        catch (Exception ex)
-        {
-            // 2. Останавливаем Stopwatch в блоке catch
-            stopwatch.Stop();
-
-            // 3. Создаем новое, более информативное исключение
-            var detailedException = new InvalidOperationException(
-                $"Ошибка при поиске дыр для символа '{symbol}' в диапазоне ID {startTradeId}-{endTradeId} " +
-                $"после {stopwatch.ElapsedMilliseconds} мс.",
-                ex // <-- Вкладываем оригинальное исключение внутрь
-            );
-
-            // 4. Логируем ОРИГИНАЛЬНОЕ исключение со всеми деталями
-            _logger.LogError(ex,
-                "ЗАПРОС УПАЛ ПО ТАЙМАУТУ. Символ: {Symbol}, Диапазон ID: {StartId} - {EndId}, Время выполнения до сбоя: {Elapsed} мс.",
-                symbol,
-                startTradeId,
-                endTradeId,
-                stopwatch.ElapsedMilliseconds);
-
-            // 5. Пробрасываем НОВОЕ, обогащенное исключение наверх.
-            // Логика Hangfire по перезапуску не сломается.
-            throw detailedException;
-        }
     }
 
     public async Task<List<DataGap>> FindGapsInTimeWindowAsync(string symbol, DateTime startTime, DateTime endTime)
