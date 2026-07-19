@@ -136,6 +136,38 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
         Assert.Null(await EvacuateAsync());
     }
 
+    /// <summary>
+    /// Пустая партиция на cold возвращается на горячее пространство перед вставкой
+    /// (миграция 016): снос очищает строки, но tablespace не меняет — без rehydrate
+    /// переимпорт снесённого месяца шёл бы на холодный диск.
+    /// </summary>
+    [Fact]
+    public async Task EnsurePartitions_ReturnsEmptyColdPartition_ToHotTablespace()
+    {
+        // Партиция пуста и «застряла» на cold (как после TRUNCATE эвакуированного месяца).
+        await ExecuteAsync(@"ALTER TABLE public.""Trades_2026_02"" SET TABLESPACE cold;");
+
+        // Путь вставки: BulkInsertAsync зовёт ensure перед записью.
+        await ExecuteAsync(@"SELECT public.sp_ensure_month_partitions(1769904000000);");   // 2026-02-01
+
+        var tablespace = await QuerySingleAsync<string?>(@"
+            SELECT t.spcname FROM pg_class c
+            LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace
+            WHERE c.relname = 'Trades_2026_02';");
+        Assert.Null(tablespace);   // NULL = базовое (горячее) пространство
+
+        // Непустая партиция на cold НЕ трогается: закрытый месяц остаётся холодным.
+        await InsertTradeAsync(10, 1769904000000 + 1_000);
+        await ExecuteAsync(@"ALTER TABLE public.""Trades_2026_02"" SET TABLESPACE cold;");
+        await ExecuteAsync(@"SELECT public.sp_ensure_month_partitions(1769904000000);");
+
+        tablespace = await QuerySingleAsync<string?>(@"
+            SELECT t.spcname FROM pg_class c
+            LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace
+            WHERE c.relname = 'Trades_2026_02';");
+        Assert.Equal("cold", tablespace);
+    }
+
     /// <summary>Дыра в покрытии месяца (пропущен день внутри диапазона) — не закрыт.</summary>
     [Fact]
     public async Task Evacuate_SkipsMonth_WithCoverageGap()

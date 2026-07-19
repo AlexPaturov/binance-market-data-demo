@@ -279,6 +279,51 @@ BEGIN
                        'DataQualityFindings_' || suffix,
                        month_start AT TIME ZONE 'UTC', month_end AT TIME ZONE 'UTC');
     END IF;
+
+    -- Пустая партиция месяца на cold возвращается на горячее пространство (миграция 016):
+    -- снос очищает строки, но tablespace не меняет — без этого переимпорт снесённого
+    -- месяца шёл бы на медленный холодный диск.
+    PERFORM public.sp_rehydrate_if_empty_cold('Trades_' || suffix);
+END;
+$$;
+
+
+--
+-- Пустая партиция на холодном пространстве возвращается на горячее (миграция 016).
+-- Перенос пустой партиции мгновенный; непустые (закрытые месяцы) не трогаются.
+--
+
+CREATE FUNCTION public.sp_rehydrate_if_empty_cold(p_table text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_on_cold BOOLEAN;
+    v_empty   BOOLEAN;
+    v_index   RECORD;
+BEGIN
+    SELECT (t.spcname = 'cold') INTO v_on_cold
+    FROM pg_class c
+    JOIN pg_tablespace t ON t.oid = c.reltablespace
+    WHERE c.relname = p_table AND c.relkind = 'r';
+
+    IF NOT COALESCE(v_on_cold, false) THEN
+        RETURN;
+    END IF;
+
+    EXECUTE format('SELECT NOT EXISTS (SELECT 1 FROM public.%I)', p_table) INTO v_empty;
+    IF NOT v_empty THEN
+        RETURN;
+    END IF;
+
+    EXECUTE format('ALTER TABLE public.%I SET TABLESPACE pg_default', p_table);
+    FOR v_index IN
+        SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = p_table
+    LOOP
+        EXECUTE format('ALTER INDEX public.%I SET TABLESPACE pg_default', v_index.indexname);
+    END LOOP;
+
+    RAISE NOTICE 'Пустая партиция % возвращена с cold на горячее пространство.', p_table;
 END;
 $$;
 
