@@ -55,8 +55,9 @@ Binance WebSocket ──► книга в памяти ──► OrderBook_Featu
 | `historical-audit` | `HistoricalAuditorWorker` | раз в 6 часов | `historical_audit` | Глубокая проверка истории на пропуски |
 | `audit-initializer` | `AuditInitializationWorker` | раз в день | `default` | Вотермарки аудита для новых символов |
 | `partition-maintenance` | `PartitionMaintenanceWorker` | раз в день | `maintenance` | Ротация партиций по размеру диска |
+| `month-seal-reconcile` | `PartitionMaintenanceWorker` | раз в час | `maintenance` | Печати закрытых месяцев `MonthSeal` — критерий эвакуации ([ADR 0012](../adr/0012-month-seal-coverage-journal.md)) |
 
-Агрегация свечей и расчёт индикаторов **в этой таблице отсутствуют намеренно**: у них поводом служит появление работы, а не время, — их ведут событийные сервисы выше. Эвакуацию закрытых месяцев на холодный диск планирует сама БД через `pg_cron` (см. [`03_database.md`](./03_database.md)), тоже вне Hangfire.
+Агрегация свечей и расчёт индикаторов **в этой таблице отсутствуют намеренно**: у них поводом служит появление работы, а не время, — их ведут событийные сервисы выше. Сам физический переезд закрытых месяцев на холодный диск планирует БД через `pg_cron` (см. [`03_database.md`](./03_database.md)), вне Hangfire; в Hangfire остаётся лишь решение «месяц закрыт» (`month-seal-reconcile`) — оно требует знания очереди импорта.
 
 Очереди разнесены по двум серверам Hangfire: `realtime`, `quick_audit` и `maintenance` разбирает `PriorityServer`, остальные — `BackgroundServer`. Обслуживание партиций стоит на приоритетном сервере последней очередью, чтобы импорт архивов не мог его вытеснить (та же логика, что раньше держала на нём агрегацию) — [ADR 0003](../adr/0003-hangfire-queue-model.md).
 
@@ -68,7 +69,7 @@ Binance WebSocket ──► книга в памяти ──► OrderBook_Featu
 
 | Воркер | Откуда | Что делает |
 | :--- | :--- | :--- |
-| `ArchiveDownloaderWorker` → `ArchiveUnpackerWorker` → `CsvImportWorker` | страница **Archive** | Цепочка: скачать ZIP → распаковать → импортировать CSV в `Trades` |
+| `ArchiveDownloaderWorker` → `ArchiveUnpackerWorker` → `CsvImportWorker` | страница **Archive** | Цепочка: скачать ZIP → распаковать → импортировать CSV в `Trades`. Скачивание и распаковка — раздельные ручные шаги (кнопки Download и Process); распаковщик сам ставит импорт следующим шагом и удаляет ZIP. Распаковка и импорт — на одной очереди `archive_import` (общий приоритет, `[Queue]` на интерфейсе `IArchiveUnpackerWorker`), иначе распаковка голодала бы за импортом. Импорт пишет покрытие в `ArchiveImportLog` — ground truth для критерия закрытого месяца ([ADR 0012](../adr/0012-month-seal-coverage-journal.md)). |
 | `ArchiveDeletionWorker` | страница **Archive** | Удалить скачанные архивы |
 | `DataQualityCheckWorker` | страница **Data Quality** | 18 проверок качества данных в 4 группах |
 | `FillGapWorker`, `OnlineArchiveImportWorker` | ставятся аудиторами | Закрытие найденных дыр |
