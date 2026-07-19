@@ -387,3 +387,4 @@ docker-compose.override.yml
 **/Properties/launchSettings.json
 /postgres_data
 /pgdata.img
+docker/compose/dev_cold/

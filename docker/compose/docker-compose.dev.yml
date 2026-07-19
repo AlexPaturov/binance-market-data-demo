@@ -2,7 +2,13 @@
 
 services:
   bdc_db:
-    image: postgres:16-alpine
+    # Тот же образ, что на проде (docker/postgres/Dockerfile = postgres:16 + pg_cron):
+    # один образ, один init, ноль дрейфа окружений. Тиринг на деве номинальный (один
+    # диск), но init-скрипт 04 требует pg_cron, а C.UTF-8 держит схему переносимой.
+    build:
+      context: ../postgres
+      dockerfile: Dockerfile
+    image: bdc/postgres-cron:16
     container_name: bdc_db
     restart: always
     ports:
@@ -11,6 +17,15 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=market_analytics
+      # Коллация как на проде: байтовый порядок, независимый от libc.
+      - POSTGRES_INITDB_ARGS=--locale=C.UTF-8 --encoding=UTF8
+    command:
+      - "postgres"
+      # pg_cron грузится только через preload; планировщик работает в БД данных.
+      - "-c"
+      - "shared_preload_libraries=pg_cron"
+      - "-c"
+      - "cron.database_name=market_analytics"
     healthcheck:
       # Проверяем, готова ли база принимать соединения
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d market_analytics" ]
@@ -21,6 +36,8 @@ services:
     volumes:
       - dev_postgres_data:/var/lib/postgresql/data
       - ../postgres/init:/docker-entrypoint-initdb.d
+      # Холодное пространство — локальная папка (на деве один диск, тиринг номинальный).
+      - ./dev_cold:/mnt/pg_tablespaces
 
   bdc_pgbouncer:
     image: edoburu/pgbouncer
