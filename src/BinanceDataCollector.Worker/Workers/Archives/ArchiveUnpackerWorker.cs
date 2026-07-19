@@ -36,6 +36,10 @@ public class ArchiveUnpackerWorker : IArchiveUnpackerWorker
     /// <summary>
     /// Проверяет, распаковывает архив и ставит задачу на импорт.
     /// </summary>
+    // Та же очередь, что у импорта, а не `default`: распаковка и импорт — один конвейер,
+    // и распаковка не должна деприоритезироваться за тяжёлым импортом на общем фоновом
+    // сервере (иначе зипы копятся на диске, ожидая своей очереди в `default`).
+    [Queue("archive_import")]
     public async Task UnpackArchiveAsync(string zipFileName, string connectionId)
     {
         var zipFilePath = Path.Combine(_downloadPath, zipFileName);
