@@ -24,7 +24,7 @@
 |   +--------------------------------------------------+   |
 |   |  Docker (на том же хосте)                        |   |
 |   |                                                  |   |
-|   |   - bdc_db (Postgres 16)   :5432                 |   |
+|   |   - bdc_db (Postgres 16 + pg_cron)  :5432         |   |
 |   |   - bdc_pgbouncer          :6432                 |   |
 |   |   - bdc_rabbitmq           :5672 / :15672        |   |
 |   |   - bdc_seq                :5341                 |   |
@@ -65,17 +65,25 @@
 
 ## 3. Базы данных
 
-В Postgres-контейнере две независимых базы (как в проде):
+Образ БД — тот же, что на проде: собственный `bdc/postgres-cron:16` из `docker/postgres/Dockerfile` (postgres:16 + `pg_cron`). Коллация — `C.UTF-8`, как на проде: один образ, один init, ноль дрейфа окружений (см. [ADR 0011](../adr/0011-hot-cold-tiering-pg-cron.md)). Тиринг на деве номинальный — `cold` это локальная папка `dev_cold` на том же диске.
 
-- **`market_analytics`** — основная бизнес-БД (трейды, OHLCV, tracked symbols). Создаётся через `POSTGRES_DB` в docker-compose.
-- **`market_analytics_jobs`** — служебная БД для Hangfire. Создаётся автоматически при первом старте Postgres через init-скрипт `docker/postgres/init/01_create_jobs_db.sql`.
+В контейнере две независимых базы (как в проде):
 
-> Init-скрипт выполняется **только при пустом data dir** (первый запуск). На существующих данных — не запускается.
+- **`market_analytics`** — основная бизнес-БД (трейды, OHLCV, tracked symbols). Создаётся через `POSTGRES_DB`.
+- **`market_analytics_jobs`** — служебная БД для Hangfire.
 
-После первого поднятия контейнера нужно применить схему:
-```bash
-docker exec -i bdc_db psql -U bindatacoll -d market_analytics < sqlScripts/prod_schema_2026-05-09.sql
-```
+Схема применяется **автоматически** при первом старте на пустом volume — init-скрипты из `docker/postgres/init/` (`docker-entrypoint-initdb.d`), по порядку:
+
+| Скрипт | Что делает |
+| :--- | :--- |
+| `01_create_jobs_db.sql` | создаёт `market_analytics_jobs` |
+| `02_schema.sql` | полная схема данных: партиционированная `Trades`, свечи, фичи, очередь `DirtyMinutes`, журнал `ArchiveImportLog`, печати `MonthSeal`, все процедуры |
+| `03_hangfire_schema.sql` | схема Hangfire (дамп с прода — приложение её не создаёт, `PrepareSchemaIfNecessary=false`) |
+| `04_tablespace_and_cron.sql` | tablespace `cold`, расширение `pg_cron`, расписание эвакуации |
+
+> Скрипты выполняются **только при пустом data dir** (первый запуск). На существующих данных init не запускается — новые миграции на живой дев накатываются руками или пересозданием volume.
+
+Ручного наката схемы больше не требуется.
 
 ---
 
@@ -87,11 +95,11 @@ docker exec -i bdc_db psql -U bindatacoll -d market_analytics < sqlScripts/prod_
 | Seq         | named volume `bdc_seq_data`       | named volume     |
 | RabbitMQ    | named volume `bdc_rabbitmq_data`  | named volume     |
 
-DEV-база — локальная и лёгкая: только схема, без исторических данных. Схема применяется автоматически из baseline `docker/postgres/init/02_schema.sql` при первом старте на чистом volume (`docker-entrypoint-initdb.d`), включая партиционированную `Trades` и 24 пустые помесячные партиции.
+DEV-база — локальная и лёгкая: только схема, без исторических данных (подробности init — раздел 3). Плюс локальная папка `dev_cold` (bind-mount под tablespace `cold`) — рантайм-данные, в `.gitignore`.
 
-Исторические данные (сотни ГБ) живут на проде, на внешнем 4TB-диске — см. `docker/docs/README_VOLUMES.md`.
+Исторические данные (сотни ГБ) живут на проде: горячие месяцы на внутреннем SSD, закрытые — на внешнем HDD ([ADR 0011](../adr/0011-hot-cold-tiering-pg-cron.md)).
 
-> Чтобы пересоздать DEV-базу с нуля: `docker compose ... down`, `docker volume rm compose_dev_postgres_data`, затем `dev-start.sh` — схема накатится заново.
+> Чтобы пересоздать DEV-базу с нуля: остановить `bdc_db`, `docker volume rm compose_dev_postgres_data`, при смене образа — `docker compose -f docker-compose.dev.yml build bdc_db`, затем up. Схема (все init-скрипты) накатится заново.
 
 ---
 
