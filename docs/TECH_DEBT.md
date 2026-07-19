@@ -19,9 +19,11 @@ SEQ_ADMIN_PASS=lex
 
 Файл `src/BinanceDataCollector.Worker/docs/miscelanious.md` содержал логин и пароль от Seq открытым текстом. Файл удалён, но **в истории он остаётся** (коммит `402e0e2`). Пароль надо **сменить** — удаление файла его не отзывает.
 
-### `RabbitMQ__Password` в отслеживаемом файле
+### Секреты из `launchSettings.json` Worker остались в истории гита
 
-`src/BinanceDataCollector.Worker/Properties/launchSettings.json` лежит в гите и содержит пароль RabbitMQ. Вынести в user-secrets или env, а файл — в `.gitignore` (как уже сделано для DataManager).
+`src/BinanceDataCollector.Worker/Properties/launchSettings.json` снят с отслеживания (`git rm --cached`) и теперь попадает под правило `.gitignore` `**/Properties/launchSettings.json` — как у DataManager. Локальный файл остаётся на диске.
+
+Пока он трекался, в историю попали пароль БД (`bindatacoll`) и пароль RabbitMQ. Их надо **сменить** — снятие файла с отслеживания старые значения из истории не отзывает.
 
 ---
 

@@ -121,6 +121,7 @@ DEV-база — локальная и лёгкая: только схема, б
         "DOTNET_ENVIRONMENT": "Development",
         "DOTNET_UTF8_CONSOLE": "true",
         "ConnectionStrings__DefaultConnection": "Host=localhost;Port=6432;Database=market_analytics;Username=bindatacoll;Password=<password>",
+        "ConnectionStrings__DirectConnection": "Host=localhost;Port=5432;Database=market_analytics;Username=bindatacoll;Password=<password>",
         "ConnectionStrings__HangfireConnection": "Host=localhost;Port=6432;Database=market_analytics_jobs;Username=bindatacoll;Password=<password>",
         "RabbitMQ__HostName": "localhost",
         "RabbitMQ__UserName": "guest",
@@ -134,7 +135,9 @@ DEV-база — локальная и лёгкая: только схема, б
 }
 ```
 
-**DataManager** — аналогично, профиль `DataManagerProf`, `applicationUrl` — `http://localhost:7002`.
+`DirectConnection` отличается от `DefaultConnection` только портом: `5432` (Postgres напрямую) вместо `6432` (PgBouncer). Она **обязательна** — событийные слушатели (`OhlcvAggregationService`, `FeatureCalculationService`) на старте падают без неё: `LISTEN` не переживает transaction-режим PgBouncer, поэтому слушатель ходит в базу мимо пула ([ADR 0010](../adr/0010-event-driven-aggregation.md)). Рабочие запросы разбора очереди по-прежнему идут через `DefaultConnection`.
+
+**DataManager** — аналогично, профиль `DataManagerProf`, `applicationUrl` — `http://localhost:7002`. `DirectConnection` ему не нужна — слушатели хостит только Worker.
 
 ---
 
