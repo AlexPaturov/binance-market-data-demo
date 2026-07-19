@@ -10,7 +10,8 @@
 
 | Что | Где | Тип |
 | :--- | :--- | :--- |
-| **Данные PostgreSQL** | `/mnt/ext/postgres_data` | **bind mount** на внешний диск |
+| **PGDATA (каталоги, WAL, горячие партиции)** | `/opt/BinanceCollector/pgdata` | **bind mount** на внутренний SSD |
+| **Tablespace `cold` (закрытые месяцы `Trades`)** | `/mnt/ext/pg_tablespaces/cold` | **bind mount** на внешний HDD |
 | Логи (Seq) | `binancecollector_seq_data` | external named volume |
 | Очереди (RabbitMQ) | `binancecollector_rabbitmq_data` | external named volume |
 | Сертификаты (Let's Encrypt) | `binancecollector_letsencrypt_data` | external named volume |
@@ -19,21 +20,23 @@
 
 ---
 
-## PostgreSQL — внешний диск
+## PostgreSQL — горячий SSD + холодный внешний диск
 
 ```yaml
 bdc_db:
   volumes:
-    - /mnt/ext/postgres_data:/var/lib/postgresql/data
+    - /opt/BinanceCollector/pgdata:/var/lib/postgresql/data   # PGDATA — внутренний SSD
+    - /mnt/ext/pg_tablespaces:/mnt/pg_tablespaces             # tablespace cold — внешний HDD
 ```
 
-**Диск:** внешний 4TB, примонтирован в `/mnt/ext` через `/etc/fstab` по UUID `25ddc534-13e6-479e-8392-a4487a975c80` с опцией `nofail` (сервер грузится даже без диска).
+Раскладка по силе дисков — [ADR 0011](../../docs/adr/0011-hot-cold-tiering-pg-cron.md), полное описание — [`ARCHITECTURE_PROD.md §5`](../../docs/prod/ARCHITECTURE_PROD.md#5-хранилища). Здесь — только то, что нельзя трогать.
 
-**Почему bind mount, а не named volume.** Исторические данные занимают сотни ГБ и не помещаются на системный диск (466 ГБ). База наполнялась на dev-машине на этом же диске, после чего диск физически переставили на прод.
+- **PGDATA** (каталоги, WAL, активные партиции) — на внутреннем SSD в `/opt/BinanceCollector/pgdata`.
+- **Tablespace `cold`** — на внешнем 4 TB диске, примонтирован в `/mnt/ext` через `/etc/fstab` по UUID `25ddc534-13e6-479e-8392-a4487a975c80` с опцией `nofail` (сервер грузится даже без диска). Закрытые месяцы `Trades` переезжают сюда `pg_cron`-джобой раз в час.
 
 ### ⚠️ Главная опасность
 
-Если `bdc_db` стартует, когда **диск не примонтирован**, Docker создаст пустую директорию `/mnt/ext/postgres_data` на системном диске, и Postgres молча проинициализирует в ней **новую пустую базу**. Приложение поднимется и подключится — но таблиц не будет. Данные на самом диске при этом целы.
+Если `bdc_db` стартует, когда **внешний диск не примонтирован**, `CREATE TABLESPACE cold` на чистой инициализации не пройдёт, а на живой базе запросы к эвакуированным (холодным) партициям упрутся в отсутствующие файлы (`undefined_file`). Свежие данные на SSD при этом работают.
 
 **Защита на двух уровнях:**
 
@@ -44,14 +47,14 @@ bdc_db:
 
 ```bash
 mountpoint /mnt/ext    # /mnt/ext is a mountpoint
-df -h /mnt/ext         # Size ~3.6T, а не системный раздел на 466G
+df -h /mnt/ext         # Size ~3.6T, а не системный раздел
 ```
 
 ### 🚫 Нельзя
 
 - отмонтировать `/mnt/ext` при работающем `bdc_db`;
 - менять или удалять запись в `/etc/fstab`;
-- поднимать `bdc_db`, не убедившись, что диск примонтирован.
+- поднимать `bdc_db`, не убедившись, что внешний диск примонтирован.
 
 ---
 

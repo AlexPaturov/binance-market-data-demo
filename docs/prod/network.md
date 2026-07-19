@@ -1,7 +1,7 @@
 # Сеть и безопасность прод-сервера
 
 **Последнее обновление:** май 2026  
-**Сервер:** `analserver` — GMKtec G2 (Intel N150), Ubuntu 24.04 LTS  
+**Сервер:** `analserver` — GMKtec G2 (Intel N150), Ubuntu Server 22.04 LTS  
 **Роль:** Docker host для всего prod-стэка проекта BinanceDataCollector  
 **Внешний доступ:** только через Cloudflare Tunnel (без проброса портов на роутере)
 
@@ -166,6 +166,7 @@ sudo tailscale down
 
 | Сервис | Порт | Где доступен | Комментарий |
 | :--- | :--- | :--- | :--- |
+| SSH (системный, не Docker) | 2237 | все интерфейсы | Терминал сервера; стандартный порт 22 закрыт |
 | Traefik | 80 / 443 | Интернет (через Cloudflare Tunnel) | Точки входа HTTP/HTTPS |
 | Traefik | 8080 | Сервер | Дашборд |
 | Postgres | 5432 | **только Tailscale IP** `100.96.120.16` | Осознанное исключение — для DBeaver. Единственная точка прямого доступа к БД. |
@@ -223,21 +224,13 @@ ip addr show
 ip route show
 ```
 
-**Что фактически слушает хост-машина** (по `docker-compose.prod.yml`):
-
-| Порт хоста | Куда биндится | Куда ведёт                                 |
-|------------|---------------|---------------------------------------------|
-| `2237/tcp` | все интерфейсы | SSH демон (системный, не Docker)            |
-| `80/tcp`   | все интерфейсы | `traefik` — HTTP entrypoint                 |
-| `443/tcp`  | все интерфейсы | `traefik` — HTTPS entrypoint                |
-| `8080/tcp` | все интерфейсы | `traefik` — внутренний дашборд (`api.insecure=true`) |
-| `5432/tcp` | **только** `100.96.120.16` (Tailscale) | `bdc_db` (PostgreSQL)              |
-| `6432/tcp` | все интерфейсы | `bdc_pgbouncer` (connection pool)           |
-
-Остальные сервисы (`bdc_rabbitmq`, `bdc_seq`, `bdc_worker`, `bdc_datamanager`,
-`uptime_kuma`, `cloudflared`) портов на хост **не пробрасывают** — они доступны
-только через Docker-сети `binancecollector_web`/`internal_network` или через
-Traefik по доменам `*.jahasim.com`.
+Ожидаемый результат `ss` сверяется с таблицей портов из раздела 4: на хост
+пробрасываются только `2237` (SSH), `80`/`443`/`8080` (Traefik) и `6432`
+(PgBouncer) — все на всех интерфейсах, — плюс `5432` (`bdc_db`) **только** на
+Tailscale-IP `100.96.120.16`. Остальные сервисы (`bdc_rabbitmq`, `bdc_seq`,
+`bdc_worker`, `bdc_datamanager`, `uptime_kuma`, `cloudflared`) портов на хост не
+пробрасывают — они доступны только через Docker-сети или через Traefik по
+доменам `*.jahasim.com`.
 
 ---
 

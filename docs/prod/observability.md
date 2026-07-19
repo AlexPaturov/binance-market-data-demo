@@ -5,7 +5,7 @@
 Дополняет Seq (логи, «что произошло»), не заменяет его.
 
 > Смежное: [`ARCHITECTURE_PROD.md`](./ARCHITECTURE_PROD.md) — состав прод-стека ·
-> [`../PLAN_OBSERVABILITY_EVENT_AGGREGATION.md`](../PLAN_OBSERVABILITY_EVENT_AGGREGATION.md) — план работ, в рамках которого стек поднят.
+> [ADR 0010](../adr/0010-event-driven-aggregation.md) — событийная модель, ради наблюдаемости которой стек поднят.
 
 ---
 
