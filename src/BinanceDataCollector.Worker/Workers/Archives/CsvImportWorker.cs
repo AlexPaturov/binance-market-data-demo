@@ -118,6 +118,16 @@ public class CsvImportWorker
                 await _notifier.SendStatusUpdateAsync(connectionId, $"Directory {parentDirectory} with processed CSV deleted.");
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.ShutdownToken.IsCancellationRequested)
+        {
+            // Штатная остановка Worker'а: импорт прерван shutdown-токеном, а не сбой файла.
+            // Логируем как контролируемое завершение; вставка идемпотентна, Hangfire вернёт
+            // джобу в очередь и она доработает при следующем старте.
+            _logger.LogInformation(
+                "Import from file {FileName} cancelled on worker shutdown; will resume on restart.",
+                Path.GetFileName(csvFilePath));
+            throw; // Перевыбрасываем, чтобы Hangfire не счёл джобу успешной
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error importing from file {FileName}", Path.GetFileName(csvFilePath));
