@@ -28,7 +28,7 @@
 
   <ItemGroup>
     <!-- The very schema baseline that ships in docker/postgres/init is applied to the test container. -->
-    <None Include="..\..\docker\postgres\init\02_schema.sql" Link="02_schema.sql">
+    <None Include="..\..\docker\postgres\init\02_baseline.sql" Link="02_baseline.sql">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

@@ -3,8 +3,8 @@
 --
 
 
--- Dumped from database version 16.14
--- Dumped by pg_dump version 16.14
+-- Dumped from database version 16.14 (Debian 16.14-1.pgdg13+1)
+-- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg13+1)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -16,6 +16,38 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: fn_month_data_complete(date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_month_data_complete(p_month date) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    WITH bounds AS (
+        SELECT "Symbol",
+               min("TradeDate") AS lo,
+               max("TradeDate") AS hi,
+               count(*)         AS n
+        FROM public."ArchiveImportLog"
+        WHERE "TradeDate" >= p_month
+          AND "TradeDate" <  (p_month + interval '1 month')
+        GROUP BY "Symbol"
+    )
+    SELECT
+        EXISTS (SELECT 1 FROM bounds)
+        AND NOT EXISTS (SELECT 1 FROM bounds WHERE n <> (hi - lo + 1))
+        AND NOT EXISTS (
+            SELECT 1 FROM public."DirtyMinutes"
+            WHERE "OpenTime" >= (EXTRACT(EPOCH FROM p_month)::bigint * 1000)
+              AND "OpenTime" <  (EXTRACT(EPOCH FROM (p_month + interval '1 month'))::bigint * 1000))
+        AND NOT EXISTS (
+            SELECT 1 FROM public."Ohlcv_1min"
+            WHERE "OpenTime" >= (EXTRACT(EPOCH FROM p_month)::bigint * 1000)
+              AND "OpenTime" <  (EXTRACT(EPOCH FROM (p_month + interval '1 month'))::bigint * 1000)
+              AND "ProcessingStatus" <> 'processed');
+$$;
+
 
 --
 -- Name: fn_partitioned_size_bytes(); Type: FUNCTION; Schema: public; Owner: -
@@ -62,10 +94,6 @@ $$;
 -- Name: sp_aggregate_dirty_minutes(integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
--- ВОЗВРАТ: сколько минут снято с очереди, а не сколько построено свечей. Потребитель пьёт
--- очередь до дна и по возврату решает, осталась ли работа. Минута без тиков (их удалила
--- ротация партиций) свечи не даёт, но с очереди уходит — по числу свечей такой кусок
--- выглядел бы как пустая очередь, и разбор останавливался бы на нём, не дойдя до дна.
 CREATE FUNCTION public.sp_aggregate_dirty_minutes(p_max_minutes integer DEFAULT 10000) RETURNS integer
     LANGUAGE plpgsql
     AS $$
@@ -289,46 +317,6 @@ $$;
 
 
 --
--- Пустая партиция на холодном пространстве возвращается на горячее (миграция 016).
--- Перенос пустой партиции мгновенный; непустые (закрытые месяцы) не трогаются.
---
-
-CREATE FUNCTION public.sp_rehydrate_if_empty_cold(p_table text) RETURNS void
-    LANGUAGE plpgsql
-    AS $$
-DECLARE
-    v_on_cold BOOLEAN;
-    v_empty   BOOLEAN;
-    v_index   RECORD;
-BEGIN
-    SELECT (t.spcname = 'cold') INTO v_on_cold
-    FROM pg_class c
-    JOIN pg_tablespace t ON t.oid = c.reltablespace
-    WHERE c.relname = p_table AND c.relkind = 'r';
-
-    IF NOT COALESCE(v_on_cold, false) THEN
-        RETURN;
-    END IF;
-
-    EXECUTE format('SELECT NOT EXISTS (SELECT 1 FROM public.%I)', p_table) INTO v_empty;
-    IF NOT v_empty THEN
-        RETURN;
-    END IF;
-
-    EXECUTE format('ALTER TABLE public.%I SET TABLESPACE pg_default', p_table);
-    FOR v_index IN
-        SELECT indexname FROM pg_indexes
-        WHERE schemaname = 'public' AND tablename = p_table
-    LOOP
-        EXECUTE format('ALTER INDEX public.%I SET TABLESPACE pg_default', v_index.indexname);
-    END LOOP;
-
-    RAISE NOTICE 'Пустая партиция % возвращена с cold на горячее пространство.', p_table;
-END;
-$$;
-
-
---
 -- Name: sp_ensure_trades_partition(bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -337,6 +325,87 @@ CREATE FUNCTION public.sp_ensure_trades_partition(target_time bigint) RETURNS vo
     AS $$
 BEGIN
     PERFORM public.sp_ensure_month_partitions(target_time);
+END;
+$$;
+
+
+--
+-- Name: sp_evacuate_next_cold_partition(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_evacuate_next_cold_partition() RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_suffix TEXT;
+    v_part TEXT;
+    v_month TIMESTAMP;
+    v_start_ms BIGINT;
+    v_end_ms BIGINT;
+    v_has_data BOOLEAN;
+    v_index RECORD;
+BEGIN
+    -- Защита от наложения запусков — внутри функции, а не в планировщике: копия месяца
+    -- (50–150 ГБ) идёт дольше часового тика pg_cron, и второй запуск не должен начать
+    -- параллельный переезд. Транзакционный advisory-lock снимается сам на COMMIT/ROLLBACK,
+    -- ручного освобождения не требует. Не взяли — копия уже идёт, тихо выходим.
+    IF NOT pg_try_advisory_xact_lock(hashtext('sp_evacuate_next_cold_partition')) THEN
+        RETURN NULL;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_tablespace WHERE spcname = 'cold') THEN
+        RETURN NULL;
+    END IF;
+
+    SET LOCAL lock_timeout = '60s';
+
+    -- Кандидаты — партиции Trades в горячем (базовом) пространстве за прошедшие
+    -- месяцы, от старых к новым. reltablespace = 0 — базовое пространство БД (SSD).
+    -- Перебор, а не первый кандидат: незакрытый месяц (докачивается) не должен
+    -- запирать на SSD более поздние, уже закрытые.
+    FOR v_suffix IN
+        SELECT substring(c.relname FROM 'Trades_(\d{4}_\d{2})')
+        FROM pg_inherits i
+        JOIN pg_class c ON c.oid = i.inhrelid
+        WHERE i.inhparent = 'public."Trades"'::regclass
+          AND c.reltablespace = 0
+          AND TO_DATE(substring(c.relname FROM 'Trades_(\d{4}_\d{2})'), 'YYYY_MM')
+              < DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')
+        ORDER BY substring(c.relname FROM 'Trades_(\d{4}_\d{2})')
+    LOOP
+        v_part := 'Trades_' || v_suffix;
+        v_month := TO_DATE(v_suffix, 'YYYY_MM');
+        v_start_ms := EXTRACT(EPOCH FROM v_month)::BIGINT * 1000;
+        v_end_ms := EXTRACT(EPOCH FROM v_month + INTERVAL '1 month')::BIGINT * 1000;
+
+        -- Пустую партицию возить незачем: партиции создаются впрок на месяцы вперёд.
+        EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I)', v_part) INTO v_has_data;
+        IF NOT v_has_data THEN
+            CONTINUE;
+        END IF;
+
+        -- Месяц закрыт: маркер MonthSeal от воркера (backfill не в полёте + покрытие)
+        -- плюс перепроверка данных на момент эвакуации (страховка от устаревшего маркера).
+        IF NOT EXISTS (SELECT 1 FROM public."MonthSeal" WHERE "PeriodMonth" = v_month::date)
+           OR NOT public.fn_month_data_complete(v_month::date)
+        THEN
+            CONTINUE;
+        END IF;
+
+        EXECUTE format('ALTER TABLE public.%I SET TABLESPACE cold', v_part);
+
+        -- SET TABLESPACE у таблицы НЕ переносит её индексы — каждый переезжает отдельно.
+        FOR v_index IN
+            SELECT indexname FROM pg_indexes
+            WHERE schemaname = 'public' AND tablename = v_part
+        LOOP
+            EXECUTE format('ALTER INDEX public.%I SET TABLESPACE cold', v_index.indexname);
+        END LOOP;
+
+        RETURN v_part;
+    END LOOP;
+
+    RETURN NULL;
 END;
 $$;
 
@@ -437,6 +506,45 @@ BEGIN
         "TradeId" AS "GapEnd"
     FROM OrderedTrades 
     WHERE "TradeId" > "PrevTradeId" + 1;
+END;
+$$;
+
+
+--
+-- Name: sp_rehydrate_if_empty_cold(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sp_rehydrate_if_empty_cold(p_table text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_on_cold BOOLEAN;
+    v_empty   BOOLEAN;
+    v_index   RECORD;
+BEGIN
+    SELECT (t.spcname = 'cold') INTO v_on_cold
+    FROM pg_class c
+    JOIN pg_tablespace t ON t.oid = c.reltablespace
+    WHERE c.relname = p_table AND c.relkind = 'r';
+
+    IF NOT COALESCE(v_on_cold, false) THEN
+        RETURN;
+    END IF;
+
+    EXECUTE format('SELECT NOT EXISTS (SELECT 1 FROM public.%I)', p_table) INTO v_empty;
+    IF NOT v_empty THEN
+        RETURN;
+    END IF;
+
+    EXECUTE format('ALTER TABLE public.%I SET TABLESPACE pg_default', p_table);
+    FOR v_index IN
+        SELECT indexname FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = p_table
+    LOOP
+        EXECUTE format('ALTER INDEX public.%I SET TABLESPACE pg_default', v_index.indexname);
+    END LOOP;
+
+    RAISE NOTICE 'Пустая партиция % возвращена с cold на горячее пространство.', p_table;
 END;
 $$;
 
@@ -579,6 +687,19 @@ $$;
 
 SET default_tablespace = '';
 
+SET default_table_access_method = heap;
+
+--
+-- Name: ArchiveImportLog; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."ArchiveImportLog" (
+    "Symbol" character varying(20) NOT NULL,
+    "TradeDate" date NOT NULL,
+    "ImportedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
 --
 -- Name: DataQualityFindings; Type: TABLE; Schema: public; Owner: -
 --
@@ -597,8 +718,6 @@ CREATE TABLE public."DataQualityFindings" (
 )
 PARTITION BY RANGE ("PeriodFrom");
 
-
-SET default_table_access_method = heap;
 
 --
 -- Name: DataQualityFindings_2026_01; Type: TABLE; Schema: public; Owner: -
@@ -1512,25 +1631,12 @@ CREATE TABLE public."HistoricalAudit_Watermarks" (
 
 
 --
--- Журнал покрытия (миграция 015): какой (символ, день) импортирован из архива.
--- Ground truth для критерия «месяц закрыт». Пишет CsvImportWorker при успешном импорте.
+-- Name: MonthSeal; Type: TABLE; Schema: public; Owner: -
 --
-CREATE TABLE public."ArchiveImportLog" (
-    "Symbol"     character varying(20) NOT NULL,
-    "TradeDate"  date NOT NULL,
-    "ImportedAt" timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT "PK_ArchiveImportLog" PRIMARY KEY ("Symbol", "TradeDate")
-);
 
-CREATE INDEX "IX_ArchiveImportLog_TradeDate" ON public."ArchiveImportLog" USING btree ("TradeDate");
-
---
--- Маркер закрытого месяца (миграция 015): печатает воркер, читает эвакуация.
---
 CREATE TABLE public."MonthSeal" (
     "PeriodMonth" date NOT NULL,
-    "SealedAt"    timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT "PK_MonthSeal" PRIMARY KEY ("PeriodMonth")
+    "SealedAt" timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -1546,7 +1652,9 @@ CREATE TABLE public."Ohlcv_1min" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 )
 PARTITION BY RANGE ("OpenTime");
 
@@ -1563,7 +1671,9 @@ CREATE TABLE public."Ohlcv_1min_2026_01" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1579,7 +1689,9 @@ CREATE TABLE public."Ohlcv_1min_2026_02" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1595,7 +1707,9 @@ CREATE TABLE public."Ohlcv_1min_2026_03" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1611,7 +1725,9 @@ CREATE TABLE public."Ohlcv_1min_2026_04" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1627,7 +1743,9 @@ CREATE TABLE public."Ohlcv_1min_2026_05" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1643,7 +1761,9 @@ CREATE TABLE public."Ohlcv_1min_2026_06" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1659,7 +1779,9 @@ CREATE TABLE public."Ohlcv_1min_2026_07" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1675,7 +1797,9 @@ CREATE TABLE public."Ohlcv_1min_2026_08" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1691,7 +1815,9 @@ CREATE TABLE public."Ohlcv_1min_2026_09" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1707,7 +1833,9 @@ CREATE TABLE public."Ohlcv_1min_2026_10" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1723,7 +1851,9 @@ CREATE TABLE public."Ohlcv_1min_2026_11" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1739,7 +1869,9 @@ CREATE TABLE public."Ohlcv_1min_2026_12" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1755,7 +1887,9 @@ CREATE TABLE public."Ohlcv_1min_2027_01" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1771,7 +1905,9 @@ CREATE TABLE public."Ohlcv_1min_2027_02" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1787,7 +1923,9 @@ CREATE TABLE public."Ohlcv_1min_2027_03" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1803,7 +1941,9 @@ CREATE TABLE public."Ohlcv_1min_2027_04" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1819,7 +1959,9 @@ CREATE TABLE public."Ohlcv_1min_2027_05" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1835,7 +1977,9 @@ CREATE TABLE public."Ohlcv_1min_2027_06" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1851,7 +1995,9 @@ CREATE TABLE public."Ohlcv_1min_2027_07" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1867,7 +2013,9 @@ CREATE TABLE public."Ohlcv_1min_2027_08" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1883,7 +2031,9 @@ CREATE TABLE public."Ohlcv_1min_2027_09" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1899,7 +2049,9 @@ CREATE TABLE public."Ohlcv_1min_2027_10" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1915,7 +2067,9 @@ CREATE TABLE public."Ohlcv_1min_2027_11" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -1931,7 +2085,9 @@ CREATE TABLE public."Ohlcv_1min_2027_12" (
     "LowPrice" numeric(18,8) NOT NULL,
     "ClosePrice" numeric(18,8) NOT NULL,
     "Volume" numeric(28,8) NOT NULL,
-    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL
+    "ProcessingStatus" character varying(10) DEFAULT 'new'::character varying NOT NULL,
+    "ClaimedAt" timestamp with time zone,
+    "CvdDelta" numeric(28,8)
 );
 
 
@@ -3535,6 +3691,17 @@ CREATE TABLE public."Trades_2027_12" (
     "Commission" numeric(18,8),
     "CommissionAsset" character varying(10),
     "IsMyTrade" boolean DEFAULT false NOT NULL
+);
+
+
+--
+-- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.schema_migrations (
+    "Version" text NOT NULL,
+    "AppliedAt" timestamp with time zone DEFAULT now() NOT NULL,
+    "Checksum" text NOT NULL
 );
 
 
@@ -5555,11 +5722,27 @@ ALTER TABLE ONLY public."OrderBook_Features_2027_12"
 
 
 --
+-- Name: ArchiveImportLog PK_ArchiveImportLog; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."ArchiveImportLog"
+    ADD CONSTRAINT "PK_ArchiveImportLog" PRIMARY KEY ("Symbol", "TradeDate");
+
+
+--
 -- Name: DirtyMinutes PK_DirtyMinutes; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public."DirtyMinutes"
     ADD CONSTRAINT "PK_DirtyMinutes" PRIMARY KEY ("Symbol", "OpenTime");
+
+
+--
+-- Name: MonthSeal PK_MonthSeal; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."MonthSeal"
+    ADD CONSTRAINT "PK_MonthSeal" PRIMARY KEY ("PeriodMonth");
 
 
 --
@@ -5776,6 +5959,14 @@ ALTER TABLE ONLY public."Trades_2027_11"
 
 ALTER TABLE ONLY public."Trades_2027_12"
     ADD CONSTRAINT "Trades_2027_12_pkey" PRIMARY KEY ("TradeId", "Symbol", "TradeTime");
+
+
+--
+-- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_migrations
+    ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY ("Version");
 
 
 --
@@ -6826,6 +7017,13 @@ CREATE INDEX "DataQualityReports_2027_12_Status_idx" ON public."DataQualityRepor
 --
 
 CREATE UNIQUE INDEX "DataQualityReports_2027_12_Symbol_PeriodMonth_idx" ON public."DataQualityReports_2027_12" USING btree ("Symbol", "PeriodMonth");
+
+
+--
+-- Name: IX_ArchiveImportLog_TradeDate; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "IX_ArchiveImportLog_TradeDate" ON public."ArchiveImportLog" USING btree ("TradeDate");
 
 
 --
@@ -9895,146 +10093,24 @@ ALTER INDEX public."Trades_pkey" ATTACH PARTITION public."Trades_2027_12_pkey";
 
 
 --
--- Отметка времени захвата свечи расчётом фич (миграция 011): протухший захват снова
--- становится кандидатом, свечи убитого воркера и упавших символов возвращаются в работу.
--- ALTER стоит после всех ATTACH и распространяется на все партиции; NULL — «не захвачена».
---
-
-ALTER TABLE public."Ohlcv_1min"
-    ADD COLUMN "ClaimedAt" timestamp with time zone;
-
-
---
--- CVD-дельта минуты (миграция 012): считается агрегацией в том же проходе по тикам,
--- что и свеча. NULL — «дельта не посчитана» (свеча до миграции или из klines API);
--- окно с такой свечой возвращает пустой CVD, тики не читаются.
---
-
-ALTER TABLE public."Ohlcv_1min"
-    ADD COLUMN "CvdDelta" numeric(28,8);
-
-
---
--- Данные месяца готовы (миграция 015): всё сагрегировано, все свечи обработаны,
--- покрытие по ArchiveImportLog сплошное. «Backfill не в полёте» проверяет воркер
--- по очереди Hangfire — сюда не входит.
---
-CREATE FUNCTION public.fn_month_data_complete(p_month date)
-RETURNS boolean
-    LANGUAGE sql
-    STABLE
-    AS $$
-    WITH bounds AS (
-        SELECT "Symbol",
-               min("TradeDate") AS lo,
-               max("TradeDate") AS hi,
-               count(*)         AS n
-        FROM public."ArchiveImportLog"
-        WHERE "TradeDate" >= p_month
-          AND "TradeDate" <  (p_month + interval '1 month')
-        GROUP BY "Symbol"
-    )
-    SELECT
-        EXISTS (SELECT 1 FROM bounds)
-        AND NOT EXISTS (SELECT 1 FROM bounds WHERE n <> (hi - lo + 1))
-        AND NOT EXISTS (
-            SELECT 1 FROM public."DirtyMinutes"
-            WHERE "OpenTime" >= (EXTRACT(EPOCH FROM p_month)::bigint * 1000)
-              AND "OpenTime" <  (EXTRACT(EPOCH FROM (p_month + interval '1 month'))::bigint * 1000))
-        AND NOT EXISTS (
-            SELECT 1 FROM public."Ohlcv_1min"
-            WHERE "OpenTime" >= (EXTRACT(EPOCH FROM p_month)::bigint * 1000)
-              AND "OpenTime" <  (EXTRACT(EPOCH FROM (p_month + interval '1 month'))::bigint * 1000)
-              AND "ProcessingStatus" <> 'processed');
-$$;
-
-
---
--- Эвакуация закрытых месяцев Trades на холодное пространство `cold` (миграция 013,
--- гейт на MonthSeal — миграция 015). Горячие партиции живут на SSD (IOPS), закрытые
--- месяцы тиков переезжают на HDD. Без пространства `cold` функция бездействует.
---
-
-CREATE FUNCTION public.sp_evacuate_next_cold_partition()
-RETURNS text
-    LANGUAGE plpgsql
-    AS $$
-DECLARE
-    v_suffix TEXT;
-    v_part TEXT;
-    v_month TIMESTAMP;
-    v_start_ms BIGINT;
-    v_end_ms BIGINT;
-    v_has_data BOOLEAN;
-    v_index RECORD;
-BEGIN
-    -- Защита от наложения запусков — внутри функции, а не в планировщике: копия месяца
-    -- (50–150 ГБ) идёт дольше часового тика pg_cron, и второй запуск не должен начать
-    -- параллельный переезд. Транзакционный advisory-lock снимается сам на COMMIT/ROLLBACK,
-    -- ручного освобождения не требует. Не взяли — копия уже идёт, тихо выходим.
-    IF NOT pg_try_advisory_xact_lock(hashtext('sp_evacuate_next_cold_partition')) THEN
-        RETURN NULL;
-    END IF;
-
-    IF NOT EXISTS (SELECT 1 FROM pg_tablespace WHERE spcname = 'cold') THEN
-        RETURN NULL;
-    END IF;
-
-    SET LOCAL lock_timeout = '60s';
-
-    -- Кандидаты — партиции Trades в горячем (базовом) пространстве за прошедшие
-    -- месяцы, от старых к новым. reltablespace = 0 — базовое пространство БД (SSD).
-    -- Перебор, а не первый кандидат: незакрытый месяц (докачивается) не должен
-    -- запирать на SSD более поздние, уже закрытые.
-    FOR v_suffix IN
-        SELECT substring(c.relname FROM 'Trades_(\d{4}_\d{2})')
-        FROM pg_inherits i
-        JOIN pg_class c ON c.oid = i.inhrelid
-        WHERE i.inhparent = 'public."Trades"'::regclass
-          AND c.reltablespace = 0
-          AND TO_DATE(substring(c.relname FROM 'Trades_(\d{4}_\d{2})'), 'YYYY_MM')
-              < DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')
-        ORDER BY substring(c.relname FROM 'Trades_(\d{4}_\d{2})')
-    LOOP
-        v_part := 'Trades_' || v_suffix;
-        v_month := TO_DATE(v_suffix, 'YYYY_MM');
-        v_start_ms := EXTRACT(EPOCH FROM v_month)::BIGINT * 1000;
-        v_end_ms := EXTRACT(EPOCH FROM v_month + INTERVAL '1 month')::BIGINT * 1000;
-
-        -- Пустую партицию возить незачем: партиции создаются впрок на месяцы вперёд.
-        EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I)', v_part) INTO v_has_data;
-        IF NOT v_has_data THEN
-            CONTINUE;
-        END IF;
-
-        -- Месяц закрыт: маркер MonthSeal от воркера (backfill не в полёте + покрытие)
-        -- плюс перепроверка данных на момент эвакуации (страховка от устаревшего маркера).
-        IF NOT EXISTS (SELECT 1 FROM public."MonthSeal" WHERE "PeriodMonth" = v_month::date)
-           OR NOT public.fn_month_data_complete(v_month::date)
-        THEN
-            CONTINUE;
-        END IF;
-
-        EXECUTE format('ALTER TABLE public.%I SET TABLESPACE cold', v_part);
-
-        -- SET TABLESPACE у таблицы НЕ переносит её индексы — каждый переезжает отдельно.
-        FOR v_index IN
-            SELECT indexname FROM pg_indexes
-            WHERE schemaname = 'public' AND tablename = v_part
-        LOOP
-            EXECUTE format('ALTER INDEX public.%I SET TABLESPACE cold', v_index.indexname);
-        END LOOP;
-
-        RETURN v_part;
-    END LOOP;
-
-    RETURN NULL;
-END;
-$$;
-
-
---
 -- PostgreSQL database dump complete
 --
 
 
+-- @@ schema_migrations seed (regen-schema дописывает; --schema-only данные не берёт) @@
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('001_data_quality_findings','cf606100fa2ba59a61b950e0380ad43bf256ddf9d876dff0584a84f2d90159f8') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('002_unified_partitioning_and_size_retention','fe4de6cefb02927300eb77bbe2988813702d1109ecb0fcc8ab1c899bda998cab') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('003_status_driven_aggregation','76fa4afeb8f9f76c2af880a32bfbae3e36765c0189f933a80691755812b3ed7e') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('004_orderbook_features','2fc1a4e60493342acf19729c815d1bd7493fb9111b7db07aaaa8aae05cacd568') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('005_tracked_symbols_hysteresis','8c048065100471c1b9ad50f41453d96f4b2f3eee98938c497ee450b51bd43258') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('006_dirty_minutes_queue','c1cd44944ca803a4051b71bbc483cac191d6f42bff6a6e9707d55f353e716ee0') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('007_aggregate_lateral_scan','c85415163b0d91b3f2f69f402bc427c4ef8a71aeffb9aa3a67df3cdf37d05a62') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('008_features_slim_upsert','a45e046e5e59d4e8954513d71234bd9a7103b1715945ef4e9e358e4272d4ab46') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('009_drop_dead_ma_columns','beb24ea21f6d390eba3c9b36145fe5445a4fe7ae20244f77a3b75f2dfc3a75a0') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('010_notify_pipeline_events','27c33a5f7fd02145a1d96ae4eaa9bf65d9016dce8f4877d56d26ef59779899bf') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('011_reclaim_stale_processing_candles','faa86c67cbbdc4cc3f2e26b8a59a6825f240a17ea6ccbca8cee31f372d214a29') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('012_cvd_delta_in_aggregation','d74cd533399aa842f61d9700896e858174618a96ec5ac8efcac2c02a266a2a4b') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('013_cold_tablespace_evacuation','2ef0749ddd6fcc9c5bd67d8fd066cb13d6d39880402ea69d124129eb1ee7155d') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('014_evacuation_via_pg_cron','a139c90f53a6a83b3decb292e30b7f211cf289bcd178bb38e82cd2116b40e4e6') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('015_month_seal_coverage','cd7db9f70d98ceb31c875a334a26d18ec2a356f4bc6f904d82e91aeb7c6f26d4') ON CONFLICT DO NOTHING;
+INSERT INTO public."schema_migrations"("Version","Checksum") VALUES ('016_rehydrate_empty_cold_partition','2df3aefcff64d600b80984732d6293920b71c9e04d0e03fb0812651935f164e3') ON CONFLICT DO NOTHING;

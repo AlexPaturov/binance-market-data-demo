@@ -94,6 +94,8 @@ SEQ_ADMIN_PASS=lex
 
 **Идея:** собирать `02_schema.sql` из миграций (`pg_dump` чистой БД после наката всех миграций) и сверять результат в CI.
 
+**План решения:** [`PLAN_DB_SCHEMA_SINGLE_SOURCE.md`](./PLAN_DB_SCHEMA_SINGLE_SOURCE.md) — единый baseline, `schema_migrations`, CI-страж, накат по кнопке.
+
 ---
 
 ## 10. Статус-колонка на свечах — тот же паттерн, что убрали с тиков

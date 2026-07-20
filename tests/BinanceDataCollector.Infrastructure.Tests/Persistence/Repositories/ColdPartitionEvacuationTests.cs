@@ -34,7 +34,7 @@ public sealed class ColdPartitionEvacuationTests : IAsyncLifetime
         await _db.ExecAsync(new[] { "mkdir", "-p", "/var/lib/postgresql/cold" });
         await _db.ExecAsync(new[] { "chown", "postgres:postgres", "/var/lib/postgresql/cold" });
 
-        var schemaSql = await File.ReadAllTextAsync("02_schema.sql");
+        var schemaSql = await File.ReadAllTextAsync("02_baseline.sql");
         await using (var connection = new NpgsqlConnection(_connectionString))
         {
             await connection.OpenAsync();
@@ -254,7 +254,7 @@ public sealed class ColdPartitionEvacuationWithoutTablespaceTests : IAsyncLifeti
     {
         await _db.StartAsync();
 
-        var schemaSql = await File.ReadAllTextAsync("02_schema.sql");
+        var schemaSql = await File.ReadAllTextAsync("02_baseline.sql");
         await using (var connection = new NpgsqlConnection(_db.GetConnectionString()))
         {
             await connection.OpenAsync();

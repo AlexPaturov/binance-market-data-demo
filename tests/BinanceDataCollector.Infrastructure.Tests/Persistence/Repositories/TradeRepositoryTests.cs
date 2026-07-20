@@ -10,7 +10,7 @@ namespace BinanceDataCollector.Infrastructure.Tests.Persistence.Repositories;
 /// <summary>
 /// Integration test for <see cref="TradeRepository"/> against a real PostgreSQL 16
 /// container. The container is initialized with the exact schema baseline that ships
-/// in docker/postgres/init/02_schema.sql, so the partitioned <c>Trades</c> table and the
+/// in docker/postgres/init/02_baseline.sql, so the partitioned <c>Trades</c> table and the
 /// stored procedures (<c>sp_ensure_trades_partition</c>, <c>sp_bulk_insert_trades</c>) are
 /// exercised end to end.
 /// </summary>
@@ -28,7 +28,7 @@ public sealed class TradeRepositoryTests : IAsyncLifetime
         await _db.StartAsync();
 
         // Apply the shipped schema baseline to the fresh container.
-        var schemaSql = await File.ReadAllTextAsync("02_schema.sql");
+        var schemaSql = await File.ReadAllTextAsync("02_baseline.sql");
         await using (var connection = new NpgsqlConnection(_db.GetConnectionString()))
         {
             await connection.OpenAsync();

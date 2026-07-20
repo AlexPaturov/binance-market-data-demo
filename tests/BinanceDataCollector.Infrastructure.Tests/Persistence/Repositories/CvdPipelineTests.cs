@@ -32,7 +32,7 @@ public sealed class CvdPipelineTests : IAsyncLifetime
         await _db.StartAsync();
         _connectionString = _db.GetConnectionString();
 
-        var schemaSql = await File.ReadAllTextAsync("02_schema.sql");
+        var schemaSql = await File.ReadAllTextAsync("02_baseline.sql");
         await using (var connection = new NpgsqlConnection(_connectionString))
         {
             await connection.OpenAsync();
