@@ -36,6 +36,13 @@ jobs:
           dotnet publish src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj \
             --configuration Release --no-restore -o "${RUNNER_TEMP}/publish/datamanager"
 
+      # Страж дрейфа схемы: baseline обязан включать все активные миграции.
+      # Красный, если в migrations/ лежит несвёрнутая миграция (нужен regen-schema).
+      - name: Schema drift guard
+        run: |
+          docker build -t bdc/postgres-cron:16 docker/postgres
+          bash docker/postgres/check-schema-drift.sh
+
   deploy:
     needs: build-and-test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
