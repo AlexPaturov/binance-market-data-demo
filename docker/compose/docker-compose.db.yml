@@ -9,6 +9,9 @@ services:
     volumes:
       - dev_postgres_data:/var/lib/postgresql/data
       - ../postgres/init:/docker-entrypoint-initdb.d
+      # Холодный tablespace: том создан под образ pg_cron, симлинк cold ведёт сюда —
+      # без этого бинда БД падает на старте (dangling symlink → chown в entrypoint).
+      - ./dev_cold:/mnt/pg_tablespaces
   bdc_pgbouncer:
     container_name: bdc_pgbouncer
     ports:

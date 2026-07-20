@@ -1,12 +1,27 @@
 services:
   bdc_db:
-    image: postgres:16-alpine
+    # Каноническая идентичность БД для всех окружений: образ с pg_cron
+    # (docker/postgres/Dockerfile = postgres:16 + postgresql-16-cron) и коллация C.UTF-8.
+    # Overlay'и добавляют только своё (тома, порты); прод переопределяет тома под свои диски.
+    build:
+      context: ../postgres
+      dockerfile: Dockerfile
+    image: bdc/postgres-cron:16
     container_name: bdc_db
     restart: always
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=market_analytics
+      # Коллация C.UTF-8: байтовый порядок, независимый от libc. Действует на чистой инициализации.
+      - POSTGRES_INITDB_ARGS=--locale=C.UTF-8 --encoding=UTF8
+    command:
+      - "postgres"
+      # pg_cron грузится только через preload; планировщик работает в БД данных.
+      - "-c"
+      - "shared_preload_libraries=pg_cron"
+      - "-c"
+      - "cron.database_name=market_analytics"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d market_analytics"]
       interval: 10s
