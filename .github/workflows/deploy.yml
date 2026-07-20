@@ -110,8 +110,8 @@ jobs:
           POSTGRES_DB=market_analytics
           ACME_EMAIL=${{ secrets.ACME_EMAIL }}
           SERILOG_SEQ_URL=http://seq:5341
-          SEQ_ADMIN_USER=lex
-          SEQ_ADMIN_PASS=lex
+          SEQ_ADMIN_USER=${{ secrets.SEQ_ADMIN_USER }}
+          SEQ_ADMIN_PASS=${{ secrets.SEQ_ADMIN_PASS }}
           RABBITMQ_USER=${{ secrets.RABBITMQ_USER }}
           RABBITMQ_PASSWORD=${{ secrets.RABBITMQ_PASS }}
           RABBITMQ_PORT=5672
