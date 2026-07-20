@@ -33,50 +33,61 @@ public class DataQualityRepository : IDataQualityRepository
         var fromMs = new DateTimeOffset(periodStart).ToUnixTimeMilliseconds();
         var toMs = new DateTimeOffset(periodEnd).ToUnixTimeMilliseconds();
 
-        // Single pass: gaps, invalid prices, outliers (5-sigma), trade count.
-        // LAG on TradeId detects sequence breaks; cross join with price_stats is O(1).
-        const string sql = @"
-            WITH ordered AS (
-                SELECT
-                    ""TradeId"",
-                    ""Price"",
-                    ""Quantity"",
-                    LAG(""TradeId"") OVER (ORDER BY ""TradeId"") AS prev_id
-                FROM public.""Trades""
-                WHERE ""Symbol"" = @Symbol
-                  AND ""TradeTime"" >= @FromMs
-                  AND ""TradeTime"" < @ToMs
-            ),
-            price_stats AS (
-                SELECT AVG(""Price"") AS avg_p, STDDEV(""Price"") AS std_p FROM ordered
-            )
-            SELECT
-                COUNT(*)                                                                               AS trade_count,
-                COUNT(*) FILTER (WHERE prev_id IS NOT NULL AND ""TradeId"" > prev_id + 1)             AS gap_count,
-                COUNT(*) FILTER (WHERE ""Price"" <= 0 OR ""Quantity"" <= 0)                           AS invalid_price_count,
-                COUNT(*) FILTER (WHERE ps.std_p > 0 AND ABS(o.""Price"" - ps.avg_p) > 5 * ps.std_p) AS outlier_count
-            FROM ordered o
-            CROSS JOIN price_stats ps;";
-
         using var db = Connection;
-        var row = await db.QuerySingleAsync<(long TradeCount, int GapCount, int InvalidPriceCount, int OutlierCount)>(
-            sql, new { Symbol = symbol, FromMs = fromMs, ToMs = toMs }, commandTimeout: CheckTimeoutSeconds);
+        // Тот же однопроходный подсчёт дефектов, что и в RunTradesChecksAsync (журнал за
+        // период) — единый источник FILTER-логики. Метки из будущего в помесячный отчёт не входят.
+        var d = await CountTradeDefectsAsync(db, symbol, fromMs, toMs);
 
-        var status = row.TradeCount == 0 || row.InvalidPriceCount > 0 ? "error"
-                   : row.GapCount > 0 || row.OutlierCount > 0         ? "warning"
+        var status = d.Total == 0 || d.Invalid > 0 ? "error"
+                   : d.Gaps > 0 || d.Outliers > 0   ? "warning"
                    : "ok";
 
         return new DataQualityReport
         {
             Symbol            = symbol,
             PeriodMonth       = periodStart,
-            TradeCount        = row.TradeCount,
-            GapCount          = row.GapCount,
-            InvalidPriceCount = row.InvalidPriceCount,
-            OutlierCount      = row.OutlierCount,
+            TradeCount        = d.Total,
+            GapCount          = (int)d.Gaps,
+            InvalidPriceCount = (int)d.Invalid,
+            OutlierCount      = (int)d.Outliers,
             Status            = status,
             CheckedAt         = DateTime.UtcNow
         };
+    }
+
+    // Единый однопроходный подсчёт дефектов сделок в окне [fromMs, toMs): разрывы TradeId,
+    // невалидные цена/объём, 5σ-выбросы, метки из будущего. Оконные функции и статистика —
+    // в пределах символа (PARTITION/GROUP BY Symbol). Один источник FILTER-логики для
+    // помесячного отчёта (CheckSymbolMonthAsync) и журнала за период (RunTradesChecksAsync).
+    private async Task<(long Total, long Gaps, long Invalid, long Outliers, long Future)>
+        CountTradeDefectsAsync(IDbConnection db, string? symbol, long fromMs, long toMs)
+    {
+        const string sql = @"
+            WITH ordered AS (
+                SELECT
+                    ""Symbol"", ""TradeId"", ""Price"", ""Quantity"", ""TradeTime"",
+                    LAG(""TradeId"") OVER (PARTITION BY ""Symbol"" ORDER BY ""TradeId"") AS prev_id
+                FROM public.""Trades""
+                WHERE ""TradeTime"" >= @FromMs AND ""TradeTime"" < @ToMs
+                  AND (@Symbol::varchar IS NULL OR ""Symbol"" = @Symbol)
+            ),
+            stats AS (
+                SELECT ""Symbol"", AVG(""Price"") AS avg_p, STDDEV(""Price"") AS std_p
+                FROM ordered GROUP BY ""Symbol""
+            )
+            SELECT
+                COUNT(*)                                                                        AS total,
+                COUNT(*) FILTER (WHERE o.prev_id IS NOT NULL AND o.""TradeId"" > o.prev_id + 1) AS gaps,
+                COUNT(*) FILTER (WHERE o.""Price"" <= 0 OR o.""Quantity"" <= 0)                 AS invalid,
+                COUNT(*) FILTER (WHERE s.std_p > 0 AND ABS(o.""Price"" - s.avg_p) > 5 * s.std_p) AS outliers,
+                COUNT(*) FILTER (WHERE o.""TradeTime"" > @NowMs)                                AS future
+            FROM ordered o
+            JOIN stats s ON s.""Symbol"" = o.""Symbol"";";
+
+        return await db.QuerySingleAsync<(long Total, long Gaps, long Invalid, long Outliers, long Future)>(
+            sql,
+            new { FromMs = fromMs, ToMs = toMs, Symbol = symbol, NowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
+            commandTimeout: CheckTimeoutSeconds);
     }
 
     public async Task UpsertReportAsync(DataQualityReport report)
@@ -157,34 +168,8 @@ public class DataQualityRepository : IDataQualityRepository
 
         using var db = Connection;
 
-        // Один проход по окну: разрывы TradeId, невалидные цены/объёмы, 5-сигма выбросы,
-        // сделки из будущего. Оконные функции считаются в пределах символа.
-        const string mainSql = @"
-            WITH ordered AS (
-                SELECT
-                    ""Symbol"", ""TradeId"", ""Price"", ""Quantity"", ""TradeTime"",
-                    LAG(""TradeId"") OVER (PARTITION BY ""Symbol"" ORDER BY ""TradeId"") AS prev_id
-                FROM public.""Trades""
-                WHERE ""TradeTime"" >= @FromMs AND ""TradeTime"" < @ToMs
-                  AND (@Symbol::varchar IS NULL OR ""Symbol"" = @Symbol)
-            ),
-            stats AS (
-                SELECT ""Symbol"", AVG(""Price"") AS avg_p, STDDEV(""Price"") AS std_p
-                FROM ordered GROUP BY ""Symbol""
-            )
-            SELECT
-                COUNT(*)                                                                        AS total,
-                COUNT(*) FILTER (WHERE o.prev_id IS NOT NULL AND o.""TradeId"" > o.prev_id + 1) AS gaps,
-                COUNT(*) FILTER (WHERE o.""Price"" <= 0 OR o.""Quantity"" <= 0)                 AS invalid,
-                COUNT(*) FILTER (WHERE s.std_p > 0 AND ABS(o.""Price"" - s.avg_p) > 5 * s.std_p) AS outliers,
-                COUNT(*) FILTER (WHERE o.""TradeTime"" > @NowMs)                                AS future
-            FROM ordered o
-            JOIN stats s ON s.""Symbol"" = o.""Symbol"";";
-
-        var main = await db.QuerySingleAsync<(long Total, long Gaps, long Invalid, long Outliers, long Future)>(
-            mainSql,
-            new { FromMs = fromMs, ToMs = toMs, Symbol = symbol, NowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
-            commandTimeout: CheckTimeoutSeconds);
+        // Однопроходный подсчёт дефектов — единый с CheckSymbolMonthAsync (помесячный отчёт).
+        var main = await CountTradeDefectsAsync(db, symbol, fromMs, toMs);
 
         findings.Add(Finding(DataQualityChecks.GroupTrades, "trade_count", symbol, from, to,
             main.Total == 0 ? DataQualityChecks.SeverityError : DataQualityChecks.SeverityOk,

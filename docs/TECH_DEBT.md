@@ -24,16 +24,3 @@ SEQ_ADMIN_PASS=lex
 `src/BinanceDataCollector.Worker/Properties/launchSettings.json` снят с отслеживания (`git rm --cached`) и теперь попадает под правило `.gitignore` `**/Properties/launchSettings.json` — как у DataManager. Локальный файл остаётся на диске.
 
 Пока он трекался, в историю попали пароль БД (`bindatacoll`) и пароль RabbitMQ. Их надо **сменить** — снятие файла с отслеживания старые значения из истории не отзывает.
-
----
-
-## 2. Дублирование SQL проверок качества
-
-Разрывы `TradeId`, невалидные цены и 5σ-выбросы считаются **двумя разными запросами** в одном `DataQualityRepository`:
-
-- `CheckSymbolMonthAsync` → `DataQualityReports` (карта покрытия по месяцам),
-- `RunTradesChecksAsync` → `DataQualityFindings` (журнал за произвольный период).
-
-Обе таблицы оставлены осознанно — они отвечают на разные вопросы. Но логика подсчёта одних и тех же дефектов продублирована и может разъехаться.
-
-**Решение:** свести к одному запросу — `CheckSymbolMonthAsync` считает тем же SQL и сворачивает результат в формат отчёта.
