@@ -27,6 +27,8 @@ docs/
 docker/docs/               ← эксплуатация Docker-стека
 ├── README_VOLUMES.md      ← где лежат данные и что нельзя трогать
 └── README_DOCKER_RUN.md   ← команды compose для dev
+
+docker/postgres/README.md  ← схема БД: baseline, миграции, как менять (ADR 0013)
 ```
 
 ## С чего начать

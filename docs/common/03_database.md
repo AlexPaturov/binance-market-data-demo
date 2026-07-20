@@ -1,6 +1,6 @@
 # Документация: 03 - База данных (PostgreSQL)
 
-Этот документ описывает фактическую структуру баз данных проекта `BinanceDataCollector`. Источник истины — baseline `docker/postgres/init/02_schema.sql`, который применяется автоматически при инициализации БД.
+Этот документ описывает фактическую структуру баз данных проекта `BinanceDataCollector`. Источник истины — baseline `docker/postgres/init/02_baseline.sql`, который применяется автоматически при инициализации БД.
 
 ## 1. Концепция и архитектура данных
 
@@ -434,4 +434,4 @@ Watermark'и для streaming-процессов. По одной записи �
 
 ## Скрипт схемы
 
-Полный DDL живёт в едином baseline **[`docker/postgres/init/02_schema.sql`](../../docker/postgres/init/02_schema.sql)** (`pg_dump --schema-only`), который автоматически применяется на чистом томе при инициализации PostgreSQL (`docker-entrypoint-initdb.d`). Отдельной копии схемы в этом документе намеренно нет, чтобы не расходиться с baseline.
+Полный DDL живёт в едином baseline **[`docker/postgres/init/02_baseline.sql`](../../docker/postgres/init/02_baseline.sql)** (генерируемый `pg_dump`-снимок), который автоматически применяется на чистом томе при инициализации PostgreSQL (`docker-entrypoint-initdb.d`). Отдельной копии схемы в этом документе намеренно нет, чтобы не расходиться с baseline. Как схема меняется и накатывается — [`docker/postgres/README.md`](../../docker/postgres/README.md) и [ADR 0013](../adr/0013-schema-baseline-and-migration-automation.md).

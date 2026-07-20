@@ -77,13 +77,13 @@
 | Скрипт | Что делает |
 | :--- | :--- |
 | `01_create_jobs_db.sql` | создаёт `market_analytics_jobs` |
-| `02_schema.sql` | полная схема данных: партиционированная `Trades`, свечи, фичи, очередь `DirtyMinutes`, журнал `ArchiveImportLog`, печати `MonthSeal`, все процедуры |
+| `02_baseline.sql` | полная схема данных: партиционированная `Trades`, свечи, фичи, очередь `DirtyMinutes`, журнал `ArchiveImportLog`, печати `MonthSeal`, все процедуры + журнал `schema_migrations` (сид свёрнутых миграций). Канонический `pg_dump`, генерируется `regen-schema.sh` ([ADR 0013](../adr/0013-schema-baseline-and-migration-automation.md)) |
 | `03_hangfire_schema.sql` | схема Hangfire (дамп с прода — приложение её не создаёт, `PrepareSchemaIfNecessary=false`) |
 | `04_tablespace_and_cron.sql` | tablespace `cold`, расширение `pg_cron`, расписание эвакуации |
 
-> Скрипты выполняются **только при пустом data dir** (первый запуск). На существующих данных init не запускается — новые миграции на живой дев накатываются руками или пересозданием volume.
+> Скрипты выполняются **только при пустом data dir** (первый запуск). На существующих данных init не запускается — новую миграцию на живой дев накатывает раннер `docker/postgres/migrate.sh` (идемпотентно, по журналу `schema_migrations`) либо пересоздание volume.
 
-Ручного наката схемы больше не требуется.
+Первичного наката схемы руками не требуется. Как менять схему — `docker/postgres/README.md`.
 
 ---
 

@@ -73,14 +73,13 @@ Runner стоит **на самом прод-сервере**: у сервера
 scp -P 2237 docker/prod-*.sh lex@100.96.120.16:/opt/BinanceCollector/docker/
 ```
 
-**Миграции БД** не применяются автоматически. Baseline `02_schema.sql` срабатывает только на чистом томе; в живую базу изменения накатываются вручную:
+**Миграции БД** не привязаны к деплою кода. Baseline `02_baseline.sql` поднимает чистый том; в живую базу изменения накатывает раннер `docker/postgres/migrate.sh` по журналу `schema_migrations` — идемпотентно, только непринятое. Триггер — отдельный workflow **`migrate.yml`**, оператор запускает по кнопке, независимо от деплоя приложения:
 
-```bash
-docker exec -i bdc_db psql -U bindatacoll -d market_analytics \
-  < docker/postgres/migrations/00X_*.sql
+```
+Actions → Apply DB migrations to production → Run workflow → ввод APPLY
 ```
 
-Это осознанно: миграция, снесённая автодеплоем не вовремя, стоит дороже, чем ручной шаг.
+Так осознанно: миграция, снесённая автодеплоем не вовремя (rewrite таблицы, `SET TABLESPACE` минутами), на одноузловом проде дороже ручного шага. Тайминг тяжёлых выбирает человек; `lock_timeout`/`statement_timeout` в раннере превращают «повесил конвейер» в аборт. Что уже накатано — в `schema_migrations`; что не свёрнуто в baseline — ловит CI-страж (build-and-test). Модель целиком — [ADR 0013](../adr/0013-schema-baseline-and-migration-automation.md).
 
 ---
 

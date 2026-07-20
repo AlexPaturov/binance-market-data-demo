@@ -13,7 +13,7 @@
 - `sp_ensure_trades_partition(target_time)` — создаёт партицию нужного месяца, если её ещё нет; вызывается из `TradeRepository.BulkInsertAsync` перед вставкой, поэтому запись всегда попадает в существующую партицию.
 - `sp_rotate_partitions()` — ротация партиций. Изначально календарная (13 месяцев), пересмотрена в [ADR 0007](./0007-size-based-retention-and-unified-partitioning.md): теперь по размеру диска, и та же помесячная сетка распространена на все растущие таблицы.
 
-Схема фиксируется единым baseline `docker/postgres/init/02_schema.sql` и применяется автоматически на чистом томе (см. `docs/common/03_database.md`).
+Схема фиксируется единым baseline `docker/postgres/init/02_baseline.sql` и применяется автоматически на чистом томе (см. `docs/common/03_database.md`).
 
 ## Последствия
 

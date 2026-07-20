@@ -16,3 +16,4 @@
 | 0010 | [Событийная агрегация через LISTEN/NOTIFY вместо cron-джоб](./0010-event-driven-aggregation.md) |
 | 0011 | [Горячий/холодный тиринг дисков и эвакуация через pg_cron](./0011-hot-cold-tiering-pg-cron.md) |
 | 0012 | [Закрытость месяца — журнал покрытия и печать из приложения](./0012-month-seal-coverage-journal.md) |
+| 0013 | [Единый baseline схемы и автоматизация миграций](./0013-schema-baseline-and-migration-automation.md) |
