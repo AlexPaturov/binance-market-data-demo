@@ -50,7 +50,7 @@ public class Program
         {
             Log.Information("Запускаем приложение...");
             var builder = WebApplication.CreateBuilder(args);
-            builder.WebHost.ConfigureKestrel(options => { options.ListenAnyIP(builder.Environment.IsDevelopment() ? 7001 : 8080); });
+            // Порт задаётся снаружи: launchSettings (dev из IDE), ASPNETCORE_URLS (dev в контейнерах и прод).
 
             Log.Information("WebApplicationBuilder создан за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
 
