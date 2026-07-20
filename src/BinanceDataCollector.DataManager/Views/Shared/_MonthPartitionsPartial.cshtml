@@ -1,0 +1,59 @@
+@model List<BinanceDataCollector.Application.Models.MonthPartitionInfo>
+
+@* Помесячная сводка по партициям Trades: tablespace (hot/cold) + печать месяца. *@
+@if (Model != null && Model.Any())
+{
+    <div class="table-container-scrollable" style="max-height: 300px;">
+        <table class="table table-sm table-bordered table-hover" style="font-size: 0.8rem;">
+            <thead class="table-light">
+                <tr>
+                    <th>Month</th>
+                    <th class="text-end">Size</th>
+                    <th>Location</th>
+                    <th>State</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var m in Model)
+                {
+                    <tr>
+                        <td>@m.Month</td>
+                        <td class="text-end">@m.Size</td>
+                        <td>
+                            @if (m.OnCold)
+                            {
+                                <span class="badge bg-info text-dark">❄ Cold (HDD)</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-warning text-dark">🔥 Hot (SSD)</span>
+                            }
+                        </td>
+                        <td>
+                            @if (m.Sealed)
+                            {
+                                <span class="badge bg-success">✔ @m.State</span>
+                            }
+                            else if (m.IsCurrentMonth)
+                            {
+                                <span class="badge bg-secondary">@m.State</span>
+                            }
+                            else if (m.ReasonCode != null)
+                            {
+                                <span class="badge bg-warning text-dark">○ @m.State</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-info text-dark">@m.State</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else
+{
+    <p class="text-muted">No month partitions.</p>
+}

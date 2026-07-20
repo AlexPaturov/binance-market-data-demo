@@ -103,6 +103,16 @@
                 </tbody>
             </table>
         </div>
+
+        <hr/>
+
+        <!-- Помесячная сводка Trades: tablespace (hot/cold) + печать месяца.
+             Данные меняются раз в час (воркер/pg_cron) — контейнер тикает раз в 120 с,
+             а не каждые 5 с, как DB-панели слева. -->
+        <h3>Months (Trades)</h3>
+        <div id="months-container">
+            <partial name="~/Views/Shared/_MonthPartitionsPartial.cshtml" model="Model.Months" />
+        </div>
     </div>
 </div>
 
@@ -112,9 +122,11 @@
         $(document).ready(function () {
             const mainDbDetailsContainer = $('#main-db-details-container');
             const hangfireDbDetailsContainer = $('#hangfire-db-details-container');
+            const monthsContainer = $('#months-container');
 
             const mainDbDetailsUrl = '@Url.Action("GetMainDbDetails", "Home")';
             const hangfireDbDetailsUrl = '@Url.Action("GetHangfireDbDetails", "Home")';
+            const monthsUrl = '@Url.Action("GetMonthPartitions", "Home")';
 
             function loadMainDbDetails() {
                 mainDbDetailsContainer.load(mainDbDetailsUrl);
@@ -124,10 +136,16 @@
                 hangfireDbDetailsContainer.load(hangfireDbDetailsUrl);
             }
 
-            // Запускаем автоматическое обновление через 5 секунд после загрузки страницы (Первоначальные данные уже отрисованы на сервере)
+            function loadMonths() {
+                monthsContainer.load(monthsUrl);
+            }
+
+            // DB-панели — каждые 5 с (живые коннекты/тики). Months меняются раз в час,
+            // им хватает 120 с. Первичные данные уже отрисованы на сервере.
             setTimeout(() => {
                 setInterval(loadMainDbDetails, 5000);
                 setInterval(loadHangfireDbDetails, 5000);
+                setInterval(loadMonths, 120000);
             }, 5000);
         });
     </script>

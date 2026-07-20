@@ -1,4 +1,5 @@
-﻿using BinanceDataCollector.Application.ViewModels;
+﻿using BinanceDataCollector.Application.Models;
+using BinanceDataCollector.Application.ViewModels;
 using BinanceDataCollector.Domain.Entities;
 
 namespace BinanceDataCollector.DataManager.Models;
@@ -34,6 +35,12 @@ public class HomeViewModel
     /// Содержит полную информацию о состоянии базы данных Hangfire.
     /// </summary>
     public DatabaseDetailsViewModel HangfireDbDetails { get; set; }
+
+    /// <summary>
+    /// Помесячная сводка по партициям Trades (tablespace + печать) для начального рендера
+    /// панели Months; дальше панель обновляется своим запросом раз в 120 с.
+    /// </summary>
+    public List<MonthPartitionInfo> Months { get; set; } = new();
 }
 
 // Вспомогательный класс для отображения данных о серверах Hangfire

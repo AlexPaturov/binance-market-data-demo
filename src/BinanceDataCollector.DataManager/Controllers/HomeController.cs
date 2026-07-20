@@ -52,9 +52,10 @@ namespace BinanceDataCollector.DataManager.Controllers
                 var lastTradeTask = _tradeRepo.GetLastTradeAsync();
                 var mainDbDetailsTask = _dbMonitoringService.GetDatabaseDetailsAsync("market_analytics");
                 var hangfireDbDetailsTask = _dbMonitoringService.GetDatabaseDetailsAsync("market_analytics_jobs");
+                var monthsTask = _dbMonitoringService.GetMonthPartitionsAsync("market_analytics");
 
                 // Ожидаем завершения всех запросов
-                await Task.WhenAll(activeSymbolsTask, lastTradeTask, mainDbDetailsTask, hangfireDbDetailsTask);
+                await Task.WhenAll(activeSymbolsTask, lastTradeTask, mainDbDetailsTask, hangfireDbDetailsTask, monthsTask);
                 
                 // --- СИНХРОННЫЕ ЗАПРОСЫ ВЫПОЛНЯЕМ ПОСЛЕ ---
                 var hangfireServers = _hangfireApi.Servers()
@@ -73,9 +74,10 @@ namespace BinanceDataCollector.DataManager.Controllers
                     SystemStatus = "Online",
                     TrackedSymbolsCount = (await activeSymbolsTask).Count(),
                     LastTrade = await lastTradeTask,
-                    MainDbDetails = await mainDbDetailsTask,       
-                    HangfireDbDetails = await hangfireDbDetailsTask, 
-                    HangfireServers = hangfireServers
+                    MainDbDetails = await mainDbDetailsTask,
+                    HangfireDbDetails = await hangfireDbDetailsTask,
+                    HangfireServers = hangfireServers,
+                    Months = await monthsTask
                 };
 
                 stopwatch.Stop();
@@ -99,6 +101,13 @@ namespace BinanceDataCollector.DataManager.Controllers
         {
             var details = await _dbMonitoringService.GetDatabaseDetailsAsync("market_analytics");
             return PartialView("~/Views/Shared/_DatabaseDetailsPartial.cshtml", details);
+        }
+
+        // Помесячная сводка Trades — своя точка обновления (панель тикает раз в 120 с).
+        public async Task<IActionResult> GetMonthPartitions()
+        {
+            var months = await _dbMonitoringService.GetMonthPartitionsAsync("market_analytics");
+            return PartialView("~/Views/Shared/_MonthPartitionsPartial.cshtml", months);
         }
 
         public async Task<IActionResult> GetHangfireDbDetails()

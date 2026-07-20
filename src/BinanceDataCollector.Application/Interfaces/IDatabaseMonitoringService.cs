@@ -38,4 +38,11 @@ public interface IDatabaseMonitoringService
     /// Результат задачи содержит объект <see cref="DatabaseDetailsViewModel"/> с полной информацией о базе данных.
     /// </returns>
     Task<DatabaseDetailsViewModel> GetDatabaseDetailsAsync(string databaseName);
+
+    /// <summary>
+    /// Помесячная сводка по партициям Trades: tablespace (hot SSD / cold HDD) и печать месяца.
+    /// Отдельный метод — под панель с собственным авто-обновлением. Осмысленна только для
+    /// market_analytics; для прочих БД возвращает пустой список.
+    /// </summary>
+    Task<List<MonthPartitionInfo>> GetMonthPartitionsAsync(string databaseName);
 }
