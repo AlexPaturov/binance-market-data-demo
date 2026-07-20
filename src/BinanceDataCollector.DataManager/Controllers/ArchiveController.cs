@@ -1,4 +1,5 @@
 using BinanceDataCollector.Application.Archives.Interfaces;
+using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.DataManager.Models;
 using BinanceDataCollector.DataManager.Common.Auth;
@@ -16,19 +17,22 @@ public class ArchiveController : Controller
     private readonly IBackgroundJobClient _backgroundJobClient;
     private readonly IRecurringJobManager _recurringJobManager;
     private readonly IArchiveService _archiveService;
+    private readonly ITradeRepository _tradeRepo;
 
     public ArchiveController(
         ITrackedSymbolRepository symbolRepo,
         ILogger<ArchiveController> logger,
         IBackgroundJobClient backgroundJobClient,
         IRecurringJobManager recurringJobManager,
-        IArchiveService archiveService)
+        IArchiveService archiveService,
+        ITradeRepository tradeRepo)
     {
         _symbolRepo = symbolRepo;
         _logger = logger;
         _backgroundJobClient = backgroundJobClient;
         _recurringJobManager = recurringJobManager;
         _archiveService = archiveService;
+        _tradeRepo = tradeRepo;
     }
 
     /// <summary>
@@ -84,10 +88,21 @@ public class ArchiveController : Controller
         }
 
 
+        // Отсеиваем даты в месяцах ниже границы ретенции: партиции под них нет, вставка
+        // провалится — качать гигабайты бессмысленно. Оператору сообщаем, что пропущено.
+        var floorMs = await _tradeRepo.GetRetentionFloorMsAsync();
+        var allowedDates = datesToDownload.Where(d => !RetentionFloor.IsMonthBelowFloor(d, floorMs)).ToList();
+        var skippedDates = datesToDownload.Count - allowedDates.Count;
+
+        if (allowedDates.Count == 0)
+        {
+            return Ok(new { Message = $"Все {skippedDates} дат ниже границы ретенции — ничего не поставлено в очередь." });
+        }
+
         int totalJobs = 0;
         foreach (var symbol in symbolsToProcess)
         {
-            foreach (var date in datesToDownload)
+            foreach (var date in allowedDates)
             {
                 _backgroundJobClient.Enqueue<IArchiveDownloaderWorker>(
                     worker => worker.DownloadArchiveAsync(request.RequestId, request.ConnectionId, symbol, date, JobCancellationToken.Null)
@@ -96,7 +111,10 @@ public class ArchiveController : Controller
             }
         }
 
-        return Ok(new { Message = $"{totalJobs} archive download jobs queued." });
+        var message = $"{totalJobs} archive download jobs queued.";
+        if (skippedDates > 0)
+            message += $" {skippedDates} дат ниже границы ретенции пропущено.";
+        return Ok(new { Message = message });
     }
 
     [Authorize(Policy = DataManagerAuthorizationPolicies.Operator)]

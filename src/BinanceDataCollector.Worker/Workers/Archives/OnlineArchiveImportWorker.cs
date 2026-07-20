@@ -1,4 +1,5 @@
 ﻿using BinanceDataCollector.Application.Archives.Interfaces;
+using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Domain.Entities;
 using BinanceDataCollector.Worker.Common;
@@ -36,6 +37,13 @@ public class OnlineArchiveImportWorker
 
         try
         {
+            // Месяц ниже границы ретенции — партиции нет, вставка провалится. Не качаем.
+            if (RetentionFloor.IsMonthBelowFloor(date, await _tradeRepo.GetRetentionFloorMsAsync()))
+            {
+                _logger.LogInformation("[{Symbol}] Архив за {Date} ниже границы ретенции — импорт пропущен.", symbol, date);
+                return; // finally снимет блокировку трекера
+            }
+
             await foreach (var trade in _archiveService.DownloadAndParseTradesAsync(symbol, date, token))
             {
                 _batch.Add(trade);

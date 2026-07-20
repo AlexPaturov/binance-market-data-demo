@@ -1,4 +1,5 @@
 ﻿using BinanceDataCollector.Application.Archives.Interfaces;
+using BinanceDataCollector.Application.Common;
 using BinanceDataCollector.Application.Interfaces;
 using Hangfire;
 using Serilog.Context;
@@ -12,20 +13,23 @@ public class ArchiveDownloaderWorker : IArchiveDownloaderWorker
     private readonly IArchiveService _archiveService; // Предполагаем, что он уже есть
     private readonly ILogger<ArchiveDownloaderWorker> _logger;
     private readonly IStatusNotifier _notifier;
+    private readonly ITradeRepository _tradeRepo;
 
     // Путь, куда будем сохранять архивы. Можно вынести в appsettings.json
     private readonly string _downloadPath;
 
     public ArchiveDownloaderWorker(
-        IArchiveService archiveService, 
+        IArchiveService archiveService,
         ILogger<ArchiveDownloaderWorker> logger,
         IStatusNotifier notifier,
+        ITradeRepository tradeRepo,
         IPathProvider pathProvider)
     {
         _archiveService = archiveService;
         _logger = logger;
-        _downloadPath = pathProvider.GetTradeArchivesPath(); 
+        _downloadPath = pathProvider.GetTradeArchivesPath();
         _notifier = notifier;
+        _tradeRepo = tradeRepo;
     }
 
     /// <summary>
@@ -42,6 +46,15 @@ public class ArchiveDownloaderWorker : IArchiveDownloaderWorker
         {
             try
             {
+                // Месяц ниже границы ретенции — партиции под него нет и не будет, вставка
+                // провалится. Не тратим гигабайты трафика на обречённую закачку.
+                if (RetentionFloor.IsMonthBelowFloor(date, await _tradeRepo.GetRetentionFloorMsAsync()))
+                {
+                    _logger.LogInformation("Archive {FileName} ниже границы ретенции — скачивание пропущено.", fileName);
+                    await _notifier.SendStatusUpdateAsync(connectionId, $"Archive {fileName} ниже границы ретенции — пропущено.");
+                    return;
+                }
+
                 if (File.Exists(filePath))
                 {
                     var fileInfo = new FileInfo(filePath);
