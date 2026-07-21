@@ -40,7 +40,7 @@ public class HomeViewModel
     /// Помесячная сводка по партициям Trades (tablespace + печать) для начального рендера
     /// панели Months; дальше панель обновляется своим запросом раз в 120 с.
     /// </summary>
-    public List<MonthPartitionInfo> Months { get; set; } = new();
+    public MonthPartitionsResult Months { get; set; } = MonthPartitionsResult.Ok(new());
 }
 
 // Вспомогательный класс для отображения данных о серверах Hangfire

@@ -1,7 +1,7 @@
-@model List<BinanceDataCollector.Application.Models.MonthPartitionInfo>
+@model BinanceDataCollector.Application.Models.MonthPartitionsResult
 
 @* Помесячная сводка по партициям Trades: tablespace (hot/cold) + печать месяца. *@
-@if (Model != null && Model.Any())
+@if (Model is { Available: true, Months.Count: > 0 })
 {
     <div class="table-container-scrollable" style="max-height: 300px;">
         <table class="table table-sm table-bordered table-hover" style="font-size: 0.8rem;">
@@ -14,7 +14,7 @@
                 </tr>
             </thead>
             <tbody>
-                @foreach (var m in Model)
+                @foreach (var m in Model.Months)
                 {
                     <tr>
                         <td>@m.Month</td>
@@ -52,6 +52,10 @@
             </tbody>
         </table>
     </div>
+}
+else if (Model is { Available: false })
+{
+    <p class="text-muted">Данные временно недоступны (запрос не уложился в таймаут). Обновление — раз в 120 с.</p>
 }
 else
 {

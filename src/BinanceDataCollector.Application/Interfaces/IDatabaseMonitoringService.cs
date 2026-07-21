@@ -42,7 +42,8 @@ public interface IDatabaseMonitoringService
     /// <summary>
     /// Помесячная сводка по партициям Trades: tablespace (hot SSD / cold HDD) и печать месяца.
     /// Отдельный метод — под панель с собственным авто-обновлением. Осмысленна только для
-    /// market_analytics; для прочих БД возвращает пустой список.
+    /// market_analytics; для прочих БД возвращает пустой (но доступный) результат.
+    /// Результат несёт признак доступности: пустой список отличается от таймаута/ошибки.
     /// </summary>
-    Task<List<MonthPartitionInfo>> GetMonthPartitionsAsync(string databaseName);
+    Task<MonthPartitionsResult> GetMonthPartitionsAsync(string databaseName);
 }

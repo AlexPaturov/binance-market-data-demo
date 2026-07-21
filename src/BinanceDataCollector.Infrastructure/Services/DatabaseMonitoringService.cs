@@ -14,6 +14,11 @@ public class DatabaseMonitoringService : IDatabaseMonitoringService
     // транзиентной недоступности БД: короткий таймаут + мягкая деградация к «N/A».
     private const int QueryTimeoutSeconds = 10;
 
+    // Помесячная сводка тяжелее прочих панелей (reason-подзапросы по Ohlcv_1min/DirtyMinutes)
+    // и под нагрузкой импорта не укладывается в 10 с. У панели свой цикл обновления 120 с,
+    // поэтому таймаут задан с запасом, но заметно ниже периода — тики не наслаиваются.
+    private const int MonthsQueryTimeoutSeconds = 60;
+
     private readonly string _connectionString;
     private readonly IConfiguration _configuration;
     private readonly ILogger<DatabaseMonitoringService> _logger;
@@ -141,13 +146,22 @@ public class DatabaseMonitoringService : IDatabaseMonitoringService
     /// поэтому вынесена из GetDatabaseDetailsAsync (та зовётся 5-сек. рефрешем DB-панелей).
     /// Мягко деградирует к пустому списку; осмысленна только для market_analytics.
     /// </summary>
-    public Task<List<MonthPartitionInfo>> GetMonthPartitionsAsync(string databaseName)
+    public async Task<MonthPartitionsResult> GetMonthPartitionsAsync(string databaseName)
     {
         var dbConnectionString = new NpgsqlConnectionStringBuilder(
             _configuration.GetConnectionString("DefaultConnection")) { Database = databaseName }.ConnectionString;
 
-        return SafeQueryAsync(() => QueryMonthsAsync(dbConnectionString),
-            new List<MonthPartitionInfo>(), "months");
+        // В отличие от прочих панелей, здесь мягкая деградация не сводит ошибку к пустому
+        // списку: панель должна отличать «партиций нет» от «запрос упал/не уложился».
+        try
+        {
+            return MonthPartitionsResult.Ok(await QueryMonthsAsync(dbConnectionString));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Database monitoring: 'months' unavailable, degrading to fallback.");
+            return MonthPartitionsResult.Unavailable();
+        }
     }
 
     /// <summary>
@@ -207,7 +221,7 @@ public class DatabaseMonitoringService : IDatabaseMonitoringService
 
         await using var connection = new NpgsqlConnection(dbConnectionString);
         var months = (await connection.QueryAsync<MonthPartitionInfo>(
-            new CommandDefinition(sql, commandTimeout: QueryTimeoutSeconds))).ToList();
+            new CommandDefinition(sql, commandTimeout: MonthsQueryTimeoutSeconds))).ToList();
 
         if (months.Count == 0)
             return months;
