@@ -12,7 +12,10 @@ namespace BinanceDataCollector.Worker.Workers;
 /// Hangfire нужен здесь как исполнитель, а не как планировщик: проверка по "Trades"
 /// сканирует сотни ГБ и не укладывается в таймаут HTTP-запроса.
 /// </summary>
-[Queue("default")]
+// Выделенная очередь оператор-триггерных проверок: запускается кнопкой и нужна сразу.
+// На `default` она стояла за `archive_import` и при живом импорте не начиналась вовсе
+// (наблюдалось место ~2000 в очереди). `data_quality` слушает PriorityServer первой.
+[Queue("data_quality")]
 [DisableConcurrentExecution(timeoutInSeconds: 2 * 60 * 60)]
 [AutomaticRetry(Attempts = 0, OnAttemptsExceeded = AttemptsExceededAction.Fail)]
 public class DataQualityCheckWorker

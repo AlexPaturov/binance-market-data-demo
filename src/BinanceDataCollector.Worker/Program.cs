@@ -196,7 +196,9 @@ public class Program
                 // (17.07.2026: эвакуация партиции висела в `default` за 263 распаковками,
                 // хотя диск был на 78%). Приоритет внутри сервера — по порядку очередей,
                 // так что обслуживание берётся последним и живой работе не мешает.
-                options.Queues = new[] { "realtime", "quick_audit", "maintenance" };
+                // `data_quality` — первой: оператор-триггерные проверки запускаются кнопкой
+                // и должны стартовать сразу, а не ждать импорт архивов на фоновом сервере.
+                options.Queues = new[] { "data_quality", "realtime", "quick_audit", "maintenance" };
                 options.WorkerCount =
                     (Debugger.IsAttached || builder.Environment.IsDevelopment())
                         ? Math.Max(4, Environment.ProcessorCount) // на деве 8 ядер у маширы
