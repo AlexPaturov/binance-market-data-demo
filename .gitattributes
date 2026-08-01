@@ -7,6 +7,9 @@
 # и не запускаются внутри Linux-контейнеров (docker entrypoint, migrate.sh и т.п.).
 *.sh text eol=lf
 
+# Сжатые seed-дампы — бинарные, никакой нормализации переводов строк.
+*.gz binary
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #
