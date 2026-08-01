@@ -147,14 +147,25 @@ public class Program
             builder.Services.AddHostedService<OhlcvAggregationService>();
             builder.Services.AddHostedService<FeatureCalculationService>();
 
-            // Realtime-сбор: подписка на WebSocket по активным парам. Это основной источник
-            // данных. Импорт архивов — бутстрап истории и восстановление после долгого
-            // простоя, а не рабочий режим.
-            builder.Services.AddHostedService<BinanceCollectorWorker>();
+            // Realtime-сбор из Binance (WebSocket-подписки) можно выключить: в demo-окружении
+            // без сети данные приходят из seed, а конвейер обработки (свечи, фичи, тиринг)
+            // работает поверх них. Флаг Collectors:Enabled по умолчанию true (боевой режим).
+            var collectorsEnabled = builder.Configuration.GetValue("Collectors:Enabled", true);
+            if (collectorsEnabled)
+            {
+                // Realtime-сбор: подписка на WebSocket по активным парам. Это основной источник
+                // данных. Импорт архивов — бутстрап истории и восстановление после долгого
+                // простоя, а не рабочий режим.
+                builder.Services.AddHostedService<BinanceCollectorWorker>();
 
-            // Фичи стакана. Сырой L2 не хранится — из книги в памяти считаются готовые
-            // числа и пишутся раз в минуту (~0.4 ГБ/месяц против ~190 ГБ у сырой глубины).
-            builder.Services.AddHostedService<OrderBookCollectorWorker>();
+                // Фичи стакана. Сырой L2 не хранится — из книги в памяти считаются готовые
+                // числа и пишутся раз в минуту (~0.4 ГБ/месяц против ~190 ГБ у сырой глубины).
+                builder.Services.AddHostedService<OrderBookCollectorWorker>();
+            }
+            else
+            {
+                Log.Information("Collectors:Enabled=false — realtime-сбор из Binance отключён (demo-режим).");
+            }
             
             builder.Services.AddHealthChecks()
                 .AddNpgSql(

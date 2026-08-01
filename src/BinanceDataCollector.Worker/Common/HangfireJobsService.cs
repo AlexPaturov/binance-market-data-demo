@@ -1,6 +1,7 @@
 using BinanceDataCollector.Application.Interfaces;
 using BinanceDataCollector.Worker.Workers;
 using Hangfire;
+using Microsoft.Extensions.Configuration;
 using System.Diagnostics;
 
 namespace BinanceDataCollector.Worker.Common;
@@ -23,18 +24,23 @@ public class HangfireJobsService : IHostedService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<HangfireJobsService> _logger;
     private readonly bool _isDevelopment;
+    private readonly bool _collectorsEnabled;
 
     public HangfireJobsService(
         IRecurringJobManager recurringJobManager,
         IServiceScopeFactory scopeFactory,
         ILogger<HangfireJobsService> logger,
-        IHostEnvironment environment
+        IHostEnvironment environment,
+        IConfiguration configuration
     )
     {
         _recurringJobManager = recurringJobManager;
         _scopeFactory = scopeFactory;
         _logger = logger;
         _isDevelopment = Debugger.IsAttached || environment.IsDevelopment();
+        // Сбор из Binance можно выключить (demo-окружение без сети): тогда не регистрируются
+        // джобы, обращающиеся к бирже. Данные при этом приходят из seed, а не из API.
+        _collectorsEnabled = configuration.GetValue("Collectors:Enabled", true);
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -50,37 +56,42 @@ public class HangfireJobsService : IHostedService
         _recurringJobManager.RemoveIfExists("ohlcv-aggregator");
         _recurringJobManager.RemoveIfExists("feature-calculator");
 
-        // Список отслеживаемых пар — раз в день.
-        _recurringJobManager.AddOrUpdate<SymbolUpdateWorker>(
-            "update-symbols",
-            worker => worker.ScanMarketAndUpdateSymbolsAsync(),
-            Cron.Daily(),
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        );
+        // Джобы, обращающиеся к Binance API, — только когда сбор включён. В demo
+        // (Collectors:Enabled=false) их нет: данные приходят из seed, а не из сети.
+        if (_collectorsEnabled)
+        {
+            // Список отслеживаемых пар — раз в день.
+            _recurringJobManager.AddOrUpdate<SymbolUpdateWorker>(
+                "update-symbols",
+                worker => worker.ScanMarketAndUpdateSymbolsAsync(),
+                Cron.Daily(),
+                new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
+            );
 
-        // Дыры за последние 24 часа — то, что образуется при обрыве связи.
-        _recurringJobManager.AddOrUpdate<QuickAuditorWorker>(
-            "quick_audit",
-            worker => worker.CheckAndFillRecentGapsAsync(),
-            _isDevelopment ? "*/2 * * * *" : "*/10 * * * *",
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        );
+            // Дыры за последние 24 часа — то, что образуется при обрыве связи.
+            _recurringJobManager.AddOrUpdate<QuickAuditorWorker>(
+                "quick_audit",
+                worker => worker.CheckAndFillRecentGapsAsync(),
+                _isDevelopment ? "*/2 * * * *" : "*/10 * * * *",
+                new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
+            );
 
-        // Вотермарки аудита для новых символов. Старт не раньше границы ретенции.
-        _recurringJobManager.AddOrUpdate<AuditInitializationWorker>(
-            "audit-initializer",
-            worker => worker.CreateWatermarksForNewSymbolsAsync(),
-            Cron.Daily(),
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        );
+            // Вотермарки аудита для новых символов. Старт не раньше границы ретенции.
+            _recurringJobManager.AddOrUpdate<AuditInitializationWorker>(
+                "audit-initializer",
+                worker => worker.CreateWatermarksForNewSymbolsAsync(),
+                Cron.Daily(),
+                new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
+            );
 
-        // Глубокая проверка истории на пропуски.
-        _recurringJobManager.AddOrUpdate<HistoricalAuditorWorker>(
-            "historical-audit",
-            worker => worker.AuditNextBatchAsync(),
-            _isDevelopment ? "*/30 * * * *" : "0 */6 * * *",
-            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
-        );
+            // Глубокая проверка истории на пропуски.
+            _recurringJobManager.AddOrUpdate<HistoricalAuditorWorker>(
+                "historical-audit",
+                worker => worker.AuditNextBatchAsync(),
+                _isDevelopment ? "*/30 * * * *" : "0 */6 * * *",
+                new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc }
+            );
+        }
 
         // Ротация партиций по размеру диска.
         _recurringJobManager.AddOrUpdate<PartitionMaintenanceWorker>(
@@ -109,13 +120,16 @@ public class HangfireJobsService : IHostedService
 
         _logger.LogInformation("Recurring jobs registered.");
 
-        using var scope = _scopeFactory.CreateScope();
-        var symbolRepo = scope.ServiceProvider.GetRequiredService<ITrackedSymbolRepository>();
-        var activeSymbols = await symbolRepo.GetActiveSymbolsAsync();
-        if (!activeSymbols.Any())
+        if (_collectorsEnabled)
         {
-            _logger.LogWarning("Symbol list is empty. Triggering unscheduled market scan...");
-            _recurringJobManager.Trigger("update-symbols");
+            using var scope = _scopeFactory.CreateScope();
+            var symbolRepo = scope.ServiceProvider.GetRequiredService<ITrackedSymbolRepository>();
+            var activeSymbols = await symbolRepo.GetActiveSymbolsAsync();
+            if (!activeSymbols.Any())
+            {
+                _logger.LogWarning("Symbol list is empty. Triggering unscheduled market scan...");
+                _recurringJobManager.Trigger("update-symbols");
+            }
         }
     }
 
