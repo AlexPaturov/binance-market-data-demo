@@ -66,6 +66,22 @@
 
 ---
 
+## Demo-окружение
+
+Самодостаточный стек с уже наполненной БД — без сбора из Binance и без внешнего провайдера входа. Нужен только Docker (образы под amd64 и arm64, включая Apple Silicon).
+
+```bash
+cd docker/compose
+cp .env.example .env
+docker compose -f docker-compose.demo.yml up -d --build
+```
+
+Через пару минут откройте `http://localhost:7002`, на странице входа выберите роль (Viewer / Operator / Admin). В БД предзагружен срез **BTCUSDT за февраль 2026**: свечи, индикаторы, журнал покрытия и печать закрытого месяца — видны график, панель Months и проверки Data Quality.
+
+Отличия от обычного запуска: вход локальный (`Authentication:Mode=Demo`) вместо Azure B2C, realtime-сбор выключен (`Collectors:Enabled=false`), данные приходят из seed (`docker/postgres/seed/`, пересоздаётся `gen-seed.sh`), а не из сети.
+
+---
+
 ## Схема базы данных
 
 Единый baseline `docker/postgres/init/02_baseline.sql` (генерируемый `pg_dump`-снимок) применяется автоматически на чистом томе. Изменения в существующую БД накатывает раннер `docker/postgres/migrate.sh` по журналу `schema_migrations`; CI-страж не пускает схему, разошедшуюся с миграциями ([ADR 0013](./docs/adr/0013-schema-baseline-and-migration-automation.md)).
