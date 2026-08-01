@@ -89,6 +89,9 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       # Порт слушателя внутри контейнера (0.0.0.0, иначе published-порт недостижим).
       - ASPNETCORE_URLS=http://0.0.0.0:7001
+      # Путь к архивам/CSV внутри контейнера = точка монтирования тома bdc_data.
+      # Перекрывает BasePath из appsettings.Development.json (тот — под нативный dev из IDE).
+      - ArchivesSettings__BasePath=/opt/bdc_data
       - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       # Слушатели NOTIFY идут в базу напрямую: PgBouncer в режиме transaction возвращает
@@ -122,6 +125,9 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       # Порт слушателя внутри контейнера (0.0.0.0, иначе published-порт недостижим).
       - ASPNETCORE_URLS=http://0.0.0.0:7002
+      # Путь к архивам/CSV внутри контейнера = точка монтирования тома bdc_data.
+      # Перекрывает BasePath из appsettings.Development.json (тот — под нативный dev из IDE).
+      - ArchivesSettings__BasePath=/opt/bdc_data
       - ConnectionStrings__DefaultConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - ConnectionStrings__HangfireConnection=Host=bdc_pgbouncer;Port=6432;Database=market_analytics_jobs;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       - RabbitMQ__HostName=${RABBITMQ_HOSTNAME}
@@ -137,16 +143,12 @@ services:
       - ../../src:/app/src
 
 volumes:
+  # Без `external: true`: на чистой машине compose создаёт тома сам, а на текущей
+  # машине по прежнему `name` подхватывает уже существующие данные.
   dev_postgres_data:
   seq_data:
-    external: true
     name: binancecollector_seq_data
   rabbitmq_data:
-    external: true
     name: binancecollector_rabbitmq_data
-  letsencrypt_data:
-    external: true
-    name: binancecollector_letsencrypt_data
-  bdc_data:
-    external: true
-    name: binancecollector_bdc_data # для архивов и CSV
+  bdc_data: # для архивов и CSV
+    name: binancecollector_bdc_data
