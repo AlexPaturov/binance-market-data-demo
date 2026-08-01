@@ -75,41 +75,63 @@ public class Program {
             builder.Services.AddControllersWithViews();
             builder.Services.AddSignalR();
             
-            // === Authentication (OIDC + Cookies) begin ===
-            
-            // 1. Настраиваем политики кук (Важно для OIDC в Docker)
+            // === Authentication begin ===
+            // Режим аутентификации: B2C (боевой, по умолчанию) или Demo (локальный вход
+            // с выбором роли — для demo-окружения без внешнего провайдера).
+            var authMode = builder.Configuration["Authentication:Mode"] ?? "B2C";
+            var isDemoAuth = string.Equals(authMode, "Demo", StringComparison.OrdinalIgnoreCase);
+
+            // Политики кук: в B2C — Secure/None (HTTPS за Cloudflare); в Demo — мягкие,
+            // иначе по http://localhost браузер куку не сохранит.
             builder.Services.Configure<CookiePolicyOptions>(options =>
             {
                 options.CheckConsentNeeded = context => true;
-                options.MinimumSameSitePolicy = SameSiteMode.None;
-                options.Secure = CookieSecurePolicy.Always; // Всегда Secure, так как у нас Cloudflare
+                options.MinimumSameSitePolicy = isDemoAuth ? SameSiteMode.Lax : SameSiteMode.None;
+                options.Secure = isDemoAuth ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
             });
-            
-            builder.Services
-                .AddAuthentication(options => {
-                    options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-                    options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
-                })
-                .AddCookie(options =>
-                {
-                    options.Cookie.Name = ".BDC.Auth";
-                    options.Cookie.HttpOnly = true;
-                    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
-                    options.Cookie.SameSite = SameSiteMode.None;
-                })
-                .AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options => {
-                    options.Authority = builder.Configuration["Authentication:B2C:Authorities:SignUpSignIn"];
-                    options.ClientId = builder.Configuration["Authentication:B2C:ClientId"];
-                    options.ClientSecret = builder.Configuration["Authentication:B2C:ClientSecret"];
-                    options.ResponseType = OpenIdConnectResponseType.Code;
-                    options.SaveTokens = false;
-                    //options.CallbackPath = builder.Configuration["Authentication:B2C:CallbackPath"] ?? "/signin-oidc";
-                    options.SignedOutCallbackPath = builder.Configuration["Authentication:B2C:SignedOutCallbackPath"] ?? "/signout-callback-oidc";
-                    options.Scope.Clear();
-                    foreach (var scope in builder.Configuration.GetSection("Authentication:B2C:Scopes").Get<string[]>() ?? Array.Empty<string>()) {
-                        options.Scope.Add(scope);
-                    }
-                });
+
+            if (isDemoAuth)
+            {
+                // Demo: только куки, challenge → страница выбора роли /demo-login. Внешнего IdP нет.
+                builder.Services
+                    .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+                    .AddCookie(options =>
+                    {
+                        options.Cookie.Name = ".BDC.Auth";
+                        options.Cookie.HttpOnly = true;
+                        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+                        options.Cookie.SameSite = SameSiteMode.Lax;
+                        options.LoginPath = "/demo-login";
+                        options.AccessDeniedPath = "/demo-login";
+                    });
+            }
+            else
+            {
+                builder.Services
+                    .AddAuthentication(options => {
+                        options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+                        options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
+                    })
+                    .AddCookie(options =>
+                    {
+                        options.Cookie.Name = ".BDC.Auth";
+                        options.Cookie.HttpOnly = true;
+                        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+                        options.Cookie.SameSite = SameSiteMode.None;
+                    })
+                    .AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options => {
+                        options.Authority = builder.Configuration["Authentication:B2C:Authorities:SignUpSignIn"];
+                        options.ClientId = builder.Configuration["Authentication:B2C:ClientId"];
+                        options.ClientSecret = builder.Configuration["Authentication:B2C:ClientSecret"];
+                        options.ResponseType = OpenIdConnectResponseType.Code;
+                        options.SaveTokens = false;
+                        options.SignedOutCallbackPath = builder.Configuration["Authentication:B2C:SignedOutCallbackPath"] ?? "/signout-callback-oidc";
+                        options.Scope.Clear();
+                        foreach (var scope in builder.Configuration.GetSection("Authentication:B2C:Scopes").Get<string[]>() ?? Array.Empty<string>()) {
+                            options.Scope.Add(scope);
+                        }
+                    });
+            }
             builder.Services.AddScoped<IClaimsTransformation, IdentityProviderRoleClaimsTransformation>();
 
             builder.Services.AddAuthorization(options =>
@@ -124,7 +146,7 @@ public class Program {
                 options.AddPolicy(DataManagerAuthorizationPolicies.Admin, policy =>
                     policy.RequireRole(DataManagerRoles.Admin));
             });
-            // === Authentication (OIDC + Cookies) end ===
+            // === Authentication end ===
             
             // Настройка заголовков для Traefik/Cloudflare
             builder.Services.Configure<ForwardedHeadersOptions>(options =>

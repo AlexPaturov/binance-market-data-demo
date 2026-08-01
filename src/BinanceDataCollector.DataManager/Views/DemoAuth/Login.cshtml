@@ -1,0 +1,60 @@
+@{
+    Layout = null;
+    var returnUrl = ViewData["ReturnUrl"] as string;
+    (string Role, string Title, string Desc)[] roles =
+    {
+        ("Viewer",   "Viewer",   "Только просмотр: дашборд, данные, отчёты."),
+        ("Operator", "Operator", "Просмотр + операции: импорт архивов, проверки качества."),
+        ("Admin",    "Admin",    "Полный доступ, включая панель Hangfire.")
+    };
+}
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Demo — выбор роли</title>
+    <style>
+        :root { color-scheme: light dark; }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a; color: #e2e8f0; padding: 24px;
+        }
+        .card { width: 100%; max-width: 460px; background: #1e293b; border-radius: 16px;
+            padding: 32px; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+        h1 { font-size: 1.4rem; margin: 0 0 4px; }
+        .sub { color: #94a3b8; font-size: .9rem; margin: 0 0 24px; }
+        form { margin: 0 0 12px; }
+        button.role { width: 100%; text-align: left; cursor: pointer; border: 1px solid #334155;
+            background: #0f172a; color: #e2e8f0; border-radius: 12px; padding: 14px 16px;
+            transition: border-color .15s, background .15s; }
+        button.role:hover { border-color: #38bdf8; background: #172033; }
+        .role-title { font-weight: 600; font-size: 1rem; }
+        .role-desc { color: #94a3b8; font-size: .82rem; margin-top: 2px; }
+        .note { color: #64748b; font-size: .78rem; margin-top: 20px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Demo-окружение</h1>
+        <p class="sub">Выберите роль для входа. Реальная ролевая модель — без внешнего провайдера.</p>
+
+        @foreach (var r in roles)
+        {
+            <form method="post" action="/demo-login">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="role" value="@r.Role" />
+                <input type="hidden" name="returnUrl" value="@returnUrl" />
+                <button type="submit" class="role">
+                    <div class="role-title">@r.Title</div>
+                    <div class="role-desc">@r.Desc</div>
+                </button>
+            </form>
+        }
+
+        <p class="note">Demo-режим. Для боевого входа используется Azure B2C.</p>
+    </div>
+</body>
+</html>
