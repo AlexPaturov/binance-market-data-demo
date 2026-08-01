@@ -17,7 +17,8 @@ docs/
 │   │   └── data_quality.md  ← проверки качества данных
 │   └── auth/              ← спецификация полной IAM-схемы (для будущего форка)
 ├── dev/
-│   └── ARCHITECTURE_DEV.md
+│   ├── ARCHITECTURE_DEV.md
+│   └── DEMO_ACCEPTANCE.md   ← чек-лист приёмки demo-окружения (Linux/Windows/macOS)
 └── prod/
     ├── ARCHITECTURE_PROD.md ← железо, сеть, хранилища, запуск/остановка
     ├── network.md           ← UFW, Tailscale, Docker-сети, порты

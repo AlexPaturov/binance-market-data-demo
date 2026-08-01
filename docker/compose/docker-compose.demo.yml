@@ -54,6 +54,9 @@ services:
       - DB_PASSWORD=${POSTGRES_PASSWORD}
       - DB_HOST=bdc_db
       - DB_PORT=5432
+      # Порт самого pgbouncer: worker/datamanager и healthcheck ходят на 6432.
+      # Без этого образ слушает дефолтный 5432 — healthcheck и коннекты не проходят.
+      - LISTEN_PORT=6432
       - POOL_MODE=transaction
       - MAX_CLIENT_CONN=1000
       - DEFAULT_POOL_SIZE=100
