@@ -41,6 +41,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      # Запас на первичную инициализацию (baseline + seed) — на медленном диске дольше.
+      start_period: 90s
 
   bdc_pgbouncer:
     image: edoburu/pgbouncer
@@ -78,7 +80,10 @@ services:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 10s
-      retries: 5
+      retries: 10
+      # Первый старт RabbitMQ (создание схемы) на Docker Desktop медленнее — даём запас,
+      # иначе healthcheck исчерпывает попытки раньше, чем брокер поднимется.
+      start_period: 60s
     volumes:
       - demo_rabbitmq_data:/var/lib/rabbitmq
 
