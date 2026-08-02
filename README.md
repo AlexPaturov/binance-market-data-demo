@@ -74,15 +74,9 @@
 ./docker/demo-start.sh          # поднимает стек и открывает браузер
 ```
 
-Скрипт создаёт `.env` из `.env.example`, собирает и запускает стек, дожидается готовности и открывает `http://localhost:7002`. Того же можно добиться вручную:
+Скрипт создаёт `.env` из `.env.example`, собирает и запускает стек, дожидается готовности и открывает `http://localhost:7002`. На странице входа выберите роль (Viewer / Operator / Admin). Остановка — `./docker/demo-stop.sh` (или `-v`, чтобы удалить тома и перезагрузить seed при следующем старте).
 
-```bash
-cd docker/compose
-cp .env.example .env
-docker compose -f docker-compose.demo.yml up -d --build
-```
-
-На странице входа выберите роль (Viewer / Operator / Admin). В БД предзагружен срез **BTCUSDT за февраль 2026**: свечи, индикаторы, журнал покрытия и печать закрытого месяца — видны график, панель Months и проверки Data Quality.
+В БД предзагружен срез **BTCUSDT за февраль 2026**: свечи, индикаторы, журнал покрытия и печать закрытого месяца — видны график, панель Months и проверки Data Quality.
 
 Отличия от обычного запуска: вход локальный (`Authentication:Mode=Demo`) вместо Azure B2C, realtime-сбор выключен (`Collectors:Enabled=false`), данные приходят из seed (`docker/postgres/seed/`, пересоздаётся `gen-seed.sh`), а не из сети.
 
