@@ -229,9 +229,14 @@ public class Program {
 
 
             #region Общее место для хранения ключей
-            var keysPath = builder.Environment.IsProduction()
-                ? "/opt/bdc_data/keys"
-                : Path.Combine(builder.Environment.ContentRootPath, "keys");
+            // В demo том /opt/bdc_data принадлежит root, а процесс идёт под user app —
+            // писать туда ключи нельзя (иначе антифоргери-токен падает). Кладём во writable
+            // каталог контейнера.
+            var keysPath = builder.Environment.IsDemo()
+                ? "/tmp/dataprotection-keys"
+                : builder.Environment.IsProduction()
+                    ? "/opt/bdc_data/keys"
+                    : Path.Combine(builder.Environment.ContentRootPath, "keys");
 
             builder.Services.AddDataProtection()
                 .PersistKeysToFileSystem(new DirectoryInfo(keysPath))
@@ -278,7 +283,7 @@ public class Program {
             
             Log.Information("Приложение собрано (Build) за {Elapsed} мс.", startupStopwatch.ElapsedMilliseconds);
             app.UseMiddleware<MemoryUsageLoggingMiddleware>();
-            if (!app.Environment.IsDevelopment()) {
+            if (!app.Environment.IsDevelopment() && !app.Environment.IsDemo()) {
                 app.UseExceptionHandler("/Home/Error");
                 app.UseHsts();
             }

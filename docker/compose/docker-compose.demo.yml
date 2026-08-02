@@ -107,7 +107,7 @@ services:
       bdc_rabbitmq:
         condition: service_healthy
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_ENVIRONMENT=Demo
       - ASPNETCORE_URLS=http://0.0.0.0:7001
       # Автономный режим: без сбора из Binance. Данные — из seed, обработка событийная.
       - Collectors__Enabled=false
@@ -138,7 +138,7 @@ services:
       bdc_rabbitmq:
         condition: service_healthy
     environment:
-      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_ENVIRONMENT=Demo
       - ASPNETCORE_URLS=http://0.0.0.0:7002
       # Локальный вход с выбором роли вместо Azure B2C.
       - Authentication__Mode=Demo
