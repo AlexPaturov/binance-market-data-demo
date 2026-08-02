@@ -68,20 +68,13 @@
 
 ## Demo-окружение
 
-Самодостаточный стек с уже наполненной БД — без сбора из Binance и без внешнего провайдера входа. Нужен только Docker (образы под amd64 и arm64, включая Apple Silicon).
+Самодостаточный стек с уже наполненной БД — без сбора из Binance и без внешнего провайдера входа. Нужен только Docker (образы под amd64 и arm64, включая Apple Silicon). В БД предзагружен срез **BTCUSDT за февраль 2026**: свечи, индикаторы, журнал покрытия и печать закрытого месяца — сразу видны график, панель Months и проверки Data Quality. Вход локальный с выбором роли (`Authentication:Mode=Demo`) вместо Azure B2C, realtime-сбор выключен (`Collectors:Enabled=false`), данные — из seed (`docker/postgres/seed/`), а не из сети.
 
-```bash
-./docker/demo-start.sh          # поднимает стек и открывает браузер
-./docker/demo-stop.sh -v        # остановка стека, удалить тома
-```
+Пошаговый запуск по системам:
 
-На Windows (PowerShell, без bash/WSL — нужен только Docker Desktop): `.\docker\demo-start.ps1` и `.\docker\demo-stop.ps1` (с `-Volumes` для удаления томов). На чистой машине **без Docker** — `.\docker\demo-setup.ps1` от администратора: сам ставит WSL2 и Docker Desktop (возможны перезагрузки — запускать повторно), затем поднимает demo. Пошагово — [`docs/dev/DEMO_WINDOWS.md`](./docs/dev/DEMO_WINDOWS.md).
-
-Скрипт создаёт `.env` из `.env.example`, собирает и запускает стек, дожидается готовности и открывает `http://localhost:7002`. На странице входа выберите роль (Viewer / Operator / Admin).
-
-В БД предзагружен срез **BTCUSDT за февраль 2026**: свечи, индикаторы, журнал покрытия и печать закрытого месяца — видны график, панель Months и проверки Data Quality.
-
-Отличия от обычного запуска: вход локальный (`Authentication:Mode=Demo`) вместо Azure B2C, realtime-сбор выключен (`Collectors:Enabled=false`), данные приходят из seed (`docker/postgres/seed/`, пересоздаётся `gen-seed.sh`), а не из сети.
+- **Linux** — [`docs/dev/DEMO_LINUX.md`](./docs/dev/DEMO_LINUX.md)
+- **Windows** — [`docs/dev/DEMO_WINDOWS.md`](./docs/dev/DEMO_WINDOWS.md)
+- **macOS** — [`docs/dev/DEMO_MACOS.md`](./docs/dev/DEMO_MACOS.md)
 
 ---
 

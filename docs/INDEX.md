@@ -19,7 +19,9 @@ docs/
 ├── dev/
 │   ├── ARCHITECTURE_DEV.md
 │   ├── DEMO_ACCEPTANCE.md   ← чек-лист приёмки demo-окружения (Linux/Windows/macOS)
-│   └── DEMO_WINDOWS.md      ← пошаговый запуск demo на Windows
+│   ├── DEMO_LINUX.md        ← пошаговый запуск demo на Linux
+│   ├── DEMO_WINDOWS.md      ← пошаговый запуск demo на Windows
+│   └── DEMO_MACOS.md        ← пошаговый запуск demo на macOS
 └── prod/
     ├── ARCHITECTURE_PROD.md ← железо, сеть, хранилища, запуск/остановка
     ├── network.md           ← UFW, Tailscale, Docker-сети, порты
