@@ -71,12 +71,18 @@
 Самодостаточный стек с уже наполненной БД — без сбора из Binance и без внешнего провайдера входа. Нужен только Docker (образы под amd64 и arm64, включая Apple Silicon).
 
 ```bash
+./docker/demo-start.sh          # поднимает стек и открывает браузер
+```
+
+Скрипт создаёт `.env` из `.env.example`, собирает и запускает стек, дожидается готовности и открывает `http://localhost:7002`. Того же можно добиться вручную:
+
+```bash
 cd docker/compose
 cp .env.example .env
 docker compose -f docker-compose.demo.yml up -d --build
 ```
 
-Через пару минут откройте `http://localhost:7002`, на странице входа выберите роль (Viewer / Operator / Admin). В БД предзагружен срез **BTCUSDT за февраль 2026**: свечи, индикаторы, журнал покрытия и печать закрытого месяца — видны график, панель Months и проверки Data Quality.
+На странице входа выберите роль (Viewer / Operator / Admin). В БД предзагружен срез **BTCUSDT за февраль 2026**: свечи, индикаторы, журнал покрытия и печать закрытого месяца — видны график, панель Months и проверки Data Quality.
 
 Отличия от обычного запуска: вход локальный (`Authentication:Mode=Demo`) вместо Azure B2C, realtime-сбор выключен (`Collectors:Enabled=false`), данные приходят из seed (`docker/postgres/seed/`, пересоздаётся `gen-seed.sh`), а не из сети.
 
