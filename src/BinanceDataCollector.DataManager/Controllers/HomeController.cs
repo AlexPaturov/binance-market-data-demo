@@ -129,6 +129,13 @@ namespace BinanceDataCollector.DataManager.Controllers
             });
         }
         
+        // Пункт меню «Dashboard» ведёт сюда. Страница в разработке — пока заглушка,
+        // чтобы ссылка не отдавала 404. Рабочая сводка живёт на главной (Index).
+        public IActionResult Dashboard()
+        {
+            return View();
+        }
+
         // public async Task<IActionResult> GetPostgresConnections() { ... }
     }
 }
