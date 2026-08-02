@@ -75,7 +75,7 @@
 ./docker/demo-stop.sh -v        # остановка стека, удалить тома
 ```
 
-На Windows (PowerShell, без bash/WSL — нужен только Docker Desktop): `.\docker\demo-start.ps1` и `.\docker\demo-stop.ps1` (с `-Volumes` для удаления томов). На чистой машине **без Docker** — `.\docker\demo-setup.ps1` от администратора: сам ставит WSL2 и Docker Desktop (возможны перезагрузки — запускать повторно), затем поднимает demo.
+На Windows (PowerShell, без bash/WSL — нужен только Docker Desktop): `.\docker\demo-start.ps1` и `.\docker\demo-stop.ps1` (с `-Volumes` для удаления томов). На чистой машине **без Docker** — `.\docker\demo-setup.ps1` от администратора: сам ставит WSL2 и Docker Desktop (возможны перезагрузки — запускать повторно), затем поднимает demo. Пошагово — [`docs/dev/DEMO_WINDOWS.md`](./docs/dev/DEMO_WINDOWS.md).
 
 Скрипт создаёт `.env` из `.env.example`, собирает и запускает стек, дожидается готовности и открывает `http://localhost:7002`. На странице входа выберите роль (Viewer / Operator / Admin).
 
