@@ -17,10 +17,8 @@ docs/
 │   └── auth/              ← спецификация полной IAM-схемы (для будущего форка)
 ├── dev/
 │   ├── ARCHITECTURE_DEV.md
-│   ├── DEMO_ACCEPTANCE.md   ← чек-лист приёмки demo-окружения (Linux/Windows/macOS)
-│   ├── DEMO_LINUX.md        ← пошаговый запуск demo на Linux
-│   ├── DEMO_WINDOWS.md      ← пошаговый запуск demo на Windows
-│   └── DEMO_MACOS.md        ← пошаговый запуск demo на macOS
+│   ├── DEMO.md             ← пошаговый запуск demo (Linux/macOS/Windows)
+│   └── DEMO_ACCEPTANCE.md   ← чек-лист приёмки demo-окружения по трём ОС
 └── prod/
     ├── ARCHITECTURE_PROD.md ← железо, сеть, хранилища, запуск/остановка
     ├── network.md           ← UFW, Tailscale, Docker-сети, порты

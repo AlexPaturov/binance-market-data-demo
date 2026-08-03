@@ -71,11 +71,7 @@
 
 Самодостаточный стек с уже наполненной БД — без сбора из Binance и без внешнего провайдера входа. Нужен только Docker (образы под amd64 и arm64, включая Apple Silicon). В БД предзагружен срез **BTCUSDT за февраль 2026**: свечи, индикаторы, журнал покрытия и печать закрытого месяца — сразу видны график, панель Months и проверки Data Quality. Вход локальный с выбором роли (`Authentication:Mode=Demo`) вместо Azure B2C, realtime-сбор выключен (`Collectors:Enabled=false`), данные — из seed (`docker/postgres/seed/`), а не из сети.
 
-Пошаговый запуск по системам:
-
-- **Linux** — [`docs/dev/DEMO_LINUX.md`](./docs/dev/DEMO_LINUX.md)
-- **Windows** — [`docs/dev/DEMO_WINDOWS.md`](./docs/dev/DEMO_WINDOWS.md)
-- **macOS** — [`docs/dev/DEMO_MACOS.md`](./docs/dev/DEMO_MACOS.md)
+Пошаговый запуск (Linux / macOS / Windows) — [`docs/dev/DEMO.md`](./docs/dev/DEMO.md).
 
 ---
 
