@@ -14,6 +14,8 @@
 ./docker/demo-start.sh
 ```
 
+Если папку копировали (не `git clone`), у скрипта мог потеряться флаг исполнения — тогда `permission denied`. Запусти через `bash ./docker/demo-start.sh` либо верни флаг: `chmod +x docker/demo-start.sh docker/demo-stop.sh`. `sudo` не нужен.
+
 Скрипт создаёт `.env` из `.env.example`, собирает образы (первый раз — несколько минут), поднимает стек, дожидается готовности и открывает браузер (`open`).
 
 ## Вход

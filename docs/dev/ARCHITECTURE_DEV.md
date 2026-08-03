@@ -160,7 +160,21 @@ DEV-база — локальная и лёгкая: только схема, б
 
 ---
 
-## 7. Что нельзя делать в DEV
+## 7. Demo-окружение
+
+Рядом с dev-режимом (инфраструктура в Docker + приложения из Rider) существует **demo** — самодостаточный контейнерный стек с предзагруженными данными, для запуска на чужой машине без сети и без Azure B2C. Все сервисы, включая Worker и DataManager, идут в Docker через `docker-compose.demo.yml`; данные приходят из seed-среза (`docker/postgres/seed/`, BTCUSDT за февраль 2026), загружаемого init-скриптом `05_seed.sh` на чистом томе. Запуск по системам — `docs/dev/DEMO_LINUX.md`, `DEMO_WINDOWS.md`, `DEMO_MACOS.md`; чек-лист приёмки — `DEMO_ACCEPTANCE.md`.
+
+Поведение задают три конфиг-флага (значения по умолчанию = боевой режим, прод не затронут):
+
+| Флаг | Demo | По умолчанию | Эффект |
+| :--- | :--- | :--- | :--- |
+| `ASPNETCORE_ENVIRONMENT` | `Demo` | `Production` / `Development` | Отдельное окружение. `IsDemo()` (`DataManager/Common/HostEnvironmentExtensions.cs`) отключает прод-специфику: форс https-схемы за прокси, HSTS, каталог DataProtection-ключей `/opt/bdc_data`. |
+| `Authentication:Mode` | `Demo` | `B2C` | В `Demo` вместо Azure B2C — локальная cookie-схема и страница `/demo-login` с выбором роли Viewer/Operator/Admin (`DemoAuthController`). Политики авторизации те же, что в проде: роль кладётся в claim `ClaimTypes.Role`, `FallbackPolicy` и `RequireRole` действуют без изменений. |
+| `Collectors:Enabled` | `false` | `true` | При `false` не регистрируются `BinanceCollectorWorker`/`OrderBookCollectorWorker` и Hangfire-джобы, обращающиеся к Binance API (`update-symbols`, аудиторы). Событийный конвейер (агрегация свечей, расчёт фич) и обслуживание партиций работают поверх seed-данных. |
+
+---
+
+## 8. Что нельзя делать в DEV
 
 - Использовать `docker-compose.prod.yml` — он рассчитан на Traefik / Cloudflare Tunnel и сломает локальный запуск.
 - Использовать `docker-compose.dev.yml` для запуска инфраструктуры из IDE — он поднимает Worker и DataManager **в Docker**, что конфликтует с запуском из Rider.
