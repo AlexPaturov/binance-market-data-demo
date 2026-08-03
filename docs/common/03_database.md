@@ -29,7 +29,7 @@
 
 ### 2.2. `market_analytics_jobs` — Hangfire
 
-Изолированная служебная БД для Hangfire. Внутри — единственная пользовательская схема `hangfire`, все таблицы создаются Hangfire'ом автоматически при старте Worker'а (`PrepareSchemaIfNecessary = true`). Подробности по серверам и очередям — в разделе 7.
+Изолированная служебная БД для Hangfire. Внутри — единственная пользовательская схема `hangfire`, таблицы создаются из init-скрипта `03_hangfire_schema.sql` на чистом томе; оба приложения стартуют с `PrepareSchemaIfNecessary = false`. Подробности по серверам и очередям — в разделе 7.
 
 **Зачем разделение:**
 
@@ -387,7 +387,7 @@ Watermark'и для streaming-процессов. По одной записи �
 
 - **Версии:** `Hangfire.Core 1.8.21`, `Hangfire.AspNetCore 1.8.21`, `Hangfire.PostgreSql 1.20.12` (target framework `net8.0`).
 - **Подключают оба приложения:** Worker и DataManager (`UsePostgreSqlStorage` с `HangfireConnection` connection string).
-- **Схема:** `hangfire`. Таблицы (`job`, `jobqueue`, `state`, `server`, `list`, `hash`, `set`, `counter`, `aggregatedcounter`) создаются автоматически при старте Worker'а — он сконфигурирован с `PrepareSchemaIfNecessary = true` и `SchemaName = "hangfire"`.
+- **Схема:** `hangfire`. Таблицы (`job`, `jobqueue`, `state`, `server`, `list`, `hash`, `set`, `counter`, `aggregatedcounter`) создаются из init-скрипта `03_hangfire_schema.sql` на чистом томе. Оба приложения сконфигурированы с `PrepareSchemaIfNecessary = false` и `SchemaName = "hangfire"` — саму схему не накатывают.
 
 ### 7.1. Серверы Hangfire (только Worker)
 
