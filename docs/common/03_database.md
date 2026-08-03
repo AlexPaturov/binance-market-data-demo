@@ -395,7 +395,7 @@ Watermark'и для streaming-процессов. По одной записи �
 
 | Сервер | Очереди | Назначение |
 | :--- | :--- | :--- |
-| `PriorityServer` | `realtime`, `quick_audit` | Быстрые приоритетные задачи. |
+| `PriorityServer` | `data_quality`, `realtime`, `quick_audit`, `maintenance` | Быстрые приоритетные задачи (порядок = приоритет). |
 | `BackgroundServer` | `historical_audit`, `archive_import`, `default` | Тяжёлые фоновые задачи. |
 
 `WorkerCount` зависит от `Environment.ProcessorCount` и режима (Debug / Development → больше воркеров).
