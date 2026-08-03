@@ -71,7 +71,7 @@ Binance WebSocket ──► книга в памяти ──► OrderBook_Featu
 | :--- | :--- | :--- |
 | `ArchiveDownloaderWorker` → `ArchiveUnpackerWorker` → `CsvImportWorker` | страница **Archive** | Цепочка: скачать ZIP → распаковать → импортировать CSV в `Trades`. Скачивание и распаковка — раздельные ручные шаги (кнопки Download и Process); распаковщик сам ставит импорт следующим шагом и удаляет ZIP. Распаковка и импорт — на одной очереди `archive_import` (общий приоритет, `[Queue]` на интерфейсе `IArchiveUnpackerWorker`), иначе распаковка голодала бы за импортом. Импорт пишет покрытие в `ArchiveImportLog` — ground truth для критерия закрытого месяца ([ADR 0012](../adr/0012-month-seal-coverage-journal.md)). |
 | `ArchiveDeletionWorker` | страница **Archive** | Удалить скачанные архивы |
-| `DataQualityCheckWorker` | страница **Data Quality** | 18 проверок качества данных в 4 группах |
+| `DataQualityCheckWorker` | страница **Data Quality** | 23 проверки качества данных в 4 группах |
 | `FillGapWorker`, `OnlineArchiveImportWorker` | ставятся аудиторами | Закрытие найденных дыр |
 
 ---

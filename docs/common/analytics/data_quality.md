@@ -25,6 +25,7 @@
 
 | Проверка | Что ловит | Статус |
 | :--- | :--- | :--- |
+| `trade_count` | Число сделок за период; пустой период — данных нет | error при 0, иначе счётчик |
 | `trade_id_gaps` | Разрывы в последовательности `TradeId` | warning |
 | `invalid_price_or_quantity` | `Price <= 0` или `Quantity <= 0` | error |
 | `price_outliers_5sigma` | Цена дальше 5σ от средней за период | warning |
@@ -36,6 +37,7 @@
 
 | Проверка | Что ловит | Статус |
 | :--- | :--- | :--- |
+| `candle_count` | Число свечей за период | счётчик |
 | `high_below_low` | `High < Low` — такой свечи не бывает | error |
 | `open_close_outside_range` | `Open`/`Close` вне `[Low, High]` | error |
 | `opentime_not_minute_aligned` | `OpenTime` не кратен минуте | error |
@@ -47,6 +49,7 @@
 
 | Проверка | Что ловит | Статус |
 | :--- | :--- | :--- |
+| `feature_count` | Число строк с индикаторами за период | счётчик |
 | `rsi_out_of_range` | RSI вне `[0, 100]` | error |
 | `processed_candle_without_features` | Свеча помечена обработанной, а индикаторов нет — тихая потеря | error |
 | `orphan_features` | Индикаторы без свечи | warning |
