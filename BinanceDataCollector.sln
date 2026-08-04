@@ -1,221 +1,92 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 18
-VisualStudioVersion = 18.6.11723.189
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{3E238BA4-0B1D-453B-B2ED-807351588F1D}"
-	ProjectSection(SolutionItems) = preProject
-		README.md = README.md
-	EndProjectSection
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{D91B3B29-A964-4A7B-8CE5-DCCCE38CA8B8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.DataManager", "src\BinanceDataCollector.DataManager\BinanceDataCollector.DataManager.csproj", "{71A30FF4-77A8-49E5-B552-DCDD77F9E95A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Application", "src\BinanceDataCollector.Application\BinanceDataCollector.Application.csproj", "{E974E6E5-5EBF-4721-8DDB-7355C0875ECC}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Domain", "src\BinanceDataCollector.Domain\BinanceDataCollector.Domain.csproj", "{FFA32857-4E17-4F55-895E-EB910EC01783}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.DataManager", "src\BinanceDataCollector.DataManager\BinanceDataCollector.DataManager.csproj", "{F844EF6C-E9D2-4776-AF79-2E5F4F3711A4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Worker", "src\BinanceDataCollector.Worker\BinanceDataCollector.Worker.csproj", "{0A5B2340-AFE4-4998-A672-DCA93578C5A4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Domain", "src\BinanceDataCollector.Domain\BinanceDataCollector.Domain.csproj", "{98409FEB-85BF-496C-B144-51F7F4E70B53}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Application", "src\BinanceDataCollector.Application\BinanceDataCollector.Application.csproj", "{CDFDA90B-752E-4F5D-BC79-737B84426271}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Infrastructure", "src\BinanceDataCollector.Infrastructure\BinanceDataCollector.Infrastructure.csproj", "{ABC829EB-27AB-4370-AA08-493922DC3A7F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Infrastructure", "src\BinanceDataCollector.Infrastructure\BinanceDataCollector.Infrastructure.csproj", "{D522D957-FCE5-4A9D-816B-CCBD2A9B9BCA}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Worker", "src\BinanceDataCollector.Worker\BinanceDataCollector.Worker.csproj", "{E17B3B46-3D37-4EA4-B0C4-58BA084B9448}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{00059B22-FB30-4384-8EE7-CED1F3EF3E4D}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{C5E3930F-EE71-4A35-9DB7-F86B0CC24CAB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Application.Tests", "tests\BinanceDataCollector.Application.Tests\BinanceDataCollector.Application.Tests.csproj", "{B468FED0-0661-4D41-9F11-BBC8A4846EBD}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Application.Tests", "tests\BinanceDataCollector.Application.Tests\BinanceDataCollector.Application.Tests.csproj", "{9B6B77D0-6476-48C8-8A5B-5303D3BE1590}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Worker.Tests", "tests\BinanceDataCollector.Worker.Tests\BinanceDataCollector.Worker.Tests.csproj", "{E00CEFA3-A092-4F04-8665-C4B89B6C888A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.DataManager.Tests", "tests\BinanceDataCollector.DataManager.Tests\BinanceDataCollector.DataManager.Tests.csproj", "{11F4B65A-EF39-400A-8040-B23C15C5512B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Domain.Tests", "tests\BinanceDataCollector.Domain.Tests\BinanceDataCollector.Domain.Tests.csproj", "{D17F7825-7FB8-4AEC-92A8-1870FA04DB63}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Domain.Tests", "tests\BinanceDataCollector.Domain.Tests\BinanceDataCollector.Domain.Tests.csproj", "{C9032738-EB26-4A27-879B-5DF3DC34F485}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{61180A7E-3843-46EC-AB2C-709A5B858DEF}"
-	ProjectSection(SolutionItems) = preProject
-		docs\INDEX.md = docs\INDEX.md
-		docs\INITIAL_DATA_LOAD.md = docs\INITIAL_DATA_LOAD.md
-		docs\Server_Network_Config.md = docs\Server_Network_Config.md
-		docs\TECH_DEBT.md = docs\TECH_DEBT.md
-	EndProjectSection
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Infrastructure.Tests", "tests\BinanceDataCollector.Infrastructure.Tests\BinanceDataCollector.Infrastructure.Tests.csproj", "{53C3C3FB-E0C3-4E7D-8925-41B196B3D06F}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "common", "common", "{F1260BB5-C57F-4AB3-886C-904E6F7E0AAC}"
-	ProjectSection(SolutionItems) = preProject
-		docs\common\01_overview.md = docs\common\01_overview.md
-		docs\common\02_architecture.md = docs\common\02_architecture.md
-		docs\common\03_database.md = docs\common\03_database.md
-		docs\common\analytics\indicators.md = docs\common\analytics\indicators.md
-	EndProjectSection
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "dev", "dev", "{963A48A4-FEF9-4A37-AA3A-2583B354FA44}"
-	ProjectSection(SolutionItems) = preProject
-		docs\dev\ARCHITECTURE_DEV.md = docs\dev\ARCHITECTURE_DEV.md
-	EndProjectSection
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "prod", "prod", "{BBA99E4D-1BEE-484E-AA50-8F539DB84C29}"
-	ProjectSection(SolutionItems) = preProject
-		docs\prod\04_deployment.md = docs\prod\04_deployment.md
-		docs\prod\05_setup.md = docs\prod\05_setup.md
-		docs\prod\ARCHITECTURE_PROD.md = docs\prod\ARCHITECTURE_PROD.md
-	EndProjectSection
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "ProjectSupport", "ProjectSupport", "{86DBA636-BBF4-4EA4-A274-4CC071A99727}"
-	ProjectSection(SolutionItems) = preProject
-		docs\ProjectSupport\Docker_files_check_list.odt = docs\ProjectSupport\Docker_files_check_list.odt
-		docs\ProjectSupport\Docker_plan.odt = docs\ProjectSupport\Docker_plan.odt
-		docs\ProjectSupport\WorkFlow.docx = docs\ProjectSupport\WorkFlow.docx
-	EndProjectSection
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "auth", "auth", "{B095B416-71AD-4889-9009-0AC2EDBE3720}"
-	ProjectSection(SolutionItems) = preProject
-		docs\common\auth\README_AUTH_FLOWS.md = docs\common\auth\README_AUTH_FLOWS.md
-		docs\common\auth\README_AUTH_IMPLEMENTATION_PLAN.md = docs\common\auth\README_AUTH_IMPLEMENTATION_PLAN.md
-		docs\common\auth\README_AUTH_SCHEMA.md = docs\common\auth\README_AUTH_SCHEMA.md
-	EndProjectSection
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Auth", "Auth", "{E681DC06-715C-4CE1-91AD-D5B38EF73E80}"
-	ProjectSection(SolutionItems) = preProject
-		docs\ProjectSupport\Auth\Auth_contract.odt = docs\ProjectSupport\Auth\Auth_contract.odt
-		docs\ProjectSupport\Auth\Auth_to_do_list.odt = docs\ProjectSupport\Auth\Auth_to_do_list.odt
-		docs\ProjectSupport\Auth\BDC_auth_V1_(roles+Permissions+Scopes).odt = docs\ProjectSupport\Auth\BDC_auth_V1_(roles+Permissions+Scopes).odt
-		docs\ProjectSupport\Auth\Scope_explanation_V1.odt = docs\ProjectSupport\Auth\Scope_explanation_V1.odt
-		docs\ProjectSupport\Auth\tz_auth.odt = docs\ProjectSupport\Auth\tz_auth.odt
-		docs\ProjectSupport\Auth\порядок_работ.odt = docs\ProjectSupport\Auth\порядок_работ.odt
-	EndProjectSection
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "pg_script", "pg_script", "{6F3CA72C-F25A-4091-AA67-436397B1AAFC}"
-	ProjectSection(SolutionItems) = preProject
-		docs\ProjectSupport\pg_script\market_analytics_dev.sql = docs\ProjectSupport\pg_script\market_analytics_dev.sql
-		docs\ProjectSupport\pg_script\market_analytics_dev.txt = docs\ProjectSupport\pg_script\market_analytics_dev.txt
-		docs\ProjectSupport\pg_script\market_analytics_jobs_dev.sql = docs\ProjectSupport\pg_script\market_analytics_jobs_dev.sql
-		docs\ProjectSupport\pg_script\market_analytics_jobs_dev.txt = docs\ProjectSupport\pg_script\market_analytics_jobs_dev.txt
-	EndProjectSection
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "scripts", "scripts", "{4ED401E3-AC09-47D0-A40F-C231B48D36F8}"
-	ProjectSection(SolutionItems) = preProject
-		docs\ProjectSupport\pg_script\scripts\Script-17.sql = docs\ProjectSupport\pg_script\scripts\Script-17.sql
-		docs\ProjectSupport\pg_script\scripts\Script-18.sql = docs\ProjectSupport\pg_script\scripts\Script-18.sql
-		docs\ProjectSupport\pg_script\scripts\Script-19.sql = docs\ProjectSupport\pg_script\scripts\Script-19.sql
-		docs\ProjectSupport\pg_script\scripts\Script-2.sql = docs\ProjectSupport\pg_script\scripts\Script-2.sql
-		docs\ProjectSupport\pg_script\scripts\Script-3.sql = docs\ProjectSupport\pg_script\scripts\Script-3.sql
-		docs\ProjectSupport\pg_script\scripts\Script-4.sql = docs\ProjectSupport\pg_script\scripts\Script-4.sql
-		docs\ProjectSupport\pg_script\scripts\Script-40.sql = docs\ProjectSupport\pg_script\scripts\Script-40.sql
-		docs\ProjectSupport\pg_script\scripts\Script-55.sql = docs\ProjectSupport\pg_script\scripts\Script-55.sql
-		docs\ProjectSupport\pg_script\scripts\Script-57.sql = docs\ProjectSupport\pg_script\scripts\Script-57.sql
-		docs\ProjectSupport\pg_script\scripts\Script-64.sql = docs\ProjectSupport\pg_script\scripts\Script-64.sql
-		docs\ProjectSupport\pg_script\scripts\Script-65.sql = docs\ProjectSupport\pg_script\scripts\Script-65.sql
-		docs\ProjectSupport\pg_script\scripts\Script-69.sql = docs\ProjectSupport\pg_script\scripts\Script-69.sql
-		docs\ProjectSupport\pg_script\scripts\Script-7.sql = docs\ProjectSupport\pg_script\scripts\Script-7.sql
-		docs\ProjectSupport\pg_script\scripts\Script-74.sql = docs\ProjectSupport\pg_script\scripts\Script-74.sql
-		docs\ProjectSupport\pg_script\scripts\Script-75.sql = docs\ProjectSupport\pg_script\scripts\Script-75.sql
-		docs\ProjectSupport\pg_script\scripts\Script-77.sql = docs\ProjectSupport\pg_script\scripts\Script-77.sql
-		docs\ProjectSupport\pg_script\scripts\Script-78.sql = docs\ProjectSupport\pg_script\scripts\Script-78.sql
-		docs\ProjectSupport\pg_script\scripts\Script-79.sql = docs\ProjectSupport\pg_script\scripts\Script-79.sql
-		docs\ProjectSupport\pg_script\scripts\select.sql = docs\ProjectSupport\pg_script\scripts\select.sql
-		docs\ProjectSupport\pg_script\scripts\TrackedSymbolsTableCreate.sql = docs\ProjectSupport\pg_script\scripts\TrackedSymbolsTableCreate.sql
-		docs\ProjectSupport\pg_script\scripts\Truncate_hangfire.sql = docs\ProjectSupport\pg_script\scripts\Truncate_hangfire.sql
-	EndProjectSection
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docker", "docker", "{19E43883-59CE-4E9F-A276-C8E1C4CC45FB}"
-	ProjectSection(SolutionItems) = preProject
-		docker\Dockerfile = docker\Dockerfile
-		docker\dev-start.sh = docker\dev-start.sh
-		docker\dev-stop.sh = docker\dev-stop.sh
-	EndProjectSection
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "compose", "compose", "{5CADAED3-6EDE-4922-BEBF-C5ED6DEB7398}"
-	ProjectSection(SolutionItems) = preProject
-		docker\compose\.env = docker\compose\.env
-		docker\compose\docker-compose.db.yml = docker\compose\docker-compose.db.yml
-		docker\compose\docker-compose.dev.yml = docker\compose\docker-compose.dev.yml
-		docker\compose\docker-compose.prod.yml = docker\compose\docker-compose.prod.yml
-		docker\compose\docker-compose.rabbit.yml = docker\compose\docker-compose.rabbit.yml
-		docker\compose\docker-compose.seq.yml = docker\compose\docker-compose.seq.yml
-		docker\compose\docker-compose.yml = docker\compose\docker-compose.yml
-	EndProjectSection
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{2916BAB9-5221-480E-B13E-93F863C79FBC}"
-	ProjectSection(SolutionItems) = preProject
-		docker\docs\README_ARCHITECTURE.md = docker\docs\README_ARCHITECTURE.md
-		docker\docs\README_DOCKER_RUN.md = docker\docs\README_DOCKER_RUN.md
-		docker\docs\README_DO_NOT_TOUCH.md = docker\docs\README_DO_NOT_TOUCH.md
-		docker\docs\README_NETWORK_PORTS.md = docker\docs\README_NETWORK_PORTS.md
-		docker\docs\README_PRODUCTION.md = docker\docs\README_PRODUCTION.md
-		docker\docs\README_VOLUMES.md = docker\docs\README_VOLUMES.md
-	EndProjectSection
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.DataManager.Tests", "tests\BinanceDataCollector.DataManager.Tests\BinanceDataCollector.DataManager.Tests.csproj", "{E0F5B7A9-F74F-4829-83BF-0B29FBAAEDF3}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Infrastructure.Tests", "tests\BinanceDataCollector.Infrastructure.Tests\BinanceDataCollector.Infrastructure.Tests.csproj", "{84B604B9-CA51-4B99-90BF-CF6AC7540012}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BinanceDataCollector.Worker.Tests", "tests\BinanceDataCollector.Worker.Tests\BinanceDataCollector.Worker.Tests.csproj", "{F06B8ADB-CC56-4D59-904E-2A949E12D9D7}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
-	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{71A30FF4-77A8-49E5-B552-DCDD77F9E95A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{71A30FF4-77A8-49E5-B552-DCDD77F9E95A}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{71A30FF4-77A8-49E5-B552-DCDD77F9E95A}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{71A30FF4-77A8-49E5-B552-DCDD77F9E95A}.Release|Any CPU.Build.0 = Release|Any CPU
-		{FFA32857-4E17-4F55-895E-EB910EC01783}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{FFA32857-4E17-4F55-895E-EB910EC01783}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{FFA32857-4E17-4F55-895E-EB910EC01783}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{FFA32857-4E17-4F55-895E-EB910EC01783}.Release|Any CPU.Build.0 = Release|Any CPU
-		{0A5B2340-AFE4-4998-A672-DCA93578C5A4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{0A5B2340-AFE4-4998-A672-DCA93578C5A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{0A5B2340-AFE4-4998-A672-DCA93578C5A4}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{0A5B2340-AFE4-4998-A672-DCA93578C5A4}.Release|Any CPU.Build.0 = Release|Any CPU
-		{CDFDA90B-752E-4F5D-BC79-737B84426271}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{CDFDA90B-752E-4F5D-BC79-737B84426271}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{CDFDA90B-752E-4F5D-BC79-737B84426271}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{CDFDA90B-752E-4F5D-BC79-737B84426271}.Release|Any CPU.Build.0 = Release|Any CPU
-		{D522D957-FCE5-4A9D-816B-CCBD2A9B9BCA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{D522D957-FCE5-4A9D-816B-CCBD2A9B9BCA}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{D522D957-FCE5-4A9D-816B-CCBD2A9B9BCA}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{D522D957-FCE5-4A9D-816B-CCBD2A9B9BCA}.Release|Any CPU.Build.0 = Release|Any CPU
-		{B468FED0-0661-4D41-9F11-BBC8A4846EBD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{B468FED0-0661-4D41-9F11-BBC8A4846EBD}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{B468FED0-0661-4D41-9F11-BBC8A4846EBD}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{B468FED0-0661-4D41-9F11-BBC8A4846EBD}.Release|Any CPU.Build.0 = Release|Any CPU
-		{E00CEFA3-A092-4F04-8665-C4B89B6C888A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{E00CEFA3-A092-4F04-8665-C4B89B6C888A}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{E00CEFA3-A092-4F04-8665-C4B89B6C888A}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{E00CEFA3-A092-4F04-8665-C4B89B6C888A}.Release|Any CPU.Build.0 = Release|Any CPU
-		{D17F7825-7FB8-4AEC-92A8-1870FA04DB63}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{D17F7825-7FB8-4AEC-92A8-1870FA04DB63}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{D17F7825-7FB8-4AEC-92A8-1870FA04DB63}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{D17F7825-7FB8-4AEC-92A8-1870FA04DB63}.Release|Any CPU.Build.0 = Release|Any CPU
-		{E0F5B7A9-F74F-4829-83BF-0B29FBAAEDF3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{E0F5B7A9-F74F-4829-83BF-0B29FBAAEDF3}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{E0F5B7A9-F74F-4829-83BF-0B29FBAAEDF3}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{E0F5B7A9-F74F-4829-83BF-0B29FBAAEDF3}.Release|Any CPU.Build.0 = Release|Any CPU
-		{84B604B9-CA51-4B99-90BF-CF6AC7540012}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{84B604B9-CA51-4B99-90BF-CF6AC7540012}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{84B604B9-CA51-4B99-90BF-CF6AC7540012}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{84B604B9-CA51-4B99-90BF-CF6AC7540012}.Release|Any CPU.Build.0 = Release|Any CPU
-	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
-	GlobalSection(NestedProjects) = preSolution
-		{71A30FF4-77A8-49E5-B552-DCDD77F9E95A} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}
-		{FFA32857-4E17-4F55-895E-EB910EC01783} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}
-		{0A5B2340-AFE4-4998-A672-DCA93578C5A4} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}
-		{CDFDA90B-752E-4F5D-BC79-737B84426271} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}
-		{D522D957-FCE5-4A9D-816B-CCBD2A9B9BCA} = {3E238BA4-0B1D-453B-B2ED-807351588F1D}
-		{B468FED0-0661-4D41-9F11-BBC8A4846EBD} = {00059B22-FB30-4384-8EE7-CED1F3EF3E4D}
-		{E00CEFA3-A092-4F04-8665-C4B89B6C888A} = {00059B22-FB30-4384-8EE7-CED1F3EF3E4D}
-		{D17F7825-7FB8-4AEC-92A8-1870FA04DB63} = {00059B22-FB30-4384-8EE7-CED1F3EF3E4D}
-		{F1260BB5-C57F-4AB3-886C-904E6F7E0AAC} = {61180A7E-3843-46EC-AB2C-709A5B858DEF}
-		{963A48A4-FEF9-4A37-AA3A-2583B354FA44} = {61180A7E-3843-46EC-AB2C-709A5B858DEF}
-		{BBA99E4D-1BEE-484E-AA50-8F539DB84C29} = {61180A7E-3843-46EC-AB2C-709A5B858DEF}
-		{86DBA636-BBF4-4EA4-A274-4CC071A99727} = {61180A7E-3843-46EC-AB2C-709A5B858DEF}
-		{B095B416-71AD-4889-9009-0AC2EDBE3720} = {F1260BB5-C57F-4AB3-886C-904E6F7E0AAC}
-		{E681DC06-715C-4CE1-91AD-D5B38EF73E80} = {86DBA636-BBF4-4EA4-A274-4CC071A99727}
-		{6F3CA72C-F25A-4091-AA67-436397B1AAFC} = {86DBA636-BBF4-4EA4-A274-4CC071A99727}
-		{4ED401E3-AC09-47D0-A40F-C231B48D36F8} = {6F3CA72C-F25A-4091-AA67-436397B1AAFC}
-		{5CADAED3-6EDE-4922-BEBF-C5ED6DEB7398} = {19E43883-59CE-4E9F-A276-C8E1C4CC45FB}
-		{2916BAB9-5221-480E-B13E-93F863C79FBC} = {19E43883-59CE-4E9F-A276-C8E1C4CC45FB}
-		{E0F5B7A9-F74F-4829-83BF-0B29FBAAEDF3} = {00059B22-FB30-4384-8EE7-CED1F3EF3E4D}
-		{84B604B9-CA51-4B99-90BF-CF6AC7540012} = {00059B22-FB30-4384-8EE7-CED1F3EF3E4D}
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E974E6E5-5EBF-4721-8DDB-7355C0875ECC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E974E6E5-5EBF-4721-8DDB-7355C0875ECC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E974E6E5-5EBF-4721-8DDB-7355C0875ECC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E974E6E5-5EBF-4721-8DDB-7355C0875ECC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F844EF6C-E9D2-4776-AF79-2E5F4F3711A4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F844EF6C-E9D2-4776-AF79-2E5F4F3711A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F844EF6C-E9D2-4776-AF79-2E5F4F3711A4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F844EF6C-E9D2-4776-AF79-2E5F4F3711A4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{98409FEB-85BF-496C-B144-51F7F4E70B53}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{98409FEB-85BF-496C-B144-51F7F4E70B53}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{98409FEB-85BF-496C-B144-51F7F4E70B53}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{98409FEB-85BF-496C-B144-51F7F4E70B53}.Release|Any CPU.Build.0 = Release|Any CPU
+		{ABC829EB-27AB-4370-AA08-493922DC3A7F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{ABC829EB-27AB-4370-AA08-493922DC3A7F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{ABC829EB-27AB-4370-AA08-493922DC3A7F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{ABC829EB-27AB-4370-AA08-493922DC3A7F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E17B3B46-3D37-4EA4-B0C4-58BA084B9448}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E17B3B46-3D37-4EA4-B0C4-58BA084B9448}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E17B3B46-3D37-4EA4-B0C4-58BA084B9448}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E17B3B46-3D37-4EA4-B0C4-58BA084B9448}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9B6B77D0-6476-48C8-8A5B-5303D3BE1590}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9B6B77D0-6476-48C8-8A5B-5303D3BE1590}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9B6B77D0-6476-48C8-8A5B-5303D3BE1590}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9B6B77D0-6476-48C8-8A5B-5303D3BE1590}.Release|Any CPU.Build.0 = Release|Any CPU
+		{11F4B65A-EF39-400A-8040-B23C15C5512B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{11F4B65A-EF39-400A-8040-B23C15C5512B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{11F4B65A-EF39-400A-8040-B23C15C5512B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{11F4B65A-EF39-400A-8040-B23C15C5512B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C9032738-EB26-4A27-879B-5DF3DC34F485}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C9032738-EB26-4A27-879B-5DF3DC34F485}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C9032738-EB26-4A27-879B-5DF3DC34F485}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C9032738-EB26-4A27-879B-5DF3DC34F485}.Release|Any CPU.Build.0 = Release|Any CPU
+		{53C3C3FB-E0C3-4E7D-8925-41B196B3D06F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{53C3C3FB-E0C3-4E7D-8925-41B196B3D06F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{53C3C3FB-E0C3-4E7D-8925-41B196B3D06F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{53C3C3FB-E0C3-4E7D-8925-41B196B3D06F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F06B8ADB-CC56-4D59-904E-2A949E12D9D7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F06B8ADB-CC56-4D59-904E-2A949E12D9D7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F06B8ADB-CC56-4D59-904E-2A949E12D9D7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F06B8ADB-CC56-4D59-904E-2A949E12D9D7}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
-	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {E76ECB2B-5DBB-432C-9C79-1C13CB8E1B43}
+	GlobalSection(NestedProjects) = preSolution
+		{E974E6E5-5EBF-4721-8DDB-7355C0875ECC} = {D91B3B29-A964-4A7B-8CE5-DCCCE38CA8B8}
+		{F844EF6C-E9D2-4776-AF79-2E5F4F3711A4} = {D91B3B29-A964-4A7B-8CE5-DCCCE38CA8B8}
+		{98409FEB-85BF-496C-B144-51F7F4E70B53} = {D91B3B29-A964-4A7B-8CE5-DCCCE38CA8B8}
+		{ABC829EB-27AB-4370-AA08-493922DC3A7F} = {D91B3B29-A964-4A7B-8CE5-DCCCE38CA8B8}
+		{E17B3B46-3D37-4EA4-B0C4-58BA084B9448} = {D91B3B29-A964-4A7B-8CE5-DCCCE38CA8B8}
+		{9B6B77D0-6476-48C8-8A5B-5303D3BE1590} = {C5E3930F-EE71-4A35-9DB7-F86B0CC24CAB}
+		{11F4B65A-EF39-400A-8040-B23C15C5512B} = {C5E3930F-EE71-4A35-9DB7-F86B0CC24CAB}
+		{C9032738-EB26-4A27-879B-5DF3DC34F485} = {C5E3930F-EE71-4A35-9DB7-F86B0CC24CAB}
+		{53C3C3FB-E0C3-4E7D-8925-41B196B3D06F} = {C5E3930F-EE71-4A35-9DB7-F86B0CC24CAB}
+		{F06B8ADB-CC56-4D59-904E-2A949E12D9D7} = {C5E3930F-EE71-4A35-9DB7-F86B0CC24CAB}
 	EndGlobalSection
 EndGlobal

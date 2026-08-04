@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [portfolio]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore BinanceDataCollector.sln
+
+      - name: Build
+        run: dotnet build BinanceDataCollector.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test BinanceDataCollector.sln --configuration Release --no-build --verbosity normal
+
+      - name: Publish application hosts
+        run: |
+          dotnet publish src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj --configuration Release --no-restore -o "${RUNNER_TEMP}/worker"
+          dotnet publish src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj --configuration Release --no-restore -o "${RUNNER_TEMP}/datamanager"

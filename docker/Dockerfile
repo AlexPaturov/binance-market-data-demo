@@ -5,14 +5,14 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS base-build
 WORKDIR /src
 
 # Копируем .csproj и .sln для восстановления зависимостей
-COPY BinanceDataCollector.Prod.sln ./
+COPY BinanceDataCollector.sln ./
 COPY src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj src/BinanceDataCollector.Application/
 COPY src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj src/BinanceDataCollector.DataManager/
 COPY src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj src/BinanceDataCollector.Domain/
 COPY src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj src/BinanceDataCollector.Infrastructure/
 COPY src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj src/BinanceDataCollector.Worker/
 
-RUN dotnet restore BinanceDataCollector.Prod.sln
+RUN dotnet restore BinanceDataCollector.sln
 
 # Копируем остальной код по папкам
 COPY src/BinanceDataCollector.Application/ ./src/BinanceDataCollector.Application/
@@ -60,26 +60,3 @@ WORKDIR /app
 COPY --from=build-datamanager /app/datamanager .
 USER app 
 ENTRYPOINT ["dotnet", "BinanceDataCollector.DataManager.dll"]
-
-# ================================================
-# Dev-образ для Worker (dotnet watch)
-# ================================================
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS worker-dev
-WORKDIR /app
-ENV DOTNET_USE_POLLING_FILE_WATCHER=1 
-# Копируем проект целиком (в dev в любом случае будут volume из compose)
-COPY BinanceDataCollector.Prod.sln ./
-COPY src ./src
-
-ENTRYPOINT ["dotnet", "watch", "run", "--project", "src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj", "--urls=http://0.0.0.0:7001", "--diagnostic-port", "5600"]
-
-# ================================================
-# Dev-образ для DataManager (dotnet watch)
-# ================================================
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS datamanager-dev
-WORKDIR /app
-ENV DOTNET_USE_POLLING_FILE_WATCHER=1 
-COPY BinanceDataCollector.Prod.sln ./
-COPY src ./src
-
-ENTRYPOINT ["dotnet", "watch", "run", "--project", "src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj", "--urls=http://0.0.0.0:7002", "--diagnostic-port", "5601"]
