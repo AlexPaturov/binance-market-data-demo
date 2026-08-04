@@ -5,6 +5,7 @@
 
 # Serilog file logs
 logs/
+src/**/keys/
 
 # User-specific files
 *.rsuser
