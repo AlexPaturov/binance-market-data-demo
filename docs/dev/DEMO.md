@@ -62,4 +62,4 @@ powershell -ExecutionPolicy Bypass -File .\docker\demo-start.ps1
 4. **Windows — `running scripts is disabled`** — запускай через `powershell -ExecutionPolicy Bypass -File <скрипт>`.
 5. **Windows — setup ждёт движок Docker** — открой Docker Desktop вручную, прими условия первого запуска, дождись **Engine running**, запусти скрипт снова. Если движок не стартует — проверь виртуализацию: `(Get-CimInstance Win32_ComputerSystem).HypervisorPresent` должно быть `True`.
 
-Полная приёмка по всем ОС — [`DEMO_ACCEPTANCE.md`](./DEMO_ACCEPTANCE.md).
+Demo поддерживается на Linux, macOS и Windows.
