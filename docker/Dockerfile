@@ -5,14 +5,14 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS base-build
 WORKDIR /src
 
 # Копируем .csproj и .sln для восстановления зависимостей
-COPY BinanceDataCollector.sln ./
 COPY src/BinanceDataCollector.Application/BinanceDataCollector.Application.csproj src/BinanceDataCollector.Application/
 COPY src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj src/BinanceDataCollector.DataManager/
 COPY src/BinanceDataCollector.Domain/BinanceDataCollector.Domain.csproj src/BinanceDataCollector.Domain/
 COPY src/BinanceDataCollector.Infrastructure/BinanceDataCollector.Infrastructure.csproj src/BinanceDataCollector.Infrastructure/
 COPY src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj src/BinanceDataCollector.Worker/
 
-RUN dotnet restore BinanceDataCollector.sln
+RUN dotnet restore src/BinanceDataCollector.Worker/BinanceDataCollector.Worker.csproj \
+    && dotnet restore src/BinanceDataCollector.DataManager/BinanceDataCollector.DataManager.csproj
 
 # Копируем остальной код по папкам
 COPY src/BinanceDataCollector.Application/ ./src/BinanceDataCollector.Application/
