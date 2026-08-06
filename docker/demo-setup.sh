@@ -72,9 +72,12 @@ fi
 
 if [[ $EUID -ne 0 ]] && ! id -nG "$TARGET_USER" | tr " " "\n" | grep -qx docker; then
     as_root usermod -aG docker "$TARGET_USER"
-    echo "Пользователь $TARGET_USER добавлен в группу docker."
-    echo "Перелогиньтесь или откройте новый SSH-сеанс, затем повторите: $SCRIPT_DIR/demo-setup.sh"
-    exit 0
+    echo "Пользователь $TARGET_USER добавлен в группу docker. Продолжаю в новой группе..."
+    if command -v sg >/dev/null 2>&1; then
+        exec sg docker -c "exec \"$SCRIPT_DIR/demo-setup.sh\""
+    fi
+    echo "Не найдена утилита sg. Перелогиньтесь и повторите: $SCRIPT_DIR/demo-setup.sh" >&2
+    exit 1
 fi
 
 if ! docker info >/dev/null 2>&1; then
