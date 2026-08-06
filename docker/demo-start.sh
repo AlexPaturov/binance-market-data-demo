@@ -3,7 +3,19 @@
 # Автооткрытие делается здесь, на хосте: контейнер DataManager доступа к дисплею не имеет.
 set -euo pipefail
 
-cd "$(dirname "$0")/compose"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cd "$SCRIPT_DIR/compose"
+
+if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker Engine не найден." >&2
+    echo "На чистом Linux запустите: $SCRIPT_DIR/demo-setup.sh" >&2
+    exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    echo "Docker daemon недоступен. Запустите Docker или проверьте права пользователя." >&2
+    exit 1
+fi
 
 # Compose бывает как плагин v2 (`docker compose`) и как отдельный бинарь v1 (`docker-compose`).
 if docker compose version >/dev/null 2>&1; then
@@ -11,7 +23,8 @@ if docker compose version >/dev/null 2>&1; then
 elif command -v docker-compose >/dev/null 2>&1; then
     COMPOSE=(docker-compose)
 else
-    echo "Docker Compose не найден. Нужен Docker Desktop или docker-compose." >&2
+    echo "Docker Compose не найден." >&2
+    echo "На чистом Linux запустите: $SCRIPT_DIR/demo-setup.sh" >&2
     exit 1
 fi
 

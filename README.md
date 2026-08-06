@@ -6,7 +6,7 @@ Portfolio-проект: автономный конвейер рыночных �
 
 ## Запустить demo
 
-Нужен только Docker Desktop или Docker Engine с Compose.
+Нужен Docker. На чистом Linux используйте `./docker/demo-setup.sh`; на macOS — Docker Desktop.
 
 ```bash
 git clone <your-fork-url>

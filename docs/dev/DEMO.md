@@ -6,10 +6,10 @@
 
 ## Linux
 
-Предусловия: Docker Engine + Compose v2 (или Docker Desktop); проект склонирован или скопирован. Если Docker требует `sudo` — добавь себя в группу: `sudo usermod -aG docker $USER` и перелогинься.
+На чистой Linux-машине скрипт установит Docker Engine и Compose plugin, затем запустит demo. Поддерживаются Ubuntu/Debian, Fedora и Arch Linux. Нужны root-права или `sudo`.
 
 ```bash
-./docker/demo-start.sh
+./docker/demo-setup.sh
 ```
 
 ## macOS
